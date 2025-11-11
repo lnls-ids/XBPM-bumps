@@ -861,7 +861,7 @@ def blades_show_at_center(range_h, range_v, blades_h, blades_v):
     fig, (axh, axv) = plt.subplots(1, 2, figsize=(10, 5))
 
     # DEBUG
-    print(f"\n (BLADES SHOW) H KEYS = {blades_h.keys()}")
+    # print(f"\n (BLADES SHOW) H KEYS = {blades_h.keys()}")
     # DEBUG
 
     for key, val in blades_h.items():
@@ -1021,9 +1021,8 @@ def xbpm_position_calc(data, prm, range_h, range_v,
     # axcross.grid()
 
     fig.tight_layout()
-    if prm.xbpmpositionsraw:
-        sup = "raw" if nosuppress else "scaled"
-        outfile = (f"xbpm_{sup}_positions_{prm.beamline}.png")
+    sup = "raw" if nosuppress else "scaled"
+    outfile = (f"xbpm_{sup}_positions_{prm.beamline}.png")
     fig.savefig(outfile)
     print(f"\n Figure of scaled positions saved to file {outfile}.\n")
 
@@ -1083,7 +1082,8 @@ def suppression_matrix(range_h, range_v, blades_h, blades_v,
     ])
 
     # DEBUG
-    print(f" (SUP MAT) SUP MATRIX (nosuppress = {nosuppress}) = \n{supmat}\n")
+    # print(f" (SUP MAT) SUP MATRIX (nosuppress = {nosuppress}) ="
+    #       f" \n{supmat}\n")
     # DEBUG
 
     return supmat
