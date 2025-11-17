@@ -1007,8 +1007,6 @@ def xbpm_position_calc(data, prm, range_h, range_v,
 
     axpair.set_xlabel(u"$x$ [$\\mu$m]")
     axpair.set_ylabel(u"$y$ [$\\mu$m]")
-    # axcross.set_xlabel(u"$x$ [$\\mu$rad]")
-    # axcross.set_ylabel(u"$y$ [$\\mu$rad]")
 
     # # axcross.plot(grid[:, 0], grid[:, 1], 'r+')
     # # hmin, hmax = np.min(pos_cr_h), np.max(pos_cr_h)
@@ -1075,10 +1073,10 @@ def suppression_matrix(range_h, range_v, blades_h, blades_v,
         pcv = np.ones(8).reshape(4, 2)
 
     supmat = np.array([
-        [pch[0, 0],  pch[1, 0], -pch[2, 0], -pch[3, 0]],   # noqa: E241
-        [pch[0, 0],  pch[1, 0],  pch[2, 0],  pch[3, 0]],   # noqa: E241
         [pcv[0, 0], -pcv[1, 0], -pcv[2, 0],  pcv[3, 0]],   # noqa: E241
         [pcv[0, 0],  pcv[1, 0],  pcv[2, 0],  pcv[3, 0]],   # noqa: E241
+        [pch[0, 0],  pch[1, 0], -pch[2, 0], -pch[3, 0]],   # noqa: E241
+        [pch[0, 0],  pch[1, 0],  pch[2, 0],  pch[3, 0]],   # noqa: E241
     ])
 
     # DEBUG
