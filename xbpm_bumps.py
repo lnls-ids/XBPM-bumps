@@ -67,7 +67,7 @@ in micrometers.
 
 FILE_EXTENSION = ".pickle"    # Data file type.
 GRIDSTEP = 2                  # Default grid step.
-STDROISIZE = 3                # Default range for ROI.
+STD_ROI_SIZE = 2              # Default range for ROI.
 
 
 @dataclass
@@ -111,13 +111,12 @@ class Prm:
 
 # Power relative to Ampere subunits.
 AMPSUB = {
-    0    : 1.0,      # if not unit is defined.
-    "mA" : 1e-3,
-    "uA" : 1e-6,
-    "nA" : 1e-9,
-    "pA" : 1e-12,
+    0    : 1.0,    # no unit defined.
+    "mA" : 1e-3,   # mili
+    "uA" : 1e-6,   # micro
+    "nA" : 1e-9,   # nano
+    "pA" : 1e-12,  # pico
 }
-
 
 # Map of blades positions in each XBPM.
 # TO, TI, BO, BI : top/bottom, in/out, relative to the storage ring;
@@ -673,7 +672,7 @@ def blades_map_show(data, prm):
         data (dict) : blades' values indexed by grid positions.
         prm (dict) : general parameters of the analysis.
     """
-    blades, stddevs, maxval = data_parse(data, prm.gridstep)
+    blades, stddevs, maxval = data_parse(data)
     to, ti, bi, bo = blades
     # sto, sti, sbi, sbo = stddevs
 
@@ -697,14 +696,12 @@ def blades_map_show(data, prm):
     # fig.colorbar(imgs[3], ax=ax)
 
 
-def data_parse(data, gridstep=GRIDSTEP):
+def data_parse(data):
     """Extract each blade's data from whole data.
 
     Args:
         data (dict): keys are (x, y) grid positions, values are blades'
             measurements with errors (order: to, ti, bi, bo).
-        ngrid (tuple): grid size, lin x col.
-        gridstep (float): interval between two ajacent coordinates.
 
     Returns:
         to, ti, bi, bo (numpy arrays): the values read by each blade.
@@ -713,32 +710,30 @@ def data_parse(data, gridstep=GRIDSTEP):
         indexing of the numpy arrrays to, ti, bi, bo are the conventional ones,
         so the [0, 0] index corresponds to the left-upmost position etc.
     """
-    maxval = np.max(np.abs(list(data.keys())))
-    nlin = int(np.sqrt(len(data.keys())))
-    ngrid = (nlin, nlin)
+    nlin = np.unique(np.array(list(data.keys()))[:, 0])
+    ncol = np.unique(np.array(list(data.keys()))[:, 1])
+    ngrid = (nlin.shape[0], ncol.shape[0])
     to,  ti  = np.zeros(ngrid), np.zeros(ngrid)
     bo,  bi  = np.zeros(ngrid), np.zeros(ngrid)
     sto, sti = np.zeros(ngrid), np.zeros(ngrid)
     sbo, sbi = np.zeros(ngrid), np.zeros(ngrid)
-    for key in data.keys():
-        # Map spatial coordinates onto matrix indexes.
-        lin = int((maxval - key[1]) / gridstep)
-        col = int((maxval + key[0]) / gridstep)
 
-        try:
-            to[lin, col]  = data[key][0, 0]
-            ti[lin, col]  = data[key][1, 0]
-            bi[lin, col]  = data[key][2, 0]
-            bo[lin, col]  = data[key][3, 0]
+    for ii, nl in enumerate(nlin):
+        for jj, nc in enumerate(ncol):
+            key = (nl, nc)
+            try:
+                to[ii, jj]  = data[key][0, 0]
+                ti[ii, jj]  = data[key][1, 0]
+                bi[ii, jj]  = data[key][2, 0]
+                bo[ii, jj]  = data[key][3, 0]
 
-            sto[lin, col] = data[key][0, 1]
-            sti[lin, col] = data[key][1, 1]
-            sbi[lin, col] = data[key][2, 1]
-            sbo[lin, col] = data[key][3, 1]
-        except Exception as err:
-            print(f"\n WARNING: {err}\n"
-                  " when trying to parse blade data.")
-    return [to, ti, bi, bo], [sto, sti, sbi, sbo], maxval
+                sto[ii, jj] = data[key][0, 1]
+                sti[ii, jj] = data[key][1, 1]
+                sbi[ii, jj] = data[key][2, 1]
+                sbo[ii, jj] = data[key][3, 1]
+            except Exception as err:
+                print(f"\n WARNING (when trying to parse blade data):\n{err}\n")
+    return [to, ti, bi, bo], [sto, sti, sbi, sbo], nlin[-1]
 
 
 # ## Dump XBPM's selected and averaged data to file.
@@ -786,7 +781,16 @@ def central_sweeps(data, prm, show=False):
     # Obs.: values not as indices, but real positions.
 
     keys = np.array(list(data.keys()))
-    hrange, vrange = np.unique(keys[:, 0]), np.unique(keys[:, 1])
+    hrange = np.unique(keys[:, 0])
+    vrange = np.unique(keys[:, 1])
+
+    # Check whether data has information at central region.
+    hmin, hmax = np.min(hrange), np.max(hrange)
+    vmin, vmax = np.min(vrange), np.max(vrange)
+    if hmin >= 0 or hmax <= 0 or vmin >= 0 or vmax <= 0:
+        print(" WARNING: sweeping intervals do not have sufficient data"
+              " for central analysis. Skipping.")
+        return (hrange, vrange, None, None)
 
     # nrange = np.unique(np.abs(list(data.keys()))[:, 0])
     # halfh = int(hrange.shape[0] / 2)
@@ -949,8 +953,8 @@ def blades_show_at_center(range_h, range_v, blades_h, blades_v):
 
 # ## Beam position from XBPM data.
 
-def xbpm_position_calc(data, prm, range_h, range_v,
-                       blades_h, blades_v, nosuppress=False, show=True):
+def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
+                       nosuppress=False, showmatrix=True):
     """Calculate positions from blades' measured data.
 
     Notation:
@@ -967,7 +971,7 @@ def xbpm_position_calc(data, prm, range_h, range_v,
         blades_v (numpy array) : measured data from blades in the vertical
                                 central line
         nosuppress (boolean) : do not apply suppression matrix if True.
-        show (boolean) : show blades' behaviour at center or not.
+        showmatrix (boolean) : show blades' behaviour at center or not.
 
     Returns:
         pos_pair_h/_v (list) : the pairwise calculated positions
@@ -979,8 +983,8 @@ def xbpm_position_calc(data, prm, range_h, range_v,
 
     # Pairwise-blades calculation.
     supmat = suppression_matrix(range_h, range_v,
-                                blades_h, blades_v,
-                                show=show, nosuppress=nosuppress)
+                                blades_h, blades_v, prm,
+                                showmatrix=showmatrix, nosuppress=nosuppress)
 
     pos_pair  = beam_position_pair(data, supmat)
     (pos_nom_h, pos_nom_v,
@@ -990,16 +994,16 @@ def xbpm_position_calc(data, prm, range_h, range_v,
     pos_nom_h *= prm.xbpmdist
     pos_nom_v *= prm.xbpmdist
 
-    # Indices of central ranges for scaling
+    # Indices of central ranges for scaling - ROI
     # (data keys are the nominal positions).
     keys = np.array(list(data.keys()))
     range_h = np.unique(keys[:, 0])
     range_v = np.unique(keys[:, 1])
     halfh = int(range_h.shape[0] / 2)
     halfv = int(range_v.shape[0] / 2)
-    abh = STDROISIZE if range_h[-1] > STDROISIZE else halfh
+    abh = STD_ROI_SIZE if range_h[-1] > STD_ROI_SIZE else halfh
     frh, uph = halfh - abh, halfh + abh + 1
-    abv = STDROISIZE if range_v[-1] > STDROISIZE else halfv
+    abv = STD_ROI_SIZE if range_v[-1] > STD_ROI_SIZE else halfv
     frv, upv = halfv - abv, halfv + abv + 1
 
     # ROI: nominal.
@@ -1010,61 +1014,83 @@ def xbpm_position_calc(data, prm, range_h, range_v,
     # pos_pair_h -= pos_pair_h[halfh, halfv]
     # pos_pair_v -= pos_pair_v[halfh, halfv]
 
-    # ROI: pairwise.
+    # ROI: pairwise blades.
     pos_pair_h_roi = pos_pair_h[frh:uph, frv:upv]
     pos_pair_v_roi = pos_pair_v[frh:uph, frv:upv]
 
     # Scaling coefficients, pairwise calculation.
-    (scaled_pos_pair_h,
-     scaled_pos_pair_v) = scaling_fit(pos_pair_h_roi,
-                                      pos_pair_v_roi,
-                                      pos_nom_h_roi,
-                                      pos_nom_v_roi,
-                                      "Pairwise")
+    (kxp, deltaxp,
+     kyp, deltayp) = scaling_fit(pos_pair_h_roi, pos_pair_v_roi,
+                                 pos_nom_h_roi, pos_nom_v_roi, "Pairwise")
+    scaled_pos_pair_h = kxp * pos_pair_h + deltaxp
+    scaled_pos_pair_v = kyp * pos_pair_v + deltayp
 
     # Plot scaled positions.
-    fig, (axcross, axpair) = plt.subplots(1, 2, figsize=(12, 6))
-    fig.tight_layout()
+    figp, (axpall, axpclose) = plt.subplots(1, 2, figsize=(14, 6))
 
-    axpair.set_title(f"Pairwise-blades positions @ {prm.beamline}")
-    scaled_positions_show(axpair, pos_nom_h, pos_nom_v,
+    axpall.set_title(f"Pairwise-blades positions @ {prm.beamline}")
+    scaled_positions_show(axpall, pos_nom_h, pos_nom_v,
                           scaled_pos_pair_h, scaled_pos_pair_v)
+    axpall.set_title(f"Pairwise-blades positions @ {prm.beamline} closeup")
+    scaled_positions_show(axpclose, pos_nom_h_roi, pos_nom_v_roi,
+                          scaled_pos_pair_h[frh:uph, frv:upv],
+                          scaled_pos_pair_v[frh:uph, frv:upv])
 
-    # Cross-blades calculation.
+    # ### Cross-blades calculation.
     pos_cr_h, pos_cr_v = beam_position_cross(blades)
 
     # Force offsets (uncomment)? Or let scaling solve the offset.
     # pos_cr_h -= pos_cr_h[halfh, halfv]
     # pos_cr_v -= pos_cr_v[halfh, halfv]
 
-    # ROI: cross.
+    # ROI: crossing blades.
     pos_cr_h_roi  = pos_cr_h[frh:uph, frv:upv]
     pos_cr_v_roi  = pos_cr_v[frh:uph, frv:upv]
 
     # Scaling coefficients, cross-blades calculation.
-    (scaled_pos_cr_h,
-     scaled_pos_cr_v) = scaling_fit(pos_cr_h_roi,
-                                    pos_cr_v_roi,
-                                    pos_nom_h_roi,
-                                    pos_nom_v_roi,
-                                    "Cross")
+    (kxc, deltaxc,
+     kyc, deltayc) = scaling_fit(pos_cr_h_roi,
+                                 pos_cr_v_roi,
+                                 pos_nom_h_roi,
+                                 pos_nom_v_roi,
+                                 "Cross")
+    scaled_pos_cr_h = kxc * pos_cr_h + deltaxc
+    scaled_pos_cr_v = kyc * pos_cr_v + deltayc
 
-    axcross.set_title(f"Cross-blades positions @ {prm.beamline}")
-    scaled_positions_show(axcross, pos_nom_h, pos_nom_v,
+    figc, (axcall, axcclose) = plt.subplots(1, 2, figsize=(14, 6))
+    # csc_cr_h, csc_cr_v = cross_correction(scaled_pos_cr_h, pos_nom_h,
+    #                                       scaled_pos_cr_v, pos_nom_v)
+    # scaled_positions_show(axcross, pos_nom_h, pos_nom_v,
+    #                       csc_cr_h, csc_cr_v)
+
+    axcall.set_title(f"Cross-blades positions @ {prm.beamline}")
+    scaled_positions_show(axcall, pos_nom_h, pos_nom_v,
                           scaled_pos_cr_h, scaled_pos_cr_v)
+    axpall.set_title(f"Pairwise-blades positions @ {prm.beamline} closeup")
+    scaled_positions_show(axcclose, pos_nom_h_roi, pos_nom_v_roi,
+                          scaled_pos_cr_h[frh:uph, frv:upv],
+                          scaled_pos_cr_v[frh:uph, frv:upv])
 
     sup = "raw" if nosuppress else "scaled"
-    outfile = (f"xbpm_{sup}_positions_{prm.beamline}.png")
-    fig.savefig(outfile)
-    print(f"\n Figure of scaled positions saved to file {outfile}.\n")
+    outfile_p = (f"xbpm_{sup}_pairwise_positions_{prm.beamline}.png")
+    figp.savefig(outfile_p)
+    print(f"\n Figure of scaled positions saved to file {outfile_p}.\n")
+
+    outfile_c = (f"xbpm_{sup}_cross_positions_{prm.beamline}.png")
+    figc.savefig(outfile_c)
+    print(f"\n Figure of scaled positions saved to file {outfile_c}.\n")
+
+    figp.tight_layout()
+    figc.tight_layout()
 
     return [pos_pair_h, pos_pair_v], [pos_cr_h, pos_cr_v]
 
 
 # Pairwise blades calculation.
 
-def suppression_matrix(range_h, range_v, blades_h, blades_v,
-                       show=False, nosuppress=False):
+
+def suppression_matrix(range_h, range_v, blades_h, blades_v, prm,
+                       showmatrix=False, nosuppress=False):
     """Calculate the suppression matrix.
 
     Args:
@@ -1074,8 +1100,9 @@ def suppression_matrix(range_h, range_v, blades_h, blades_v,
             horizontal central line.
         blades_v (numpy array) : data recorded by blade's measurements at
             vertical central line.
+        prm (dict) : general parameters of the system.
 
-        show (bool) : show blades' curves.
+        showmatrix (bool) : show blades' curves.
         nosuppress (bool) : return a matrix where gains are set to 1.
 
     Returns:
@@ -1092,10 +1119,6 @@ def suppression_matrix(range_h, range_v, blades_h, blades_v,
     for blade in blades_v.values():
         weight = 1. / blade[:, 1]
         pcv.append(np.polyfit(range_v, blade[:, 0], deg=1, w=weight))
-
-    if show:
-        blades_center_show(range_h, range_v, blades_h, blades_v,
-                           np.array(pch), np.array(pcv))
 
     # Normalize by the first blade and define suppression as 1/m.
     pcv = pcv[0] / np.abs(pcv)
@@ -1115,10 +1138,21 @@ def suppression_matrix(range_h, range_v, blades_h, blades_v,
         [pch[0, 0],  pch[1, 0],  pch[2, 0],  pch[3, 0]],   # noqa: E241
     ])
 
-    # DEBUG
-    # print(f" (SUP MAT) SUP MATRIX (nosuppress = {nosuppress}) ="
-    #       f" \n{supmat}\n")
-    # DEBUG
+    if showmatrix:
+        blades_center_show(range_h, range_v, blades_h, blades_v,
+                           np.array(pch), np.array(pcv))
+        print("\n Suppression matrix:")
+        for lin in supmat:
+            for col in lin:
+                print(f" {col:12.6f}", end='')
+            print("\n")
+        print("\n")
+
+    with open(f"supmat_{prm.beamline}.dat", 'w') as fs:
+        for lin in supmat:
+            for col in lin:
+                fs.write(f" {col:12.6f}")
+            fs.write("\n")
 
     return supmat
 
@@ -1208,9 +1242,26 @@ def beam_position_cross(blades):
     to, ti, bi, bo = blades
     v1 = (to - bi) / (to + bi)
     v2 = (ti - bo) / (ti + bo)
-    pos_h = (v1 - v2)
-    pos_v = (v1 + v2)
-    return [pos_h, pos_v]
+    hpos = (v1 - v2)
+    vpos = (v1 + v2)
+    return [hpos, vpos]
+
+
+def cross_correction(hpos, nhpos, vpos, nvpos):
+    """."""
+    halfh = int(hpos.shape[0] / 2)
+    hk, hdelta = np.polyfit(nhpos[:, halfh], hpos[:, halfh], deg=1)
+    new_hpos = 1/hk * (hpos - hdelta)
+    print(f"\n (Cross corrections) H: k = {hk}, delta = {hdelta}")
+
+    halfv = int(vpos.shape[0] / 2)
+    vk, vdelta = np.polyfit(nvpos[halfv, :], vpos[halfv, :], deg=1)
+    new_vpos = 1/vk * (vpos - vdelta)
+    print(f"\n (Cross corrections) V: k = {vk}, delta = {vdelta}")
+
+    return new_hpos, new_vpos
+
+# Show grid.
 
 
 def scaling_fit(pos_h, pos_v, nom_h, nom_v, calctype=""):
@@ -1228,23 +1279,35 @@ def scaling_fit(pos_h, pos_v, nom_h, nom_v, calctype=""):
     """
     print(f"\n#### {calctype} blades:")
 
+    # Clean up expurious numbers for fitting.
+    hfinitemask = np.isfinite(pos_h)
+    ph_cl = pos_h[hfinitemask]
+    nh_cl = nom_h[hfinitemask]
+    #
+    vfinitemask = np.isfinite(pos_v)
+    pv_cl = pos_v[vfinitemask]
+    nv_cl = nom_v[vfinitemask]
+
     try:
-        kx, deltax = np.polyfit(pos_h.ravel(), nom_h.ravel(), deg=1)
-        ky, deltay = np.polyfit(pos_v.ravel(), nom_v.ravel(), deg=1)
+        # Linear fit for scaling.
+        kx, deltax = np.polyfit(ph_cl, nh_cl, deg=1)
+        ky, deltay = np.polyfit(pv_cl, nv_cl, deg=1)
     except Exception as err:
         print(f"\n WARNING: when calculating scaling coefficients:\n{err}"
               "\n Setting to default values.")
         kx, deltax = 1., 0.
         ky, deltay = 1., 0.
 
-    scaled_h = kx * pos_h + deltax
-    scaled_v = ky * pos_v + deltay
+    print(f"kx = {kx:12.4f},   deltax = {deltax:12.4f}")
+    print(f"ky = {ky:12.4f},   deltay = {deltay:12.4f}\n")
+    return kx, deltax, ky, deltay
 
-    print(f"kx = {kx:.4f}, \t deltax = {deltax:.4f}")
-    print(f"ky = {ky:.4f}, \t deltay = {deltay:.4f}")
 
-    # return kx, deltax, scaled_h, ky, deltay, scaled_v
-    return scaled_h, scaled_v
+def invalidnum(x):
+    """Check whether a number is NaN or Inf."""
+    if np.isnan(x) or np.isinf(x):
+        return True
+    return False
 
 
 def scaled_positions_show(ax, pos_nom_h, pos_nom_v, pos_h, pos_v):
@@ -1259,10 +1322,6 @@ def scaled_positions_show(ax, pos_nom_h, pos_nom_v, pos_h, pos_v):
     """
     ax.plot(pos_nom_h, pos_nom_v, 'r+')
     ax.plot(pos_h, pos_v, 'bo')
-    hmin, hmax = np.min(pos_h), np.max(pos_h)
-    vmin, vmax = np.min(pos_v), np.max(pos_v)
-    ax.set_xlim(hmin, hmax)
-    ax.set_ylim(vmin, vmax)
     ax.set_xlabel(u"$x$ [$\\mu$m]")
     ax.set_ylabel(u"$y$ [$\\mu$m]")
     ax.set_aspect('equal', 'box')
@@ -1271,7 +1330,7 @@ def scaled_positions_show(ax, pos_nom_h, pos_nom_v, pos_h, pos_v):
 
 def blades_center_show(range_h, range_v, blades_h, blades_v, pch, pcv):
     """Show blades' behaviour and fittings at central sweep lines."""
-    fig, (axh, axv) = plt.subplots(1, 2, figsize=(13, 6))
+    fig, (axh, axv) = plt.subplots(1, 2, figsize=(14, 6))
 
     idx = 0
     for lbl, blade in blades_h.items():
@@ -1340,19 +1399,18 @@ def main():
         blades_show_at_center(*central_sweeps(data, prm, show=False))
 
     # Calculate beam position from XBPM data.
-    if prm.xbpmpositions:
+    if prm.xbpmpositions or prm.xbpmpositionsraw:
         csweeps = central_sweeps(data, prm)
-        ([pos_pair_h, pos_pair_v],
-         [pos_cr_h, pos_cr_v]) = xbpm_position_calc(data, prm, *csweeps,
-                                                     nosuppress=False,
-                                                     show=False)
+        # ([pos_pair_h, pos_pair_v],
+        #  [pos_cr_h, pos_cr_v]) =
+
+    if prm.xbpmpositions:
+        xbpm_position_calc(data, prm, *csweeps,
+                           nosuppress=False, showmatrix=True)
 
     if prm.xbpmpositionsraw:
-        csweeps = central_sweeps(data, prm)
-        ([pos_pair_h, pos_pair_v],
-         [pos_cr_h, pos_cr_v]) = xbpm_position_calc(data, prm, *csweeps,
-                                                    nosuppress=True,
-                                                    show=False)
+        xbpm_position_calc(data, prm, *csweeps,
+                           nosuppress=True, showmatrix=False)
 
     plt.show()
 
