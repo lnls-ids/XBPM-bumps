@@ -1,8 +1,13 @@
 #!/bin/env python3
 
+"""Plot data to compare calculated outputs from XBPM measurements.
+
+Compare calculated data without suppression matrix, with suppression matrix
+and with modified suppression matrix  by random walks (annealing).
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
-
 
 # Distance from source (its center) to XBPM at each beamline.
 # Obtained from comissioning reports.
@@ -95,10 +100,11 @@ def plot_graph(data, stype, dist, grname):
 
 beamline = "MNC1"
 dist = XBPMDISTS[beamline]
-wdir = "/home/arnaldo.filho/XBPM/medidas/results_2025/MNC_1_20250729/test/"
+wdir = "./"
 wfiles = [
     [f"xbpm_positions_pair_raw_{beamline}.dat", "Pair, Raw Calc.", 1.0, 1],
-    [f"xbpm_positions_pair_scaled_sort_{beamline}.dat", "Pair, Simple", 1.0, 2],
+    [f"xbpm_positions_pair_scaled_sort_{beamline}.dat",
+     "Pair, Simple", 1.0, 2],
     [f"rand_positions_sort_{beamline}.dat", "Pair, Random Walk", dist, 3]
     ]
 
