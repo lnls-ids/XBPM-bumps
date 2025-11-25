@@ -6,6 +6,7 @@ Compare calculated data without suppression matrix, with suppression matrix
 and with modified suppression matrix  by random walks (annealing).
 """
 
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -22,6 +23,18 @@ XBPMDISTS = {
     "MNC1": 15.740,
     "MNC2": 19.590,
 }
+
+
+def datafiles(beamline="<BEAMLINE>"):
+    """Define file names to be read."""
+    return [
+        [f"xbpm_positions_pair_raw_{beamline}.dat", "Pair, Raw Calc."],
+        [f"xbpm_positions_pair_scaled_sort_{beamline}.dat", "Pair, Simple"],
+        [f"rand_positions_sort_{beamline}.dat", "Pair, Random Walk"]
+    ]
+
+
+DATAFILENAMES = [f"{df[0]}" for df in datafiles()]
 
 
 def plot_graph(data, stype, dist, grname):
@@ -98,23 +111,68 @@ def plot_graph(data, stype, dist, grname):
     plt.savefig(grname, transparent=False, facecolor="white")
 
 
-beamline = "MNC1"
-dist = XBPMDISTS[beamline]
-wdir = "./"
-wfiles = [
-    [f"xbpm_positions_pair_raw_{beamline}.dat", "Pair, Raw Calc.", 1.0, 1],
-    [f"xbpm_positions_pair_scaled_sort_{beamline}.dat",
-     "Pair, Simple", 1.0, 2],
-    [f"rand_positions_sort_{beamline}.dat", "Pair, Random Walk", dist, 3]
-    ]
+HELP_DESCRIPTION = f"""
+The program tries to open three files with calculated positions.
 
-# wfile = "test_1r/rand_pos_sort.dat"
-# wfile = "rand_positions.dat"
+Data files' names must be:
 
-for wf, stype, dist, num in wfiles:
-    data = np.genfromtxt(wdir + wf)
-    grname = f"{wdir}/compare_{num}_{wf.strip('.dat')}.png"
-    plot_graph(data, stype, dist, grname)
-    print("#######################\n")
+{DATAFILENAMES[0]}
+{DATAFILENAMES[1]}
+{DATAFILENAMES[2]}
 
-plt.show()
+where <BEAMLINE> is defined with key -b, as above.
+
+Each data file must contain a set of four columns. First two are
+the 'nominal' values (x, y) of beam position; the next two are the 
+calculated horizontal and vertical positions, respectively.
+"""
+
+
+def cmd_options(argv=None):
+    """Get beamline choice from command line."""
+    parser = argparse.ArgumentParser(
+        prog="plot_res",
+        description="Plot XBPM's calculated positions.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"{HELP_DESCRIPTION}\n")
+
+    parser.add_argument(
+        '-b', '--beamline', type=str, required=True, dest="beamline",
+        help='Beamline to be analysed.'
+        )
+
+    args = parser.parse_args(argv)
+    return args.beamline
+
+
+def main():
+    """The main function."""
+    # Define beamline.
+    beamline = cmd_options()   # "MNC1"
+
+    if beamline not in XBPMDISTS.keys():
+        print(f" ERROR: {beamline} beamline not recognized. Aborting.")
+        return 1
+
+    # Distances.
+    print(f" Working in beamline {beamline}.\n")
+    dist = XBPMDISTS[beamline]
+
+    # Data files.
+    wdir = "./"
+    datafilestr = datafiles(beamline=beamline)
+    for num, (wfile, meastype) in enumerate(datafilestr):
+        try:
+            data = np.genfromtxt(wdir + wfile)
+            grname = f"{wdir}/compare_{num+1}_{wfile.strip('.dat')}.png"
+            plot_graph(data, meastype, dist, grname)
+        except Exception as err:
+            print(" ERROR: when trying to open file "
+                  f"{wdir + wfile}:\n{err}\n")
+
+        print("#######################\n")
+    plt.show()
+
+
+if __name__ == "__main__":
+    main()
