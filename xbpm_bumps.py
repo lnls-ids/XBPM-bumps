@@ -117,6 +117,8 @@ AMPSUB = {
     "uA" : 1e-6,   # micro
     "nA" : 1e-9,   # nano
     "pA" : 1e-12,  # pico
+    "fA" : 1e-15,  # femto
+    "aA" : 1e-18,  # atto
 }
 
 # Map of blades positions in each XBPM.
@@ -131,12 +133,13 @@ BLADEMAP = {
 
     # ## To be checked: ## #
     # "CAT2": {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+    "CNB": {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
     "CNB1": {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
     "CNB2": {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
     "MGN": {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
     "MGN1": {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
     "MGN2": {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-    "SIM":  {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+    "SIMUL":  {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
 }
 
 # The XBPM beamlines.
@@ -161,6 +164,7 @@ XBPMDISTS = {
     "CAT":  15.740,
     "CAT1": 15.740,
     "CAT2": 19.590,
+    "CNB": 15.740,
     "CNB1": 15.740,
     "CNB2": 19.590,
     "MGN1": 10.237,
@@ -326,10 +330,19 @@ def get_pickle_data(prm):
             except Exception:
                 print(' Invalid option.')
                 continue
+    else:
+        opt = 1
 
     prm.beamline = beamlines[opt - 1]
-    print(f"### Working beamline     :\t {BEAMLINENAME[prm.beamline[:3]]}"
-        f" ({prm.beamline})")
+    if prm.beamline not in BLADEMAP.keys():
+        print(f" ERROR: beamline {prm.beamline} not defined in blade maps.")
+        print(" Defined blade maps are:"
+              f" {', '.join(BLADEMAP.keys())}.")
+        print("\n Please, check your data. Aborting.")
+        sys.exit(0)
+
+    print("### Working beamline     :\t"
+          f" {BEAMLINENAME[prm.beamline[:3]]} ({prm.beamline})")
 
     prm.current  = rawdata[0][2]["current"]
     print(f"### Storage ring current :\t {prm.current} mA")
@@ -902,10 +915,6 @@ def blades_show_at_center(data, prm):
 
     (hrange, vrange,
      hblades, vblades) = central_sweeps(data, prm, show=False)
-
-    # DEBUG
-    # print(f"\n (BLADES SHOW) H KEYS = {blades_h.keys()}")
-    # DEBUG
 
     for key, blval in hblades.items():
         val = blval[:, 0]
