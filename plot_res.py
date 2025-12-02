@@ -28,7 +28,7 @@ XBPMDISTS = {
 def datafiles(beamline="<BEAMLINE>"):
     """Define file names to be read."""
     return [
-        [f"xbpm_positions_pair_raw_{beamline}.dat", "Pair, Raw Calc."],
+        [f"xbpm_positions_pair_raw_sort_{beamline}.dat", "Pair, Raw Calc."],
         [f"xbpm_positions_pair_scaled_sort_{beamline}.dat", "Pair, Simple"],
         [f"rand_positions_sort_{beamline}.dat", "Pair, Random Walk"]
     ]
@@ -127,6 +127,12 @@ where <BEAMLINE> is defined with key -b, as above.
 Each data file must contain a set of four columns. First two are
 the 'nominal' values (x, y) of beam position; the next two are the 
 calculated horizontal and vertical positions, respectively.
+
+CAVEAT: the word 'sort' in the input file names imply that the
+nominal values must be numerically in order--by the first column,
+then by second column--, because the ROI is extracted from the
+data ordering.
+
 """
 
 
@@ -143,14 +149,20 @@ def cmd_options(argv=None):
         help='Beamline to be analysed.'
         )
 
+    parser.add_argument(
+        '-m', '--multiply', action='store_true', required=False,
+        dest="multiply",
+        help='Multiply positions in rad by XBPM-to-source distance.'
+        )
+    
     args = parser.parse_args(argv)
-    return args.beamline
+    return args.beamline, args.multiply
 
 
 def main():
     """The main function."""
     # Define beamline.
-    beamline = cmd_options()   # "MNC1"
+    beamline, multiply = cmd_options()   # "MNC1"
 
     if beamline not in XBPMDISTS.keys():
         print(f" ERROR: {beamline} beamline not recognized. Aborting.")
@@ -158,7 +170,7 @@ def main():
 
     # Distances.
     print(f" Working in beamline {beamline}.\n")
-    dist = XBPMDISTS[beamline]
+    dist = XBPMDISTS[beamline] if multiply else 1.0
 
     # Data files.
     wdir = "./"

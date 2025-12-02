@@ -48,7 +48,6 @@ import os
 import sys
 from copy import deepcopy
 
-FIGDPI = 300  # DPI
 
 HELP_DESCRIPTION = (
 """
@@ -66,9 +65,11 @@ to correct the grid, then a linear scaling is calculated to set distances
 in micrometers.
 """)
 
+
 FILE_EXTENSION = ".pickle"    # Data file type.
 GRIDSTEP = 2                  # Default grid step.
 STD_ROI_SIZE = 2              # Default range for ROI.
+FIGDPI = 300                  # Figure dpi saving parameter.
 
 
 @dataclass
@@ -447,8 +448,8 @@ def beam_positions_from_bpm(rawdata, prm):
     ax.plot(xpos, np.array(ypos), 'bo', label="measured")
     ax.plot(xnom, ynom, 'r+', label="nominal")
 
-    ax.set_xlabel("$x$ [$\mu$m]")  # noqa: W605
-    ax.set_ylabel("$y$ [$\mu$m]")  # noqa: W605
+    ax.set_xlabel("$x$ [$\\mu$m]")  # noqa: W605
+    ax.set_ylabel("$y$ [$\\mu$m]")  # noqa: W605
     ax.set_title(f"Beam positions @ {prm.beamline} from BPM values")
 
     # fig.canvas.draw_idle()
@@ -871,7 +872,7 @@ def central_sweeps(data, prm, show=False):
 
         vline = (fit_cv_h[0, 0] * vrange + fit_cv_h[1, 0]) * prm.xbpmdist
         axv.plot(pos_cv_h[:, 0] * prm.xbpmdist,
-                 vrange * prm.xbpmdist, '^-', label="V sweep")
+                 vrange * prm.xbpmdist, 'o-', label="V sweep")
         axv.plot(vline, vrange * prm.xbpmdist, '^-', label="V fit")
         # ax.plot(vrange_cut, h_cv_pos[:, 0], 'o-', label="V sweep")
         # ax.plot(vrange, vline, '^-', label="V fit")
@@ -921,6 +922,8 @@ def blades_show_at_center(data, prm):
         wval = blval[:, 1]
 
         weight = 1. / wval
+        if np.isinf(weight).any:
+            weight = None
         (acoef, bcoef) = np.polyfit(hrange, val, deg=1, w=weight)
         axh.plot(hrange, hrange * acoef + bcoef, "o-", label=f"{key} fit")
         axh.errorbar(hrange, val, wval, fmt='^-', label=key)
@@ -932,6 +935,8 @@ def blades_show_at_center(data, prm):
         wval = blval[:, 1]
 
         weight = 1. / wval
+        if np.isinf(weight).any:
+            weight = None
         (acoef, bcoef) = np.polyfit(vrange, val, deg=1, w=weight)
         axv.plot(vrange, vrange * acoef + bcoef, "o-", label=f"{key} fit")
         axv.errorbar(vrange, val, wval, fmt='^-', label=key)
@@ -1137,11 +1142,15 @@ def suppression_matrix(range_h, range_v, blades_h, blades_v, prm,
     pch = list()
     for blade in blades_h.values():
         weight = 1. / blade[:, 1]
+        if np.isinf(weight).any:
+            weight = None
         pch.append(np.polyfit(range_h, blade[:, 0], deg=1, w=weight))
 
     pcv = list()
     for blade in blades_v.values():
         weight = 1. / blade[:, 1]
+        if np.isinf(weight).any:
+            weight = None
         pcv.append(np.polyfit(range_v, blade[:, 0], deg=1, w=weight))
 
     # Normalize by the first blade and define suppression as 1/m.
