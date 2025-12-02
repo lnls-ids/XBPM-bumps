@@ -306,11 +306,28 @@ def get_pickle_data(prm):
         with open(prm.workdir + "/" + file, 'rb') as df:
             rawdata.append(pickle.load(df))           # noqa: S301
 
-    beamlines = list(set([next(iter(dt[0])) for dt in rawdata]))
+    # beamlines = list(set([next(iter(dt[0])) for dt in rawdata]))
+    beamlines = sorted(list(set([dic for dt in rawdata for dic in dt[0]])))
+
     if len(beamlines) > 1:
-        print("WARNING: found these beamlines:\n"
-              " ".join(beamlines))
-    prm.beamline = beamlines[0]
+        print("\nWARNING: found these beamlines: " +
+              ", ".join(beamlines))
+        print(" Which one should I work on?")
+        for ii, bl in enumerate(beamlines):
+            print(f" {ii + 1} - {bl}")
+
+        opt = None
+        while opt is None:
+            try:
+                opt = int(input(" Pick your option: "))
+                if opt not in list(range(1, 1 + len(beamlines))):
+                    opt = None
+                    raise Exception
+            except Exception:
+                print(' Invalid option.')
+                continue
+
+    prm.beamline = beamlines[opt - 1]
     print(f"### Working beamline     :\t {BEAMLINENAME[prm.beamline[:3]]}"
         f" ({prm.beamline})")
 
