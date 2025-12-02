@@ -36,6 +36,8 @@ def datafiles(beamline="<BEAMLINE>"):
 
 DATAFILENAMES = [f"{df[0]}" for df in datafiles()]
 
+FIGDPI = 300  # DPI
+
 
 def plot_graph(data, stype, dist, grname):
     """."""
@@ -108,7 +110,7 @@ def plot_graph(data, stype, dist, grname):
     plt.colorbar(axcolor.images[0], ax=axcolor, label='Difference [$\\mu$m]')
     plt.grid(which="minor")
     plt.tight_layout()
-    plt.savefig(grname, transparent=False, facecolor="white")
+    plt.savefig(grname, transparent=False, facecolor="white", dpi=FIGDPI)
 
 
 HELP_DESCRIPTION = f"""

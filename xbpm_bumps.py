@@ -48,6 +48,7 @@ import os
 import sys
 from copy import deepcopy
 
+FIGDPI = 300  # DPI
 
 HELP_DESCRIPTION = (
 """
@@ -429,7 +430,7 @@ def beam_positions_from_bpm(rawdata, prm):
 
     if prm.outputfile:
         outfile = f"bpm_positions_{prm.beamline}.png"
-        fig.savefig(outfile)
+        fig.savefig(outfile, dpi=FIGDPI)
         print(f" Figure of positions calculated by BPM measurements "
               f"saved to file {outfile}.\n")
 
@@ -700,7 +701,7 @@ def blades_map_show(data, prm):
 
     if prm.outputfile:
         outfile = f"blade_map_{prm.beamline}.png"
-        fig.savefig(outfile)
+        fig.savefig(outfile, dpi=FIGDPI)
         print(f" Figure of blades' map saved to file {outfile}.\n")
 
 
@@ -859,7 +860,7 @@ def central_sweeps(data, prm, show=False):
 
         if prm.outputfile:
             outfile = f"xbpm_sweeps_{prm.beamline}.png"
-            fig.savefig(outfile)
+            fig.savefig(outfile, dpi=FIGDPI)
             print(f" Figure of central sweeps saved to file {outfile}.\n")
 
     return (hrange, vrange, hblades, vblades)
@@ -926,7 +927,7 @@ def blades_show_at_center(data, prm):
 
     if prm.outputfile:
         outfile = f"central_sweep_{prm.beamline}.png"
-        fig.savefig(outfile)
+        fig.savefig(outfile, dpi=FIGDPI)
         print(" Figure of blades behaviour at central sweeps"
               f" saved to file {outfile}.\n")
 
@@ -1057,12 +1058,12 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
     if prm.outputfile:
         sup = "raw" if nosuppress else "scaled"
         outfile_p = (f"xbpm_pairwise_positions_{sup}_{prm.beamline}.png")
-        figp.savefig(outfile_p)
+        figp.savefig(outfile_p, dpi=FIGDPI)
         print(" Figure of positions by pairwise blades calculations"
               f" saved to file {outfile_p}.\n")
 
         outfile_c = (f"xbpm_cross_positions_{sup}_{prm.beamline}.png")
-        figc.savefig(outfile_c)
+        figc.savefig(outfile_c, dpi=FIGDPI)
         print(" Figure of positions by cross-blades calculations"
               f" saved to file {outfile_c}.\n")
 
