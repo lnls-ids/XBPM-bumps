@@ -205,7 +205,7 @@ def cmd_options(argv=None):  # noqa: C901
 
     parser.add_argument(
         '-c', action='store_true', dest='showbladescenter',
-        help="Show blades' central lines response while sweeping",
+        help="Show each blade's response at central line sweeps",
         )
 
     parser.add_argument(
@@ -215,7 +215,7 @@ def cmd_options(argv=None):  # noqa: C901
 
     parser.add_argument(
         '-s', action='store_true', dest='centralsweep',
-        help='Analysis of blades by sweeping through center'
+        help='Positions when sweeping through center'
         )
 
     parser.add_argument(
@@ -675,16 +675,21 @@ def blades_fetch(rawdata, beamline):
             positions, work as indices.
     """
     data = dict()
+
     for dt in rawdata:
-        xbpm = dt[0][beamline]
-        vals = list()
-        for blade in BLADEMAP[beamline].values():
-            # Average and std dev over measured values of current blade.
-            av, sd = blade_average(xbpm[f'{blade}_val'], beamline)
-            vals.append((av, sd))
-        bpm_x = dt[2]['agx']
-        bpm_y = dt[2]['agy']
-        data[bpm_x, bpm_y] = np.array(vals)
+        try:
+            xbpm = dt[0][beamline]
+            vals = list()
+            for blade in BLADEMAP[beamline].values():
+                # Average and std dev over measured values of current blade.
+                av, sd = blade_average(xbpm[f'{blade}_val'], beamline)
+                vals.append((av, sd))
+            bpm_x = dt[2]['agx']
+            bpm_y = dt[2]['agy']
+            data[bpm_x, bpm_y] = np.array(vals)
+        except Exception as err:
+            print("\n WARNING: when fetching blades' values and averaging:"
+                  f" {err}\n")
     return data
 
 
@@ -765,8 +770,9 @@ def data_parse(data):
         indexing of the numpy arrrays to, ti, bi, bo are the conventional ones,
         so the [0, 0] index corresponds to the left-upmost position etc.
     """
-    nh = np.unique(np.array(list(data.keys()))[:, 0])
-    nv = np.unique(np.array(list(data.keys()))[:, 1])
+    dk = np.array(list(data.keys()))
+    nh = np.unique(dk[:, 0])
+    nv = np.unique(dk[:, 1])
     ngrid = (nv.shape[0], nh.shape[0])
     to,  ti  = np.zeros(ngrid), np.zeros(ngrid)
     bo,  bi  = np.zeros(ngrid), np.zeros(ngrid)
@@ -778,6 +784,12 @@ def data_parse(data):
             key = (nc, nl)
             ilin = ngrid[0] - ii - 1
             icol = jj
+
+            # Check whether data ends prematurely.
+            if jj + ii * nc > dk.shape[0]:
+                break
+            if ii + jj * nl > dk.shape[0]:
+                break
             try:
                 to[ilin, icol]  = data[key][0, 0]
                 ti[ilin, icol]  = data[key][1, 0]
@@ -789,8 +801,11 @@ def data_parse(data):
                 sbi[ilin, icol] = data[key][2, 1]
                 sbo[ilin, icol] = data[key][3, 1]
             except Exception as err:
-                print("\n WARNING (when trying to parse blade data):"
-                      f"\n{err}\n")
+                print(f"\n WARNING, when trying to parse blade data: {err}"
+                      f"\n nominal position: {err},"
+                      f" array index: {ilin}, {icol}"
+                      "\n Maybe data grid is incomplete?")
+
     return [to, ti, bi, bo], [sto, sti, sbi, sbo], nh[-1]
 
 
@@ -1315,18 +1330,22 @@ def position_dict_parse(data, gridstep):
     xbpm_meas_h = np.zeros((gsh_lin, gsh_col))
     xbpm_meas_v = np.zeros((gsh_lin, gsh_col))
 
-    maxval_h = np.max(gridlist[:, 0])
+    minval_h = np.min(gridlist[:, 0])
     maxval_v = np.max(gridlist[:, 1])
     for key, val in data.items():
-        lin = int((maxval_v + key[1]) / gridstep)
-        col = int((maxval_h + key[0]) / gridstep)
+        col = int((key[0] - minval_h) / gridstep)
+        lin = int((key[1] - maxval_v) / gridstep)
+
+        # lin = int((maxval_v + key[1]) / gridstep)
+        # col = int((maxval_h + key[0]) / gridstep)
         try:
             xbpm_nom_h[lin, col]  = key[0]
             xbpm_nom_v[lin, col]  = key[1]
             xbpm_meas_h[lin, col] = val[0]
             xbpm_meas_v[lin, col] = val[1]
         except Exception as err:
-            print(f"\n WARNING: when parsing positions dictionary:\n{err}")
+            print(f"\n WARNING: failed when parsing positions dictionary:"
+                  f"\n{err}\n lin, col = {lin}, {col}, key = {key}")
             continue
 
     return (xbpm_nom_h, xbpm_nom_v, xbpm_meas_h, xbpm_meas_v)
