@@ -465,6 +465,7 @@ def beam_positions_from_bpm(rawdata, prm):
     ax.set_xlabel("$x$ [$\\mu$m]")  # noqa: W605
     ax.set_ylabel("$y$ [$\\mu$m]")  # noqa: W605
     ax.set_title(f"Beam positions @ {prm.beamline} from BPM values")
+    ax.axis("equal")
 
     # fig.canvas.draw_idle()
     # lim = np.max(xnom + ynom) * 1.2
@@ -607,21 +608,21 @@ def std_dev_bpm_estimate(xnom, ynom, xpos, ypos):
         xpos (list) : the measured value of x-coordinate;
         ypos (list) : the measured value of y-coordinate.
     """
-    npxnom = np.array(xnom)
-    npynom = np.array(ynom)
-    npxpos = np.array(xpos)
-    npypos = np.array(ypos)
+    np_x_nom = np.array(xnom)
+    np_y_nom = np.array(ynom)
+    np_x_pos = np.array(xpos)
+    np_y_pos = np.array(ypos)
 
     # Values for all sites in the grid.
-    nfh = npxnom.shape[0]
-    nfv = npynom.shape[0]
-    diff_h = np.abs(npxnom.ravel() - npxpos.ravel())
+    nfh = np_x_nom.shape[0]
+    nfv = np_y_nom.shape[0]
+    diff_h = np.abs(np_x_nom.ravel() - np_x_pos.ravel())
     diff_h_max = np.max(diff_h)
     sig2_h = np.sum(diff_h**2) / nfh
     #
-    diff_v = np.abs(npynom.ravel() - npypos.ravel())
+    diff_v = np.abs(np_y_nom.ravel() - np_y_pos.ravel())
     diff_v_max = np.max(diff_v)
-    sig2_v = np.sum(diff_v**2) / nfh
+    sig2_v = np.sum(diff_v**2) / nfv
 
     print("Sigmas:\n"
         f"   (all sites)     H = {np.sqrt(sig2_h):.4f}\n"
@@ -632,30 +633,39 @@ def std_dev_bpm_estimate(xnom, ynom, xpos, ypos):
         f"   (all sites) V = {diff_v_max:.4f},\n")
 
     # Values for ROI.
-    nshx, nshy = len(set(xnom)), len(set(ynom))
-    nmax = nshx * nshy
+    nsh_x, nsh_y = len(set(xnom)), len(set(ynom))
+    nmax = nsh_x * nsh_y
 
-    if (nmax > nfh or nmax > nfv or nshx == 1 or nshy == 1):
+    if nmax > nfh or nmax > nfv:
         print("\n WARNING: sweeping looks incomplete, no ROI was defined. "
               " (Maybe just one line swept?)")
+        return
+     
+    frh, uptoh = int(nsh_x / 2 - 2), int(nsh_x / 2 + 2)
+    frv, uptov = int(nsh_y / 2 - 2), int(nsh_y / 2 + 2)
+
+    if nsh_x == 1 or nsh_y == 1:
+        np_x_nom_cut = np_x_nom.reshape(nsh_x, nsh_y)[0, frv:uptov]
+        np_y_nom_cut = np_y_nom.reshape(nsh_x, nsh_y)[0, frv:uptov]
+        np_x_pos_cut = np_x_pos.reshape(nsh_x, nsh_y)[0, frv:uptov]
+        np_y_pos_cut = np_y_pos.reshape(nsh_x, nsh_y)[0, frv:uptov]
     else:
-        fr, upto = int(nshx / 2 - 2), int(nshy / 2 + 2)
-        npxnom_cut = npxnom.reshape(nshx, nshy)[fr:upto, fr:upto]
-        npynom_cut = npynom.reshape(nshx, nshy)[fr:upto, fr:upto]
-        npxpos_cut = npxpos.reshape(nshx, nshy)[fr:upto, fr:upto]
-        npypos_cut = npypos.reshape(nshx, nshy)[fr:upto, fr:upto]
+        np_x_nom_cut = np_x_nom.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
+        np_y_nom_cut = np_y_nom.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
+        np_x_pos_cut = np_x_pos.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
+        np_y_pos_cut = np_y_pos.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
 
-        sig2_v_roi = np.sum((npynom_cut.ravel() -
-                             npypos_cut.ravel())**2) / nfv
-        sig2_h_roi = np.sum((npxnom_cut.ravel() -
-                             npxpos_cut.ravel())**2) / nfh
+    sig2_v_roi = np.sum((np_y_nom_cut.ravel() -
+                            np_y_pos_cut.ravel())**2) / nfv
+    sig2_h_roi = np.sum((np_x_nom_cut.ravel() -
+                            np_x_pos_cut.ravel())**2) / nfh
 
-        print("  Differences in ROI\n"
-              f"   (x in [{np.min(npxnom_cut)}, {np.max(npxnom_cut)}];"
-              f"  y in [{np.min(npynom_cut)}, {np.max(npynom_cut)}])\n"
-              f"       H = {np.sqrt(sig2_h_roi):.4f}\n"
-              f"       V = {np.sqrt(sig2_v_roi):.4f},\n"
-              f"   total = {np.sqrt(sig2_h_roi + sig2_v_roi):.4f}")
+    print("  Differences in ROI\n"
+            f"   (x in [{np.min(np_x_nom_cut)}, {np.max(np_x_nom_cut)}];"
+            f"  y in [{np.min(np_y_nom_cut)}, {np.max(np_y_nom_cut)}])\n"
+            f"       H = {np.sqrt(sig2_h_roi):.4f}\n"
+            f"       V = {np.sqrt(sig2_v_roi):.4f},\n"
+            f"   total = {np.sqrt(sig2_h_roi + sig2_v_roi):.4f}")
 
 
 # ## Select data.
@@ -809,7 +819,79 @@ def data_parse(data):
     return [to, ti, bi, bo], [sto, sti, sbi, sbo], nh[-1]
 
 
-# ## Sweep through horizontal and vertical central lines.
+# ## Sweep through horizontal and vertical central lines and show XBPM data.
+
+def blades_show_at_center(data, prm):
+    """Show blades' measurements along the central sweeping points.
+
+    Given the grid of positions formed by the displacements of the beam due
+    to bumps on it, show the intensities measured by each blade along the
+    sweeping.
+
+    Args:
+        data (dict) : measured data from XBPM. Keys are nominal positions,
+            values are measured counts/currents.
+        prm (dict) : general parameters of the analysis.
+
+    """
+    (hrange, vrange, hblades, vblades) = central_sweeps(data, prm,
+                                                        show=False)
+
+    if hblades is None and vblades is None:
+        print("\n WARNING: could not retrieve blades' currents,"
+              " maybe there is insufficient data."
+              " Skipping central analysis.")
+        return
+
+    fig, (axh, axv) = plt.subplots(1, 2, figsize=(10, 5))
+
+    if hblades is not None:
+        for key, blval in hblades.items():
+            val = blval[:, 0]
+            wval = blval[:, 1]
+
+            weight = 1. / wval
+            if np.isinf(weight).any:
+                weight = None
+            (acoef, bcoef) = np.polyfit(hrange, val, deg=1, w=weight)
+            axh.plot(hrange, hrange * acoef + bcoef, "o-", label=f"{key} fit")
+            axh.errorbar(hrange, val, wval, fmt='^-', label=key)
+
+            axh.plot()
+
+    if vblades is not None:
+        for key, blval in vblades.items():
+            val = blval[:, 0]
+            wval = blval[:, 1]
+
+            weight = 1. / wval
+            if np.isinf(weight).any:
+                weight = None
+            (acoef, bcoef) = np.polyfit(vrange, val, deg=1, w=weight)
+            axv.plot(vrange, vrange * acoef + bcoef, "o-", label=f"{key} fit")
+            axv.errorbar(vrange, val, wval, fmt='^-', label=key)
+
+    axh.set_title("Horizontal")
+    axv.set_title("Vertical")
+    axh.legend()
+    axv.legend()
+    axh.grid()
+    axv.grid()
+    xlabelh = u"$x$ $\\mu$m"
+    xlabelv = u"$y$ $\\mu$m"
+    ylabel = u"$I$ [A] / # (counts)"
+    axh.set_xlabel(xlabelh)
+    axh.set_ylabel(ylabel)
+    axv.set_xlabel(xlabelv)
+    axv.set_ylabel(ylabel)
+    fig.tight_layout()
+
+    if prm.outputfile:
+        outfile = f"central_sweep_{prm.beamline}.png"
+        fig.savefig(outfile, dpi=FIGDPI)
+        print(" Figure of blades behaviour at central sweeps"
+              f" saved to file {outfile}.\n")
+
 
 def central_sweeps(data, prm, show=False):
     """Check each blade's behaviour at symmetric positions.
@@ -960,77 +1042,6 @@ def central_sweeps_show(hrange, vrange,
         print(f" Figure of central sweeps saved to file {outfile}.\n")
 
 
-# ## Show XBPM data at central lines.
-
-def blades_show_at_center(data, prm):
-    """Show blades' measurements along the central sweeping points.
-
-    Given the grid of positions formed by the displacements of the beam due
-    to bumps on it, show the intensities measured by each blade along the
-    sweeping.
-
-    Args:
-        data (dict) : measured data from XBPM. Keys are nominal positions,
-            values are measured counts/currents.
-        prm (dict) : general parameters of the analysis.
-
-    """
-    (hrange, vrange, hblades, vblades) = central_sweeps(data, prm,
-                                                        show=False)
-
-    if hblades is None or vblades is None:
-        print("\n WARNING: could not retrieve blades' currents,"
-              " maybe there is insufficient data."
-              " Skipping central analysis.")
-        return
-
-    fig, (axh, axv) = plt.subplots(1, 2, figsize=(10, 5))
-
-    for key, blval in hblades.items():
-        val = blval[:, 0]
-        wval = blval[:, 1]
-
-        weight = 1. / wval
-        if np.isinf(weight).any:
-            weight = None
-        (acoef, bcoef) = np.polyfit(hrange, val, deg=1, w=weight)
-        axh.plot(hrange, hrange * acoef + bcoef, "o-", label=f"{key} fit")
-        axh.errorbar(hrange, val, wval, fmt='^-', label=key)
-
-        axh.plot()
-
-    for key, blval in vblades.items():
-        val = blval[:, 0]
-        wval = blval[:, 1]
-
-        weight = 1. / wval
-        if np.isinf(weight).any:
-            weight = None
-        (acoef, bcoef) = np.polyfit(vrange, val, deg=1, w=weight)
-        axv.plot(vrange, vrange * acoef + bcoef, "o-", label=f"{key} fit")
-        axv.errorbar(vrange, val, wval, fmt='^-', label=key)
-
-    axh.set_title("Horizontal")
-    axv.set_title("Vertical")
-    axh.legend()
-    axv.legend()
-    axh.grid()
-    axv.grid()
-    xlabelh = u"$x$ $\\mu$m"
-    xlabelv = u"$y$ $\\mu$m"
-    ylabel = u"$I$ [A] / # (counts)"
-    axh.set_xlabel(xlabelh)
-    axh.set_ylabel(ylabel)
-    axv.set_xlabel(xlabelv)
-    axv.set_ylabel(ylabel)
-    fig.tight_layout()
-
-    if prm.outputfile:
-        outfile = f"central_sweep_{prm.beamline}.png"
-        fig.savefig(outfile, dpi=FIGDPI)
-        print(" Figure of blades behaviour at central sweeps"
-              f" saved to file {outfile}.\n")
-
 
 # ## Beam position from XBPM data.
 
@@ -1088,16 +1099,27 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
     frv, upv = halfv - abv, halfv + abv + 1
 
     # ROI: nominal.
-    pos_nom_h_roi  = pos_nom_h[frh:uph, frv:upv]
-    pos_nom_v_roi  = pos_nom_v[frh:uph, frv:upv]
+    if pos_nom_h.shape[0] == 1 or pos_nom_v.shape[0] == 1: 
+        pos_nom_h_roi = pos_nom_h[0, frv:upv]
+        pos_nom_v_roi = pos_nom_v[0, frv:upv]
+    elif pos_nom_h.shape[1] == 1 or pos_nom_v.shape[1] == 1:
+        pos_nom_h_roi = pos_nom_h[frv:upv, 0]
+        pos_nom_v_roi = pos_nom_v[frv:upv, 0]
+    else:
+        pos_nom_h_roi  = pos_nom_h[frh:uph, frv:upv]
+        pos_nom_v_roi  = pos_nom_v[frh:uph, frv:upv]
 
-    # Force offsets (uncomment)? Or let scaling solve the offset.
-    # pos_pair_h -= pos_pair_h[halfh, halfv]
-    # pos_pair_v -= pos_pair_v[halfh, halfv]
-
-    # ROI: pairwise blades.
-    pos_pair_h_roi = pos_pair_h[frh:uph, frv:upv]
-    pos_pair_v_roi = pos_pair_v[frh:uph, frv:upv]
+    # ### Pairwise-blades calculation.
+    # ROI.
+    if pos_nom_h.shape[0] == 1 or pos_nom_v.shape[0] == 1:
+        pos_pair_h_roi = pos_pair_h[0, frv:upv]
+        pos_pair_v_roi = pos_pair_v[0, frv:upv]
+    elif pos_nom_h.shape[1] == 1 or pos_nom_v.shape[1] == 1:
+        pos_pair_h_roi = pos_pair_h[frv:upv, 0]
+        pos_pair_v_roi = pos_pair_v[frv:upv, 0]
+    else:
+        pos_pair_h_roi = pos_pair_h[frh:uph, frv:upv]
+        pos_pair_v_roi = pos_pair_v[frh:uph, frv:upv]
 
     # Scaling coefficients, pairwise calculation.
     (kxp, deltaxp,
@@ -1126,8 +1148,15 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
     # pos_cr_v -= pos_cr_v[halfh, halfv]
 
     # ROI: crossing blades.
-    pos_cr_h_roi  = pos_cr_h[frh:uph, frv:upv]
-    pos_cr_v_roi  = pos_cr_v[frh:uph, frv:upv]
+    if pos_nom_h.shape[0] == 1 or pos_nom_v.shape[0] == 1:
+        pos_cr_h_roi  = pos_cr_h[0, frv:upv]
+        pos_cr_v_roi  = pos_cr_v[0, frv:upv]
+    elif pos_nom_h.shape[1] == 1 or pos_nom_v.shape[1] == 1:
+        pos_cr_h_roi  = pos_cr_h[frv:upv, 0]
+        pos_cr_v_roi  = pos_cr_v[frv:upv, 0]
+    else:
+        pos_cr_h_roi  = pos_cr_h[frh:uph, frv:upv]
+        pos_cr_v_roi  = pos_cr_v[frh:uph, frv:upv]
 
     # Scaling coefficients, cross-blades calculation.
     (kxc, deltaxc,
@@ -1334,10 +1363,8 @@ def position_dict_parse(data, gridstep):
     maxval_v = np.max(gridlist[:, 1])
     for key, val in data.items():
         col = int((key[0] - minval_h) / gridstep)
-        lin = int((key[1] - maxval_v) / gridstep)
+        lin = int((maxval_v - key[1]) / gridstep)
 
-        # lin = int((maxval_v + key[1]) / gridstep)
-        # col = int((maxval_h + key[0]) / gridstep)
         try:
             xbpm_nom_h[lin, col]  = key[0]
             xbpm_nom_v[lin, col]  = key[1]
@@ -1406,17 +1433,17 @@ def scaling_fit(pos_h, pos_v, nom_h, nom_v, calctype=""):
 
     # Clean up expurious numbers for fitting.
     hfinitemask = np.isfinite(pos_h)
-    ph_cl = pos_h[hfinitemask]
-    nh_cl = nom_h[hfinitemask]
+    ph_cln = pos_h[hfinitemask]
+    nh_cln = nom_h[hfinitemask]
     #
     vfinitemask = np.isfinite(pos_v)
-    pv_cl = pos_v[vfinitemask]
-    nv_cl = nom_v[vfinitemask]
+    pv_cln = pos_v[vfinitemask]
+    nv_cln = nom_v[vfinitemask]
 
     try:
         # Linear fit for scaling.
-        kx, deltax = np.polyfit(ph_cl, nh_cl, deg=1)
-        ky, deltay = np.polyfit(pv_cl, nv_cl, deg=1)
+        kx, deltax = np.polyfit(ph_cln, nh_cln, deg=1)
+        ky, deltay = np.polyfit(pv_cln, nv_cln, deg=1)
     except Exception as err:
         print(f"\n WARNING: when calculating scaling coefficients:\n{err}"
               "\n Setting to default values.")
