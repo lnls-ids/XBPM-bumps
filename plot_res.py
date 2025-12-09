@@ -39,7 +39,7 @@ DATAFILENAMES = [f"{df[0]}" for df in datafiles()]
 FIGDPI = 300  # DPI
 
 
-def plot_graph(data, stype, dist, grname):
+def plot_graph(data, stype, dist, grname, beamline):
     """."""
     print(f"##### Type of analysis: {stype} ")
 
@@ -56,7 +56,8 @@ def plot_graph(data, stype, dist, grname):
         xc = data[:, 2] * dist
         yc = data[:, 3] * dist
 
-    fr, to = 3, 8
+    midpoint = int(len(xn) / 2)
+    fr, to = midpoint - 2, midpoint + 3
     fig, (axall, axroi, axcolor) = plt.subplots(1, 3, figsize=(15, 4))
     axall.plot(xn.ravel(), yn.ravel(), 'r+', label='Nom')
     axall.plot(xc.ravel(), yc.ravel(), 'bo', label='Calc')
@@ -80,7 +81,7 @@ def plot_graph(data, stype, dist, grname):
     for ax, tt in ([axall, "All sites"], [axroi, "Close up"]):
         ax.set_xlabel(u'$x$ [$\\mu$m]')
         ax.set_ylabel(u'$y$ [$\\mu$m]')
-        ax.set_title(f"XBPM 1 @ MNC, {stype}, {tt}")
+        ax.set_title(f"XBPM @ {beamline}, {stype}, {tt}")
         ax.axis('equal')
         ax.grid()
         ax.legend()
@@ -113,7 +114,7 @@ def plot_graph(data, stype, dist, grname):
     # axhist.set_xlabel('Difference (um)')
     # axhist.set_ylabel('Frequency')
     # axhist.set_title('Histogram of Differences')
- 
+
     # alldiff = np.sqrt(((xn - xc) ** 2 + (yn - yc) ** 2))
     # Use pcolormesh for 2D data or scatter plot for 1D data
     if len(diff.shape) > 1:
@@ -145,7 +146,7 @@ Data files' names must be:
 where <BEAMLINE> is defined with key -b, as above.
 
 Each data file must contain a set of four columns. First two are
-the 'nominal' values (x, y) of beam position; the next two are the 
+the 'nominal' values (x, y) of beam position; the next two are the
 calculated horizontal and vertical positions, respectively.
 
 CAVEAT: the word 'sort' in the input file names imply that the
@@ -204,7 +205,7 @@ def main():
                   f"{wdir + wfile}:\n{err}\n")
             continue
 
-        plot_graph(data, meastype, dist, grname)
+        plot_graph(data, meastype, dist, grname, beamline)
 
         print("#######################\n")
     plt.show()

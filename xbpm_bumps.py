@@ -1464,8 +1464,8 @@ def scaling_fit(pos_h, pos_v, nom_h, nom_v, calctype=""):
         try:
             ky, deltay = np.polyfit(pv_cln, nv_cln, deg=1)
         except Exception as err:
-            print(f"\n WARNING: when calculating vertical scaling coefficients:"
-                f"\n{err}\n Setting to default values.")
+            print(f"\n WARNING: when calculating vertical scaling"
+                  f" coefficients:\n{err}\n Setting to default values.")
 
     print(f"kx = {kx:12.4f},   deltax = {deltax:12.4f}")
     print(f"ky = {ky:12.4f},   deltay = {deltay:12.4f}\n")
