@@ -43,20 +43,34 @@ def plot_graph(data, stype, dist, grname):
     """."""
     print(f"##### Type of analysis: {stype} ")
 
-    xn = data[:, 0].reshape(11, 11) * dist
-    yn = data[:, 1].reshape(11, 11) * dist
-    xc = data[:, 2].reshape(11, 11) * dist
-    yc = data[:, 3].reshape(11, 11) * dist
+    try:
+        resh = int(np.sqrt(data.shape[0]))
+        xn = data[:, 0].reshape(resh, resh) * dist
+        yn = data[:, 1].reshape(resh, resh) * dist
+        xc = data[:, 2].reshape(resh, resh) * dist
+        yc = data[:, 3].reshape(resh, resh) * dist
+    except Exception as err:
+        print(f" WARNING: keeping data as 1D arrays:\n {err}\n")
+        xn = data[:, 0] * dist
+        yn = data[:, 1] * dist
+        xc = data[:, 2] * dist
+        yc = data[:, 3] * dist
 
     fr, to = 3, 8
     fig, (axall, axroi, axcolor) = plt.subplots(1, 3, figsize=(15, 4))
     axall.plot(xn.ravel(), yn.ravel(), 'r+', label='Nom')
     axall.plot(xc.ravel(), yc.ravel(), 'bo', label='Calc')
 
-    xnroi = xn[fr:to, fr:to]
-    ynroi = yn[fr:to, fr:to]
-    xcroi = xc[fr:to, fr:to]
-    ycroi = yc[fr:to, fr:to]
+    if len(xn.shape) < 2:
+        xnroi = xn[fr:to]
+        ynroi = yn[fr:to]
+        xcroi = xc[fr:to]
+        ycroi = yc[fr:to]
+    else:
+        xnroi = xn[fr:to, fr:to]
+        ynroi = yn[fr:to, fr:to]
+        xcroi = xc[fr:to, fr:to]
+        ycroi = yc[fr:to, fr:to]
 
     axroi.plot(xnroi.ravel(),
             ynroi.ravel(), 'r+', label='Nom')
@@ -76,8 +90,8 @@ def plot_graph(data, stype, dist, grname):
     # nsites = (to - fr) ** 2
     # diff = np.sqrt((xn[fr:to, fr:to] - xc[fr:to, fr:to]) ** 2 +
     #                (yn[fr:to, fr:to] - yc[fr:to, fr:to]) ** 2) / nsites
-    diffx2 = (xn[fr:to, fr:to] - xc[fr:to, fr:to]) ** 2
-    diffy2 = (yn[fr:to, fr:to] - yc[fr:to, fr:to]) ** 2
+    diffx2 = (xnroi - xcroi) ** 2
+    diffy2 = (ynroi - ycroi) ** 2
     diffx = np.sqrt(diffx2)
     diffy = np.sqrt(diffy2)
 
@@ -99,15 +113,21 @@ def plot_graph(data, stype, dist, grname):
     # axhist.set_xlabel('Difference (um)')
     # axhist.set_ylabel('Frequency')
     # axhist.set_title('Histogram of Differences')
-
+ 
     # alldiff = np.sqrt(((xn - xc) ** 2 + (yn - yc) ** 2))
-    axcolor.imshow(diff, origin='lower',
-                extent=(xnroi.min(), xnroi.max(),
-                        ynroi.min(), ynroi.max()))
+    # Use pcolormesh for 2D data or scatter plot for 1D data
+    if len(diff.shape) > 1:
+        im = axcolor.pcolormesh(xnroi, ynroi, diff,
+                                shading='auto', cmap='viridis')
+        axcolor.set_title('Color Map of Differences')
+        plt.colorbar(im, ax=axcolor, label='Difference [$\\mu$m]')
+    else:
+        scatter = axcolor.scatter(xnroi, ynroi, c=diff, cmap='viridis', s=50)
+        axcolor.set_title('Scatter Plot of Differences')
+        plt.colorbar(scatter, ax=axcolor, label='Difference [$\\mu$m]')
     axcolor.set_xlabel(u'$x$ [$\\mu$m]')
     axcolor.set_ylabel(u'$y$ [$\\mu$m]')
-    axcolor.set_title('Color Map of Differences')
-    plt.colorbar(axcolor.images[0], ax=axcolor, label='Difference [$\\mu$m]')
+    # plt.colorbar(axcolor.images[0], ax=axcolor, label='Difference [$\\mu$m]')
     plt.grid(which="minor")
     plt.tight_layout()
     plt.savefig(grname, transparent=False, facecolor="white", dpi=FIGDPI)
@@ -154,7 +174,7 @@ def cmd_options(argv=None):
         dest="multiply",
         help='Multiply positions in rad by XBPM-to-source distance.'
         )
-    
+
     args = parser.parse_args(argv)
     return args.beamline, args.multiply
 
@@ -179,10 +199,12 @@ def main():
         try:
             data = np.genfromtxt(wdir + wfile)
             grname = f"{wdir}/compare_{num+1}_{wfile.strip('.dat')}.png"
-            plot_graph(data, meastype, dist, grname)
         except Exception as err:
             print(" ERROR: when trying to open file "
                   f"{wdir + wfile}:\n{err}\n")
+            continue
+
+        plot_graph(data, meastype, dist, grname)
 
         print("#######################\n")
     plt.show()

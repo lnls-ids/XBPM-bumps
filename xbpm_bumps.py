@@ -126,21 +126,21 @@ AMPSUB = {
 # TO, TI, BO, BI : top/bottom, in/out, relative to the storage ring;
 # A, B, C, D : names of respective P.V.s
 BLADEMAP = {
-    "MNC": {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-    "MNC1": {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-    "MNC2": {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-    "CAT":  {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-    "CAT1": {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+    "MNC"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+    "MNC1" : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+    "MNC2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+    "CAT"  : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+    "CAT1" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
 
     # ## To be checked: ## #
     # "CAT2": {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-    "CNB": {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-    "CNB1": {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-    "CNB2": {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-    "MGN": {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-    "MGN1": {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-    "MGN2": {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-    "SIMUL":  {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+    "CNB"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+    "CNB1" : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+    "CNB2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+    "MGN"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+    "MGN1" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+    "MGN2" : {"TO": 'B', "TI": 'C', "BI": 'A', "BO": 'D'},
+    "SIMUL": {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
 }
 
 # The XBPM beamlines.
@@ -640,7 +640,7 @@ def std_dev_bpm_estimate(xnom, ynom, xpos, ypos):
         print("\n WARNING: sweeping looks incomplete, no ROI was defined. "
               " (Maybe just one line swept?)")
         return
-     
+
     frh, uptoh = int(nsh_x / 2 - 2), int(nsh_x / 2 + 2)
     frv, uptov = int(nsh_y / 2 - 2), int(nsh_y / 2 + 2)
 
@@ -1042,8 +1042,8 @@ def central_sweeps_show(hrange, vrange,
         print(f" Figure of central sweeps saved to file {outfile}.\n")
 
 
-
 # ## Beam position from XBPM data.
+
 
 def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
                        nosuppress=False, showmatrix=True):
@@ -1099,7 +1099,7 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
     frv, upv = halfv - abv, halfv + abv + 1
 
     # ROI: nominal.
-    if pos_nom_h.shape[0] == 1 or pos_nom_v.shape[0] == 1: 
+    if pos_nom_h.shape[0] == 1 or pos_nom_v.shape[0] == 1:
         pos_nom_h_roi = pos_nom_h[0, frv:upv]
         pos_nom_v_roi = pos_nom_v[0, frv:upv]
     elif pos_nom_h.shape[1] == 1 or pos_nom_v.shape[1] == 1:
@@ -1127,6 +1127,9 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
                                  pos_nom_h_roi, pos_nom_v_roi, "Pairwise")
     pos_pair_h_scaled = kxp * pos_pair_h + deltaxp
     pos_pair_v_scaled = kyp * pos_pair_v + deltayp
+    # ROI scaled positions.
+    pos_pair_h_roi_scaled = kxp * pos_pair_h_roi + deltaxp
+    pos_pair_v_roi_scaled = kyp * pos_pair_v_roi + deltayp
 
     # Plot scaled positions.
     figp, (axpall, axpclose) = plt.subplots(1, 2, figsize=(14, 6))
@@ -1135,17 +1138,14 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
     scaled_positions_show(axpall, pos_nom_h, pos_nom_v,
                           pos_pair_h_scaled, pos_pair_v_scaled,
                           atitle)
+
+    # ROI scaled positions.
     scaled_positions_show(axpclose, pos_nom_h_roi, pos_nom_v_roi,
-                          pos_pair_h_scaled[frh:uph, frv:upv],
-                          pos_pair_v_scaled[frh:uph, frv:upv],
+                          pos_pair_h_roi_scaled, pos_pair_v_roi_scaled,
                           atitle + " closeup")
 
     # ### Cross-blades calculation.
     pos_cr_h, pos_cr_v = beam_position_cross(blades)
-
-    # Force offsets (uncomment)? Or let scaling solve the offset.
-    # pos_cr_h -= pos_cr_h[halfh, halfv]
-    # pos_cr_v -= pos_cr_v[halfh, halfv]
 
     # ROI: crossing blades.
     if pos_nom_h.shape[0] == 1 or pos_nom_v.shape[0] == 1:
@@ -1160,13 +1160,13 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
 
     # Scaling coefficients, cross-blades calculation.
     (kxc, deltaxc,
-     kyc, deltayc) = scaling_fit(pos_cr_h_roi,
-                                 pos_cr_v_roi,
-                                 pos_nom_h_roi,
-                                 pos_nom_v_roi,
-                                 "Cross")
+     kyc, deltayc) = scaling_fit(pos_cr_h_roi, pos_cr_v_roi,
+                                 pos_nom_h_roi, pos_nom_v_roi, "Cross")
     pos_cr_h_scaled = kxc * pos_cr_h + deltaxc
     pos_cr_v_scaled = kyc * pos_cr_v + deltayc
+    # ROI scaled positions.
+    pos_cr_h_roi_scaled = kxc * pos_cr_h_roi + deltaxc
+    pos_cr_v_roi_scaled = kyc * pos_cr_v_roi + deltayc
 
     figc, (axcall, axcclose) = plt.subplots(1, 2, figsize=(14, 6))
     # csc_cr_h, csc_cr_v = cross_correction(scaled_pos_cr_h, pos_nom_h,
@@ -1178,8 +1178,7 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
     scaled_positions_show(axcall, pos_nom_h, pos_nom_v,
                           pos_cr_h_scaled, pos_cr_v_scaled, ctitle)
     scaled_positions_show(axcclose, pos_nom_h_roi, pos_nom_v_roi,
-                          pos_cr_h_scaled[frh:uph, frv:upv],
-                          pos_cr_v_scaled[frh:uph, frv:upv],
+                          pos_cr_h_roi_scaled, pos_cr_v_roi_scaled,
                           ctitle + " closeup")
 
     figp.tight_layout()
@@ -1244,12 +1243,19 @@ def suppression_matrix(range_h, range_v, blades_h, blades_v, prm,
     else:
         # Linear fittings to each blade's data through
         # horizontal and vertical central lines.
-        pch = central_line_fit(blades_h, range_h)
-        pcv = central_line_fit(blades_v, range_v)
+        pch = central_line_fit(blades_h, range_h, 'h')
+        pcv = central_line_fit(blades_v, range_v, 'v')
 
     # Normalize by the first blade and define suppression as 1/m.
-    pcv = pcv[0] / np.abs(pcv)
-    pch = pch[0] / np.abs(pch)
+    if len(range_h) > 1:
+        pch = pch[0] / np.abs(pch)
+    else:
+        pch = np.ones(8).reshape(4, 2)
+    #
+    if len(range_v) > 1:
+        pcv = pcv[0] / np.abs(pcv)
+    else:
+        pcv = np.ones(8).reshape(4, 2)
 
     # Signs are defined according to the blade positions for pairwise
     # calculations.
@@ -1279,10 +1285,12 @@ def suppression_matrix(range_h, range_v, blades_h, blades_v, prm,
     return supmat
 
 
-def central_line_fit(blades, range_vals):
+def central_line_fit(blades, range_vals, direction):
     """Linear fittings to each blade's data through central line."""
     if blades is None:
-        print(" WARNING: blades' values not defined."
+        dr = 'horizontal' if direction == 'h' else 'vertical'
+        print(f"\n WARNING: (central_line_fit) "
+              f"{dr} blades' values not defined."
               " Seetting fitting values to [1, 0].")
         return np.array([[1, 0] for _ in range(4)])
 
@@ -1291,7 +1299,7 @@ def central_line_fit(blades, range_vals):
         weight = 1. / blade[:, 1]
 
         # Ill-defined weights: use standard.
-        if np.isinf(weight).any:
+        if np.isinf(weight).any():
             weight = None
 
         pc.append(np.polyfit(range_vals, blade[:, 0], deg=1, w=weight))
@@ -1413,8 +1421,8 @@ def cross_correction(hpos, nhpos, vpos, nvpos):
 
     return new_hpos, new_vpos
 
-# Show grid.
 
+# Show grid.
 
 def scaling_fit(pos_h, pos_v, nom_h, nom_v, calctype=""):
     """Calculate scaling coefficients from fitted positions.
@@ -1440,15 +1448,24 @@ def scaling_fit(pos_h, pos_v, nom_h, nom_v, calctype=""):
     pv_cln = pos_v[vfinitemask]
     nv_cln = nom_v[vfinitemask]
 
-    try:
-        # Linear fit for scaling.
-        kx, deltax = np.polyfit(ph_cln, nh_cln, deg=1)
-        ky, deltay = np.polyfit(pv_cln, nv_cln, deg=1)
-    except Exception as err:
-        print(f"\n WARNING: when calculating scaling coefficients:\n{err}"
-              "\n Setting to default values.")
-        kx, deltax = 1., 0.
-        ky, deltay = 1., 0.
+    # Linear fit for scaling.
+    kx, deltax = 1., 0.
+    # Check if horizontal range spans through whole grid.
+    if len(set(nom_h.ravel())) > 1:
+        try:
+            kx, deltax = np.polyfit(ph_cln, nh_cln, deg=1)
+        except Exception as err:
+            print(f"\n WARNING: when calculating horizontal scaling"
+                  f" coefficients:\n{err}\n Setting to default values.")
+
+    ky, deltay = 1., 0.
+    # Check if vertical range spans through whole grid.
+    if len(set(nom_v.ravel())) > 1:
+        try:
+            ky, deltay = np.polyfit(pv_cln, nv_cln, deg=1)
+        except Exception as err:
+            print(f"\n WARNING: when calculating vertical scaling coefficients:"
+                f"\n{err}\n Setting to default values.")
 
     print(f"kx = {kx:12.4f},   deltax = {deltax:12.4f}")
     print(f"ky = {ky:12.4f},   deltay = {deltay:12.4f}\n")
@@ -1474,11 +1491,12 @@ def scaled_positions_show(ax, pos_nom_h, pos_nom_v, pos_h, pos_v, title):
         title (str) : graph title.
     """
     ax.set_title(title)
-    ax.plot(pos_nom_h, pos_nom_v, 'r+')
-    ax.plot(pos_h, pos_v, 'bo')
+    nom = ax.plot(pos_nom_h, pos_nom_v, 'r+')
+    pos = ax.plot(pos_h, pos_v, 'bo')
     ax.set_xlabel(u"$x$ [$\\mu$m]")
     ax.set_ylabel(u"$y$ [$\\mu$m]")
     ax.axis('equal')
+    ax.legend([nom[0], pos[0]], ["Nominal", "Calculated"])
     ax.grid()
 
 
