@@ -22,6 +22,7 @@ XBPMDISTS = {
     "MGN2": 16.167,
     "MNC1": 15.740,
     "MNC2": 19.590,
+    "SIM" : 1.0      # Simulation case.
 }
 
 
