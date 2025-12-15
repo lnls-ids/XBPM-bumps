@@ -30,6 +30,7 @@ Input parameters:
 
 Output parameters (information to be shown):
   -b  : positions calculated from BPM data
+  -c  : show each blade's response at central line sweeps
   -m  : the blade map (to check blades' positions)
   -r  : positions calculated from XBPM data without suppression
   -s  : anaysis of blades' behaviour by sweeping through the center
@@ -342,7 +343,7 @@ def parameters_data_defined(prm, rawdata):
 
 
 def beamline_define(rawdata):
-    """Define beamline set to bem analysed."""
+    """Define beamline set to be analysed."""
     # beamlines = list(set([next(iter(dt[0])) for dt in rawdata]))
     beamlines = sorted(list(set([dic for dt in rawdata for dic in dt[0]])))
 
@@ -465,12 +466,12 @@ def beam_positions_from_bpm(rawdata, prm):
     ax.set_xlabel("$x$ [$\\mu$m]")  # noqa: W605
     ax.set_ylabel("$y$ [$\\mu$m]")  # noqa: W605
     ax.set_title(f"Beam positions @ {prm.beamline} from BPM values")
-    ax.axis("equal")
 
     # fig.canvas.draw_idle()
-    # lim = np.max(xnom + ynom) * 1.2
-    # ax.set_xlim(-lim, lim)
-    # ax.set_ylim(-lim, lim)
+    lim = np.max(np.abs(xnom + ynom)) * 1.15
+    ax.axis("equal")
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
     ax.legend()
     ax.grid()
 
@@ -737,7 +738,7 @@ def blades_map_show(data, prm):
         data (dict) : blades' values indexed by grid positions.
         prm (dict) : general parameters of the analysis.
     """
-    blades, stddevs, maxval = data_parse(data)
+    blades, stddevs = data_parse(data)
     to, ti, bi, bo = blades
     # sto, sti, sbi, sbo = stddevs
 
@@ -746,13 +747,19 @@ def blades_map_show(data, prm):
     if to.shape[0] == 1 or to.shape[1] == 1:
         extent = None
     else:
-        extent = (-maxval, maxval, -maxval, maxval)
+        alist = np.array(list(data.keys()))
+        klist = np.unique(alist[:, 0])
+        mlist = np.unique(alist[:, 1])
+        minvalx, maxvalx = np.min(klist), np.max(klist)
+        minvaly, maxvaly = np.min(mlist), np.max(mlist)
+        extent = (minvalx, maxvalx, minvaly, maxvaly)
 
     quad  = [[ti, to], [bi, bo]]
     names = [["TI", "TO"], ["BI", "BO"]]
     imgs  = []
     for idy in range(2):
         for idx in range(2):
+            # imgs.append(rx[idy][idx].imshow(quad[idy][idx]))
             imgs.append(rx[idy][idx].imshow(quad[idy][idx], extent=extent))
             rx[idy][idx].set_xlabel(u"$x$ [$\\mu$rad]")
             rx[idy][idx].set_ylabel(u"$y$ [$\\mu$rad]")
@@ -781,6 +788,7 @@ def data_parse(data):
         so the [0, 0] index corresponds to the left-upmost position etc.
     """
     dk = np.array(list(data.keys()))
+
     nh = np.unique(dk[:, 0])
     nv = np.unique(dk[:, 1])
     ngrid = (nv.shape[0], nh.shape[0])
@@ -796,10 +804,9 @@ def data_parse(data):
             icol = jj
 
             # Check whether data ends prematurely.
-            if jj + ii * nc > dk.shape[0]:
+            if key not in data.keys():
                 break
-            if ii + jj * nl > dk.shape[0]:
-                break
+
             try:
                 to[ilin, icol]  = data[key][0, 0]
                 ti[ilin, icol]  = data[key][1, 0]
@@ -816,7 +823,7 @@ def data_parse(data):
                       f" array index: {ilin}, {icol}"
                       "\n Maybe data grid is incomplete?")
 
-    return [to, ti, bi, bo], [sto, sti, sbi, sbo], nh[-1]
+    return [to, ti, bi, bo], [sto, sti, sbi, sbo]
 
 
 # ## Sweep through horizontal and vertical central lines and show XBPM data.
@@ -854,7 +861,8 @@ def blades_show_at_center(data, prm):
             if np.isinf(weight).any:
                 weight = None
             (acoef, bcoef) = np.polyfit(hrange, val, deg=1, w=weight)
-            axh.plot(hrange, hrange * acoef + bcoef, "o-", label=f"{key} fit")
+            axh.plot(hrange, hrange * acoef + bcoef, "o-",
+                     label=f"{key} fit")
             axh.errorbar(hrange, val, wval, fmt='^-', label=key)
 
             axh.plot()
@@ -868,7 +876,8 @@ def blades_show_at_center(data, prm):
             if np.isinf(weight).any:
                 weight = None
             (acoef, bcoef) = np.polyfit(vrange, val, deg=1, w=weight)
-            axv.plot(vrange, vrange * acoef + bcoef, "o-", label=f"{key} fit")
+            axv.plot(vrange, vrange * acoef + bcoef, "o-",
+                     label=f"{key} fit")
             axv.errorbar(vrange, val, wval, fmt='^-', label=key)
 
     axh.set_title("Horizontal")
@@ -877,9 +886,13 @@ def blades_show_at_center(data, prm):
     axv.legend()
     axh.grid()
     axv.grid()
-    xlabelh = u"$x$ $\\mu$m"
-    xlabelv = u"$y$ $\\mu$m"
-    ylabel = u"$I$ [A] / # (counts)"
+    xlabelh = u"$x$ $\\mu$rad"
+    xlabelv = u"$y$ $\\mu$rad"
+
+    if prm.beamline[:3] in ["MGN", "MNC"]:
+        ylabel = u"$I$ [# counts]"
+    else:
+        ylabel = u"$I$ [A]"
     axh.set_xlabel(xlabelh)
     axh.set_ylabel(ylabel)
     axv.set_xlabel(xlabelv)
@@ -889,7 +902,7 @@ def blades_show_at_center(data, prm):
     if prm.outputfile:
         outfile = f"central_sweep_{prm.beamline}.png"
         fig.savefig(outfile, dpi=FIGDPI)
-        print(" Figure of blades behaviour at central sweeps"
+        print("\n Figure of blades behaviour at central sweeps"
               f" saved to file {outfile}.\n")
 
 
@@ -1013,10 +1026,13 @@ def central_sweeps_show(hrange, vrange,
         axh.plot(hrange * prm.xbpmdist, hline, '^-', label="H fit")
         axh.plot(hrange * prm.xbpmdist,
                 pos_ch_v[:, 0] * prm.xbpmdist, 'o-', label="H sweep")
-        axh.set_xlabel(u"$x$ [$\\mu$rad]")
-        axh.set_ylabel(u"$y$ [$\\mu$rad]")
+        axh.set_xlabel(u"$x$ [$\\mu$m]")
+        axh.set_ylabel(u"$y$ [$\\mu$m]")
         axh.set_title("Central Horizontal Sweeps")
-        axh.axis('equal')
+
+        ylim = np.max(np.abs(hline + pos_ch_v[:, 0] * prm.xbpmdist)) * 1.1
+        axh.set_ylim(-ylim, ylim)
+        # axh.axis('equal')
         axh.grid(True)
         axh.legend()
 
@@ -1025,14 +1041,13 @@ def central_sweeps_show(hrange, vrange,
         axv.plot(pos_cv_h[:, 0] * prm.xbpmdist,
                     vrange * prm.xbpmdist, 'o-', label="V sweep")
         axv.plot(vline, vrange * prm.xbpmdist, '^-', label="V fit")
-        # ax.plot(vrange_cut, h_cv_pos[:, 0], 'o-', label="V sweep")
-        # ax.plot(vrange, vline, '^-', label="V fit")
-        # ax.plot(vrange_cut, h_cv_pos[:, 0], 'o-', label="V sweep")
-
-        axv.set_xlabel(u"$x$ [$\\mu$rad]")
-        axv.set_ylabel(u"$y$ [$\\mu$rad]")
+        axv.set_xlabel(u"$x$ [$\\mu$m]")
+        axv.set_ylabel(u"$y$ [$\\mu$m]")
         axv.set_title("Central Vertical Sweeps")
-        axv.axis('equal')
+
+        # axv.axis('equal')
+        axv.set_xlim((np.min(vrange) * 0.005 + fit_cv_h[1, 0]) * prm.xbpmdist,
+                     (np.max(vrange) * 0.005 + fit_cv_h[1, 0]) * prm.xbpmdist)
         axv.grid(True)
         axv.legend()
 
@@ -1222,8 +1237,8 @@ def suppression_matrix(range_h, range_v, blades_h, blades_v, prm,
     """Calculate the suppression matrix.
 
     Args:
-        range_h (numpy array) : horizontal coordinates to be analysed.
-        range_v (numpy array) : vertical coordinates to be analysed.
+        range_h (numpy array)  : horizontal coordinates to be analysed.
+        range_v (numpy array)  : vertical coordinates to be analysed.
         blades_h (numpy array) : data recorded by blade's measurements at
             horizontal central line.
         blades_v (numpy array) : data recorded by blade's measurements at

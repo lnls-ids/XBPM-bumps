@@ -192,7 +192,6 @@ def main():
 
     # Distances.
     print(f" Working in beamline {beamline}.\n")
-    dist = XBPMDISTS[beamline] if multiply else 1.0
 
     # Data files.
     wdir = "./"
@@ -206,6 +205,7 @@ def main():
                   f"{wdir + wfile}:\n{err}\n")
             continue
 
+        dist = XBPMDISTS[beamline] if multiply and num == 2 else 1.0
         plot_graph(data, meastype, dist, grname, beamline)
 
         print("#######################\n")
