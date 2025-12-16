@@ -60,8 +60,8 @@ def plot_graph(data, stype, dist, grname, beamline):
     midpoint = int(len(xn) / 2)
     fr, to = midpoint - 2, midpoint + 3
     fig, (axall, axroi, axcolor) = plt.subplots(1, 3, figsize=(15, 4))
-    axall.plot(xn.ravel(), yn.ravel(), 'r+', label='Nom')
     axall.plot(xc.ravel(), yc.ravel(), 'bo', label='Calc')
+    axall.plot(xn.ravel(), yn.ravel(), 'r+', label='Nom')
 
     if len(xn.shape) < 2:
         xnroi = xn[fr:to]
@@ -74,10 +74,10 @@ def plot_graph(data, stype, dist, grname, beamline):
         xcroi = xc[fr:to, fr:to]
         ycroi = yc[fr:to, fr:to]
 
-    axroi.plot(xnroi.ravel(),
-            ynroi.ravel(), 'r+', label='Nom')
     axroi.plot(xcroi.ravel(),
             ycroi.ravel(), 'bo', label='Calc')
+    axroi.plot(xnroi.ravel(),
+            ynroi.ravel(), 'r+', label='Nom')
 
     for ax, tt in ([axall, "All sites"], [axroi, "Close up"]):
         ax.set_xlabel(u'$x$ [$\\mu$m]')
