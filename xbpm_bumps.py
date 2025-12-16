@@ -468,7 +468,7 @@ def beam_positions_from_bpm(rawdata, prm):
     ax.set_title(f"Beam positions @ {prm.beamline} from BPM values")
 
     # fig.canvas.draw_idle()
-    lim = np.max(np.abs(xnom + ynom)) * 1.15
+    lim = np.max(np.abs(xnom + ynom)) * 1.7
     ax.axis("equal")
     ax.set_xlim(-lim, lim)
     ax.set_ylim(-lim, lim)
@@ -1061,7 +1061,7 @@ def central_sweeps_show(hrange, vrange,
 
 
 def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
-                       nosuppress=False, showmatrix=True):
+                       rtitle="", nosuppress=False, showmatrix=True):
     """Calculate positions from blades' measured data.
 
     Notation:
@@ -1077,6 +1077,7 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
                 central line
         blades_v (dict) : measured data from each blade at the vertical
                 central line
+        rtitle (str) : title to be shown in the plots.
         nosuppress (boolean) : do not apply suppression matrix if True.
         showmatrix (boolean) : show blades' behaviour at center or not.
 
@@ -1086,7 +1087,7 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
     """
     # Parse data. blades and stddevs are lists with the order:
     # to, ti, bi, bo.
-    blades, stddevs, maxval = data_parse(data)
+    blades, stddevs = data_parse(data)
 
     # Pairwise-blades calculation.
     supmat = suppression_matrix(range_h, range_v,
@@ -1147,9 +1148,9 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
     pos_pair_v_roi_scaled = kyp * pos_pair_v_roi + deltayp
 
     # Plot scaled positions.
-    figp, (axpall, axpclose) = plt.subplots(1, 2, figsize=(14, 6))
+    figp, (axpall, axpclose, axcolor) = plt.subplots(1, 3, figsize=(18, 6))
 
-    atitle = f"Pairwise-blades positions @ {prm.beamline}"
+    atitle = f"Pairwise {rtitle} @ {prm.beamline}"
     scaled_positions_show(axpall, pos_nom_h, pos_nom_v,
                           pos_pair_h_scaled, pos_pair_v_scaled,
                           atitle)
@@ -1158,6 +1159,13 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
     scaled_positions_show(axpclose, pos_nom_h_roi, pos_nom_v_roi,
                           pos_pair_h_roi_scaled, pos_pair_v_roi_scaled,
                           atitle + " closeup")
+
+    diffx2  = (pos_pair_h_roi_scaled - pos_nom_h_roi) ** 2
+    diffy2  = (pos_pair_v_roi_scaled - pos_nom_v_roi) ** 2
+    diffpairroi = np.sqrt(diffx2 + diffy2)
+    position_difference_show(axcolor, diffpairroi,
+                             pos_nom_h_roi, pos_nom_v_roi,
+                             atitle)
 
     # ### Cross-blades calculation.
     pos_cr_h, pos_cr_v = beam_position_cross(blades)
@@ -1183,18 +1191,27 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
     pos_cr_h_roi_scaled = kxc * pos_cr_h_roi + deltaxc
     pos_cr_v_roi_scaled = kyc * pos_cr_v_roi + deltayc
 
-    figc, (axcall, axcclose) = plt.subplots(1, 2, figsize=(14, 6))
+    diffx2  = (pos_cr_h_roi_scaled - pos_nom_h_roi) ** 2
+    diffy2  = (pos_cr_v_roi_scaled - pos_nom_v_roi) ** 2
+    # diffx   = np.sqrt(diffx2)
+    # diffy   = np.sqrt(diffy2)
+    diffcrroi = np.sqrt(diffx2 + diffy2)
+
+    figc, (axcall, axcclose, axcolor) = plt.subplots(1, 3, figsize=(18, 6))
     # csc_cr_h, csc_cr_v = cross_correction(scaled_pos_cr_h, pos_nom_h,
     #                                       scaled_pos_cr_v, pos_nom_v)
     # scaled_positions_show(axcross, pos_nom_h, pos_nom_v,
     #                       csc_cr_h, csc_cr_v)
 
-    ctitle = f"Cross-blades positions @ {prm.beamline}"
+    ctitle = f"Cross-blades {rtitle} @ {prm.beamline}"
     scaled_positions_show(axcall, pos_nom_h, pos_nom_v,
                           pos_cr_h_scaled, pos_cr_v_scaled, ctitle)
     scaled_positions_show(axcclose, pos_nom_h_roi, pos_nom_v_roi,
                           pos_cr_h_roi_scaled, pos_cr_v_roi_scaled,
                           ctitle + " closeup")
+    position_difference_show(axcolor, diffcrroi,
+                             pos_nom_h_roi, pos_nom_v_roi,
+                             ctitle)
 
     figp.tight_layout()
     figc.tight_layout()
@@ -1506,13 +1523,62 @@ def scaled_positions_show(ax, pos_nom_h, pos_nom_v, pos_h, pos_v, title):
         title (str) : graph title.
     """
     ax.set_title(title)
-    nom = ax.plot(pos_nom_h, pos_nom_v, 'r+')
     pos = ax.plot(pos_h, pos_v, 'bo')
+    nom = ax.plot(pos_nom_h, pos_nom_v, 'r+')
     ax.set_xlabel(u"$x$ [$\\mu$m]")
     ax.set_ylabel(u"$y$ [$\\mu$m]")
     ax.axis('equal')
-    ax.legend([nom[0], pos[0]], ["Nominal", "Calculated"])
+    handles, labels = [], []
+    if len(nom) > 0:
+        handles.append(nom[0])
+        labels.append("Nominal")
+    if len(pos) > 0:
+        handles.append(pos[0])
+        labels.append("Calculated")
+    if handles:
+        ax.legend(handles, labels)
     ax.grid()
+
+
+def position_difference_show(ax, diffroi, pos_nom_h=None, pos_nom_v=None,
+                             title=""):
+    """Plot graph of position differences.
+
+    Args:
+        ax (pyplot axis) : the ax where to plot
+        diffroi (numpy array) : position differences at ROI.
+        pos_nom_h (numpy array) : nominal positions, horizontal
+        pos_nom_v (numpy array) : nominal positions, vertical
+        title (str) : graph title.
+    """
+    if len(diffroi.shape) > 1:
+        im = ax.imshow(diffroi, cmap='viridis')
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label(u"RMS differences (ROI)")
+    else:
+        # Ensure x, y, and color arrays have matching lengths
+        if pos_nom_h is not None and pos_nom_v is not None:
+            x = np.ravel(pos_nom_h)
+            y = np.ravel(pos_nom_v)
+        else:
+            # Fallback to index-based positions when nominal positions
+            # are not provided for 1D differences
+            n = int(np.size(diffroi))
+            x = np.arange(n)
+            y = np.zeros(n)
+
+        cvals = np.ravel(diffroi)
+
+        # Align lengths if shapes are inconsistent
+        m = min(len(x), len(y), len(cvals))
+        x, y, cvals = x[:m], y[:m], cvals[:m]
+
+        scatter = ax.scatter(x, y, c=cvals, cmap='viridis', s=50)
+        ax.set_title('RMS position differences [$\\mu$m]')
+        plt.colorbar(scatter, ax=ax, label='Difference [$\\mu$m]')
+    ax.set_title(title)
+    ax.set_xlabel(u"$x$ [$\\mu$m]")
+    ax.set_ylabel(u"$y$ [$\\mu$m]")
 
 
 def blades_center_show(range_h, range_v, blades_h, blades_v, pch, pcv):
@@ -1637,6 +1703,7 @@ def main():
     # Calculated positions with simple matrix.
     if prm.xbpmpositionsraw:
         positions = xbpm_position_calc(data, prm, *csweeps,
+                                       rtitle="raw XBPM positions",
                                        nosuppress=True,
                                        showmatrix=True)
         # Dump data to file.
@@ -1646,6 +1713,7 @@ def main():
     # Calculated positions with suppression matrix.
     if prm.xbpmpositions:
         positions = xbpm_position_calc(data, prm, *csweeps,
+                                       rtitle="scaled XBPM positions",
                                        nosuppress=False,
                                        showmatrix=True)
         # Dump data to file.
