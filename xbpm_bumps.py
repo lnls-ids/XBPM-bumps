@@ -133,6 +133,162 @@ class Prm:
         setattr(self, key, value)
 
 
+class DataReader:
+    """Handles reading XBPM data from files or pickle directories.
+
+    This class provides a unified interface for reading XBPM measurement
+    data from two different sources:
+    - Text files with optional header metadata
+    - Directories containing pickle files
+
+    Attributes:
+        prm (Prm): Parameters dataclass containing configuration
+                   and runtime data.
+        data (dict): Dictionary containing parsed measurement data.
+    """
+
+    def __init__(self, prm: Prm):
+        """Initialize DataReader with parameters.
+
+        Args:
+            prm (Prm): Parameters dataclass instance.
+        """
+        self.prm = prm
+        self.data = {}
+
+    def read(self) -> dict:
+        """Read data from working directory or file.
+
+        Automatically determines whether to read from a text file or
+        pickle directory based on the workdir path.
+
+        Returns:
+            dict: Parsed measurement data dictionary.
+        """
+        if os.path.isfile(self.prm.workdir):
+            self._read_from_file()
+        else:
+            self._read_from_directory()
+
+        self._print_summary()
+        return self.data
+
+    def _read_from_file(self) -> None:
+        """Read data from a text file with optional header metadata."""
+        self.data = {}
+
+        with open(self.prm.workdir, 'r') as fp:
+            lines = fp.readlines()
+            for line in lines:
+                if self._is_empty(line):
+                    continue
+                if self._is_header(line):
+                    self._parse_header_line(line)
+                    continue
+                self._parse_data_line(line)
+
+        self._infer_gridstep()
+
+    def _read_from_directory(self) -> None:
+        """Read data from pickle files in a directory."""
+        rawdata = self._get_pickle_data()[self.prm.skip:]
+        self.prm.beamline = beamline_define(rawdata)
+        parameters_data_defined(self.prm, rawdata)
+        self.data = blades_fetch(rawdata, self.prm.beamline)
+
+    def _get_pickle_data(self) -> list:
+        """Open pickle files in directory and extract data.
+
+        Returns:
+            list: All data collected from pickle files in working directory.
+        """
+        allfiles = os.listdir(self.prm.workdir)
+        picklefiles = [pf for pf in allfiles if pf.endswith("pickle")]
+
+        if len(picklefiles) == 0:
+            print(f"No pickle files found in directory '{self.prm.workdir}'."
+                  "Aborting.")
+            sys.exit(0)
+
+        sfiles = sorted(picklefiles, key=lambda name: lastfield(name, '_'))
+        rawdata = []
+        for file in sfiles:
+            with open(self.prm.workdir + "/" + file, 'rb') as df:
+                rawdata.append(pickle.load(df))  # noqa: S301
+
+        return rawdata
+
+    @staticmethod
+    def _is_empty(line: str) -> bool:
+        """Check if a line is empty or contains only whitespace."""
+        return bool(re.match(r'^\s*$', line))
+
+    @staticmethod
+    def _is_header(line: str) -> bool:
+        """Check if a line is a header/comment line (starts with #)."""
+        return bool(re.match(r'^\s*#', line))
+
+    def _parse_header_line(self, line: str) -> None:
+        """Extract metadata from a header line.
+
+        Expected format: # Key: value
+        """
+        cline = line.strip('#')
+        kprm, vprm = cline.split(':')
+        key = kprm.strip().lower()
+        val = vprm.strip()
+
+        if re.search(r'current', key, re.IGNORECASE):
+            self.prm.current = float(val)
+        elif re.search(r'beamline', key, re.IGNORECASE):
+            self.prm.beamline = val
+        elif re.search(r'gap', key, re.IGNORECASE):
+            self.prm.phaseorgap = val
+        elif re.search(r'xbpm', key, re.IGNORECASE):
+            self.prm.xbpmdist = float(val)
+        elif re.search(r'inter bpm', key, re.IGNORECASE):
+            self.prm.bpmdist = float(val)
+        else:
+            self.prm[key] = val
+
+    def _parse_data_line(self, line: str) -> None:
+        """Parse a data line and add it to the data dictionary.
+
+        Expected format: nom_x nom_y to err_to ti err_ti bi err_bi bo err_bo
+        """
+        parts = line.strip().split()
+        key = (float(parts[0]), float(parts[1]))
+        self.data[key] = np.array([
+            [float(parts[ii]), float(parts[ii + 1])]
+            for ii in range(2, len(parts), 2)
+        ])
+
+    def _infer_gridstep(self) -> None:
+        """Infer grid step from data keys if not explicitly provided."""
+        try:
+            xs = np.unique([k[0] for k in self.data.keys()])
+            ys = np.unique([k[1] for k in self.data.keys()])
+            dx = np.min(np.diff(np.sort(xs))) if xs.size > 1 else None
+            dy = np.min(np.diff(np.sort(ys))) if ys.size > 1 else None
+            steps = [v for v in (dx, dy) if v not in (None, 0)]
+            if steps:
+                self.prm.gridstep = float(min(steps))
+        except Exception as err:
+            print(f"\nWARNING: could not infer grid step from data: {err}.")
+
+    def _print_summary(self) -> None:
+        bl = self.prm.beamline if self.prm.beamline else "N/A"
+        """Print a summary of the loaded data and parameters."""
+        print(f"""
+### Storage ring current : {self.prm.current}
+### Grid step:             {self.prm.gridstep}
+### Working beamline:\t   {BEAMLINENAME[bl[:3]]} ({bl})
+### Distance source-XBPM : {self.prm.xbpmdist:.3f} m
+### Distance between BPMs: {self.prm.bpmdist:.3f} m
+### Gap or phase:          {self.prm.phaseorgap}
+""")
+
+
 # Power relative to Ampere subunits.
 AMPSUB = {
     0    : 1.0,    # no unit defined.
@@ -304,144 +460,6 @@ def cmd_options(argv=None):  # noqa: C901
     )
 
     return prm
-
-
-def read_data(prm):
-    """Read data from working directory or file.
-
-    This function is a wrapper to actual data reading functions.
-
-    Args:
-        prm (Prm): parameters dataclass instance.
-
-    Returns:
-        rawdata (list): all data collected from pickle files in working
-            directory or from text file.
-    """
-    if os.path.isfile(prm.workdir):
-        data = data_text_read(prm)
-    else:
-        rawdata = get_pickle_data(prm.workdir)[prm.skip:]
-        prm.beamline = beamline_define(rawdata)
-        parameters_data_defined(prm, rawdata)
-        data = blades_fetch(rawdata, prm.beamline)
-
-    print(f"""
-### Storage ring current : {prm.current}
-### Grid step:             {prm.gridstep}
-### Working beamline:\t   {BEAMLINENAME[prm.beamline[:3]]} ({prm.beamline})
-### Distance source-XBPM : {prm.xbpmdist:.3f} m
-### Distance between BPMs: {prm.bpmdist:.3f} m
-### Gap or phase:          {prm.phaseorgap}
-""")
-
-    return data
-
-
-def get_pickle_data(workdir):
-    """Open pickle files in directory and extract data.
-
-    Args:
-        workdir (str): working directory.
-
-    Returns:
-        rawdata (list): all data collected from pickle files in working
-            directory
-    """
-    # Get files from directory.
-    allfiles = os.listdir(workdir)
-    picklefiles = [pf for pf in allfiles if pf.endswith("pickle")]
-
-    if len(picklefiles) == 0:
-        print(f"No pickle files found in directory '{workdir}'."
-          "Aborting.")
-        sys.exit(0)
-
-    # Order files by timestamp.
-    sfiles = sorted(picklefiles, key=lambda name: lastfield(name, '_'))
-    # Assemble all data from files.
-    rawdata = list()
-    for file in sfiles:
-        with open(workdir + "/" + file, 'rb') as df:
-            rawdata.append(pickle.load(df))           # noqa: S301
-
-    return rawdata
-
-
-def data_text_read(prm):
-    """Read data from text file."""
-    data = dict()
-
-    with open(prm.workdir, 'r') as fp:
-        lines = fp.readlines()
-        for _, line in enumerate(lines):
-            if _is_empty(line):
-                continue
-            if _is_header(line):
-                _parse_header_line(line, prm)
-                continue
-            _parse_data_line(line, data)
-
-    _infer_gridstep_from_data(data, prm)
-    return data
-
-
-def _is_empty(line: str) -> bool:
-    return bool(re.match(r'^\s*$', line))
-
-
-def _is_header(line: str) -> bool:
-    return bool(re.match(r'^\s*#', line))
-
-
-def _parse_header_line(line: str, prm):
-    cline = line.strip('#')
-    kprm, vprm = cline.split(':')
-    key = kprm.strip().lower()
-    val = vprm.strip()
-
-    if re.search(r'current', key, re.IGNORECASE):
-        prm.current = float(val)
-    elif re.search(r'beamline', key, re.IGNORECASE):
-        prm.beamline = val
-    elif re.search(r'gap', key, re.IGNORECASE):
-        prm.phaseorgap = val
-    elif re.search(r'xbpm', key, re.IGNORECASE):
-        prm.xbpmdist = float(val)
-    elif re.search(r'inter bpm', key, re.IGNORECASE):
-        prm.bpmdist = float(val)
-    else:
-        prm[key] = val
-
-
-def _parse_data_line(line: str, data: dict):
-    parts = line.strip().split()
-    key = (float(parts[0]), float(parts[1]))
-    data[key] = np.array([
-        [float(parts[ii]), float(parts[ii + 1])]
-        for ii in range(2, len(parts), 2)
-    ])
-
-
-def _infer_gridstep_from_data(data: dict, prm):
-    """Infer grid step from the keys if not provided."""
-    try:
-        xs = np.unique([k[0] for k in data.keys()])
-        ys = np.unique([k[1] for k in data.keys()])
-        dx = np.min(np.diff(np.sort(xs))) if xs.size > 1 else None
-        dy = np.min(np.diff(np.sort(ys))) if ys.size > 1 else None
-        steps = [v for v in (dx, dy) if v not in (None, 0)]
-        if steps:
-            prm.gridstep = float(min(steps))
-    except Exception:
-        pass
-        steps = [v for v in [dx, dy] if v not in (None, 0)]
-        if steps:
-            prm.gridstep = float(min(steps))
-    except Exception as err:
-        print(f"\n WARNING: could not infer grid step from data: {err}.")
-        pass
-    return data
 
 
 def parameters_data_defined(prm, rawdata):
@@ -1797,12 +1815,13 @@ def data_dump(data, positions, prm, sup=""):
 # ## Main function.
 
 def main():
-    """."""
+    """Main entry point for XBPM data analysis."""
     # Read command line options.
     prm = cmd_options()
 
-    # Get raw data. These are the data from all sectors.
-    data = read_data(prm)
+    # Read data from working directory or file.
+    reader = DataReader(prm)
+    data = reader.read()
 
     # Show results demanded by command line options.
 
