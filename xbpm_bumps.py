@@ -520,6 +520,72 @@ class XBPMProcessor:
         )
 
 
+class BladeMapVisualizer:
+    """Visualizes XBPM blade intensity maps.
+    
+    This class creates color maps showing the intensity (current) measured
+    by each blade across the measurement grid.
+    
+    Attributes:
+        data (dict): Measurement data dictionary.
+        prm (Prm): Parameters dataclass.
+    """
+    
+    def __init__(self, data: dict, prm: Prm):
+        """Initialize visualizer with data and parameters.
+        
+        Args:
+            data: Measurement data dictionary.
+            prm: Parameters dataclass instance.
+        """
+        self.data = data
+        self.prm = prm
+    
+    def show(self) -> None:
+        """Display blade intensity maps for all four blades.
+        
+        Creates a 2x2 subplot figure showing heatmaps for:
+        - Top-Inner (TI), Top-Outer (TO)
+        - Bottom-Inner (BI), Bottom-Outer (BO)
+        
+        Arranges blades in quadrants:
+        [TI  TO]
+        [BI  BO]
+        """
+        blades, stddevs = data_parse(self.data)
+        to, ti, bi, bo = blades
+
+        fig, rx = plt.subplots(2, 2, figsize=(8, 5))
+
+        # Calculate extent for proper axis labels
+        if to.shape[0] == 1 or to.shape[1] == 1:
+            extent = None
+        else:
+            alist = np.array(list(self.data.keys()))
+            klist = np.unique(alist[:, 0])
+            mlist = np.unique(alist[:, 1])
+            minvalx, maxvalx = np.min(klist), np.max(klist)
+            minvaly, maxvaly = np.min(mlist), np.max(mlist)
+            extent = (minvalx, maxvalx, minvaly, maxvaly)
+
+        quad = [[ti, to], [bi, bo]]
+        names = [["TI", "TO"], ["BI", "BO"]]
+        
+        for idy in range(2):
+            for idx in range(2):
+                rx[idy][idx].imshow(quad[idy][idx], extent=extent)
+                rx[idy][idx].set_xlabel(u"$x$ [$\\mu$rad]")
+                rx[idy][idx].set_ylabel(u"$y$ [$\\mu$rad]")
+                rx[idy][idx].set_title(names[idy][idx])
+
+        fig.tight_layout(pad=0., w_pad=-15., h_pad=2.)
+
+        if self.prm.outputfile:
+            outfile = f"blade_map_{self.prm.beamline}.png"
+            fig.savefig(outfile, dpi=FIGDPI)
+            print(f" Figure of blades' map saved to file {outfile}.\n")
+
+
 # Power relative to Ampere subunits.
 AMPSUB = {
     0    : 1.0,    # no unit defined.
@@ -1106,53 +1172,6 @@ def blade_average(blade, beamline):
         vv * AMPSUB[un] for vv, un in blade
     ])
     return np.average(vals), np.std(vals)
-
-
-# ## Map of XBPM blades' sequence.
-
-def blades_map_show(data, prm):
-    """Show graphs of intensities measured by each blade at each position.
-
-    Given the grid of positions formed by the displacements of the beam due
-    to bumps on it, show the intensity (colour) map of current from each blade.
-
-    Args:
-        data (dict) : blades' values indexed by grid positions.
-        prm (dict) : general parameters of the analysis.
-    """
-    blades, stddevs = data_parse(data)
-    to, ti, bi, bo = blades
-    # sto, sti, sbi, sbo = stddevs
-
-    fig, rx = plt.subplots(2, 2, figsize=(8, 5))
-
-    if to.shape[0] == 1 or to.shape[1] == 1:
-        extent = None
-    else:
-        alist = np.array(list(data.keys()))
-        klist = np.unique(alist[:, 0])
-        mlist = np.unique(alist[:, 1])
-        minvalx, maxvalx = np.min(klist), np.max(klist)
-        minvaly, maxvaly = np.min(mlist), np.max(mlist)
-        extent = (minvalx, maxvalx, minvaly, maxvaly)
-
-    quad  = [[ti, to], [bi, bo]]
-    names = [["TI", "TO"], ["BI", "BO"]]
-    imgs  = []
-    for idy in range(2):
-        for idx in range(2):
-            # imgs.append(rx[idy][idx].imshow(quad[idy][idx]))
-            imgs.append(rx[idy][idx].imshow(quad[idy][idx], extent=extent))
-            rx[idy][idx].set_xlabel(u"$x$ [$\\mu$rad]")
-            rx[idy][idx].set_ylabel(u"$y$ [$\\mu$rad]")
-            rx[idy][idx].set_title(names[idy][idx])
-
-    fig.tight_layout(pad=0., w_pad=-15., h_pad=2.)
-
-    if prm.outputfile:
-        outfile = f"blade_map_{prm.beamline}.png"
-        fig.savefig(outfile, dpi=FIGDPI)
-        print(f" Figure of blades' map saved to file {outfile}.\n")
 
 
 def data_parse(data):
@@ -1835,7 +1854,8 @@ def main():
 
     # Dictionary with measured data from blades for each nominal position.
     if prm.showblademap:
-        blades_map_show(data, prm)
+        blade_map = BladeMapVisualizer(data, prm)
+        blade_map.show()
 
     # Show central sweeping results.
     if prm.centralsweep:
