@@ -289,6 +289,128 @@ class DataReader:
 """)
 
 
+class XBPMProcessor:
+    """Processes XBPM data to calculate beam positions.
+
+    This class handles all calculation logic for XBPM position analysis:
+    - Central sweep analysis to determine suppression matrices
+    - Pairwise and cross-blade position calculations
+    - Raw (no suppression) and scaled (with suppression) positions
+    - Blade behavior analysis at central positions
+
+    Attributes:
+        data (dict): Measurement data dictionary.
+        prm (Prm): Parameters dataclass.
+        range_h (np.ndarray): Horizontal sweep range.
+        range_v (np.ndarray): Vertical sweep range.
+        blades_h (dict): Blade measurements along horizontal center line.
+        blades_v (dict): Blade measurements along vertical center line.
+        suppression_matrix_val: Calculated suppression matrix.
+    """
+
+    def __init__(self, data: dict, prm: Prm):
+        """Initialize processor with data and parameters.
+
+        Args:
+            data: Measurement data dictionary.
+            prm: Parameters dataclass instance.
+        """
+        self.data = data
+        self.prm = prm
+        self.range_h = None
+        self.range_v = None
+        self.blades_h = None
+        self.blades_v = None
+        self.suppression_matrix_val = None
+
+    def analyze_central_sweeps(self, show: bool = False) -> tuple:
+        """Analyze blade behavior at central sweep positions.
+
+        Examines blade measurements along central horizontal and vertical
+        lines to understand blade response and calculate suppression factors.
+
+        Args:
+            show: Whether to display sweep plots.
+
+        Returns:
+            Tuple of (range_h, range_v, blades_h, blades_v).
+        """
+        result = central_sweeps(self.data, self.prm, show=show)
+        self.range_h, self.range_v, self.blades_h, self.blades_v = result
+        return result
+
+    def show_blades_at_center(self) -> None:
+        """Display blade measurements along central sweeping points.
+
+        Shows intensities measured by each blade along the horizontal
+        and vertical sweeps through the grid center with fitted lines.
+        """
+        blades_show_at_center(self.data, self.prm)
+
+    def calculate_positions(self, rtitle: str = "",
+                          nosuppress: bool = False,
+                          showmatrix: bool = True) -> list:
+        """Calculate beam positions from XBPM blade measurements.
+
+        Performs both pairwise and cross-blade calculations, applying
+        suppression matrices (unless nosuppress=True) and scaling to
+        real distances.
+
+        Args:
+            rtitle: Title for result plots.
+            nosuppress: If True, skip suppression matrix application.
+            showmatrix: If True, display blade behavior matrices.
+
+        Returns:
+            List of [pairwise_positions_dict, cross_positions_dict].
+        """
+        # Ensure we have central sweep data
+        if self.range_h is None or self.range_v is None:
+            self.analyze_central_sweeps(show=False)
+
+        return xbpm_position_calc(
+            self.data, self.prm,
+            self.range_h, self.range_v,
+            self.blades_h, self.blades_v,
+            rtitle=rtitle,
+            nosuppress=nosuppress,
+            showmatrix=showmatrix
+        )
+
+    def calculate_raw_positions(self, showmatrix: bool = True) -> list:
+        """Calculate positions without suppression matrix correction.
+
+        Args:
+            showmatrix: If True, display blade behavior matrices.
+
+        Returns:
+            List of [pairwise_positions_dict, cross_positions_dict].
+        """
+        return self.calculate_positions(
+            rtitle="raw XBPM positions",
+            nosuppress=True,
+            showmatrix=showmatrix
+        )
+
+    def calculate_scaled_positions(self, showmatrix: bool = True) -> list:
+        """Calculate positions with suppression matrix correction.
+
+        Applies suppression matrices to correct for blade gain variations
+        and scales results to physical distances.
+
+        Args:
+            showmatrix: If True, display blade behavior matrices.
+
+        Returns:
+            List of [pairwise_positions_dict, cross_positions_dict].
+        """
+        return self.calculate_positions(
+            rtitle="scaled XBPM positions",
+            nosuppress=False,
+            showmatrix=showmatrix
+        )
+
+
 # Power relative to Ampere subunits.
 AMPSUB = {
     0    : 1.0,    # no unit defined.
@@ -1823,6 +1945,9 @@ def main():
     reader = DataReader(prm)
     data = reader.read()
 
+    # Initialize processor for XBPM calculations
+    processor = XBPMProcessor(data, prm)
+
     # Show results demanded by command line options.
 
     # Beam position at XBPM calculated from BPM data solely.
@@ -1836,32 +1961,22 @@ def main():
 
     # Show central sweeping results.
     if prm.centralsweep:
-        csweeps = central_sweeps(data, prm, show=True)
+        processor.analyze_central_sweeps(show=True)
 
     # Calculate beam position from XBPM data.
     if prm.showbladescenter:
-        blades_show_at_center(data, prm)
-
-    # Calculate beam position from XBPM data.
-    if prm.xbpmpositions or prm.xbpmpositionsraw:
-        csweeps = central_sweeps(data, prm)
+        processor.show_blades_at_center()
 
     # Calculated positions with simple matrix.
     if prm.xbpmpositionsraw:
-        positions = xbpm_position_calc(data, prm, *csweeps,
-                                       rtitle="raw XBPM positions",
-                                       nosuppress=True,
-                                       showmatrix=True)
+        positions = processor.calculate_raw_positions(showmatrix=True)
         # Dump data to file.
         if prm.outputfile:
             data_dump(data, positions, prm, sup="raw")
 
     # Calculated positions with suppression matrix.
     if prm.xbpmpositions:
-        positions = xbpm_position_calc(data, prm, *csweeps,
-                                       rtitle="scaled XBPM positions",
-                                       nosuppress=False,
-                                       showmatrix=True)
+        positions = processor.calculate_scaled_positions(showmatrix=True)
         # Dump data to file.
         if prm.outputfile:
             data_dump(data, positions, prm, sup="scaled")
