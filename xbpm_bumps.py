@@ -335,62 +335,171 @@ class XBPMProcessor:
         Returns:
             Tuple of (range_h, range_v, blades_h, blades_v).
         """
-        result = central_sweeps(self.data, self.prm, show=show)
-        self.range_h, self.range_v, self.blades_h, self.blades_v = result
-        return result
+        keys = np.array(list(self.data.keys()))
+        self.range_h = np.unique(keys[:, 0])
+        self.range_v = np.unique(keys[:, 1])
+
+        # Run through central horizontal line if data is not just a point
+        if len(self.range_h) > 1:
+            (pos_ch_v, fit_ch_v,
+             self.blades_h) = self._central_sweep_horizontal()
+        else:
+            pos_ch_v = np.zeros(len(self.range_h))
+            fit_ch_v, self.blades_h = None, None
+
+        # Run through central vertical line if data is not just a point
+        if len(self.range_v) > 1:
+            pos_cv_h, fit_cv_h, self.blades_v = self._central_sweep_vertical()
+        else:
+            pos_cv_h = np.zeros(len(self.range_v))
+            fit_cv_h, self.blades_v = None, None
+
+        if show:
+            self._central_sweeps_show(pos_ch_v, fit_ch_v, pos_cv_h, fit_cv_h)
+
+        return (self.range_h, self.range_v, self.blades_h, self.blades_v)
+
+    def _central_sweep_horizontal(self) -> tuple:
+        """Extract blade measurements along horizontal center line."""
+        try:
+            to_ch = np.array([self.data[jj, 0][0] for jj in self.range_h])
+            ti_ch = np.array([self.data[jj, 0][1] for jj in self.range_h])
+            bi_ch = np.array([self.data[jj, 0][2] for jj in self.range_h])
+            bo_ch = np.array([self.data[jj, 0][3] for jj in self.range_h])
+            blades_h = {"to": to_ch, "ti": ti_ch, "bi": bi_ch, "bo": bo_ch}
+        except Exception as err:
+            print("\n WARNING: horizontal sweeping interrupted,"
+                  f" data grid may be incomplete: {err}")
+            blades = {bl: np.array([[1., 0] for _ in self.range_h])
+                      for bl in ["to", "ti", "bi", "bo"]}
+            return None, None, blades
+
+        pos_to_ti_v = (to_ch + ti_ch)
+        pos_bi_bo_v = (bo_ch + bi_ch)
+        pos_ch_v = (pos_to_ti_v - pos_bi_bo_v) / (pos_to_ti_v + pos_bi_bo_v)
+        fit_ch_v = np.polyfit(self.range_h, pos_ch_v, deg=1)
+
+        return pos_ch_v, fit_ch_v, blades_h
+
+    def _central_sweep_vertical(self) -> tuple:
+        """Extract blade measurements along vertical center line."""
+        try:
+            to_cv = np.array([self.data[0, jj][0] for jj in self.range_v])
+            ti_cv = np.array([self.data[0, jj][1] for jj in self.range_v])
+            bi_cv = np.array([self.data[0, jj][2] for jj in self.range_v])
+            bo_cv = np.array([self.data[0, jj][3] for jj in self.range_v])
+            blades_v = {"to": to_cv, "ti": ti_cv, "bi": bi_cv, "bo": bo_cv}
+        except Exception as err:
+            print("\n WARNING: vertical sweeping interrupted,"
+                  f" data grid may be incomplete: {err}")
+            blades = {bl: np.array([[1., 0] for _ in self.range_v])
+                      for bl in ["to", "ti", "bi", "bo"]}
+            return None, None, blades
+
+        pos_to_bo_h = (to_cv + bo_cv)
+        pos_ti_bi_h = (ti_cv + bi_cv)
+        pos_cv_h = (pos_to_bo_h - pos_ti_bi_h) / (pos_to_bo_h + pos_ti_bi_h)
+        fit_cv_h = np.polyfit(self.range_v, pos_cv_h, deg=1)
+
+        return pos_cv_h, fit_cv_h, blades_v
+
+    def _central_sweeps_show(self, pos_ch_v, fit_ch_v, pos_cv_h, fit_cv_h):
+        """Plot results from fittings on central sweeps."""
+        fig, (axh, axv) = plt.subplots(1, 2, figsize=(12, 5))
+
+        if fit_ch_v is not None:
+            hline = ((fit_ch_v[0, 0] * self.range_h + fit_ch_v[1, 0])
+                     * self.prm.xbpmdist)
+            axh.plot(self.range_h * self.prm.xbpmdist, hline,
+                     '^-', label="H fit")
+            axh.plot(self.range_h * self.prm.xbpmdist,
+                    pos_ch_v[:, 0] * self.prm.xbpmdist, 'o-', label="H sweep")
+            axh.set_xlabel(u"$x$ [$\\mu$m]")
+            axh.set_ylabel(u"$y$ [$\\mu$m]")
+            axh.set_title("Central Horizontal Sweeps")
+            ylim = (np.max(np.abs(hline + pos_ch_v[:, 0]
+                                  * self.prm.xbpmdist)) * 1.1)
+            axh.set_ylim(-ylim, ylim)
+            axh.grid(True)
+            axh.legend()
+
+        if fit_cv_h is not None:
+            vline = ((fit_cv_h[0, 0] * self.range_v + fit_cv_h[1, 0])
+                     * self.prm.xbpmdist)
+            axv.plot(pos_cv_h[:, 0] * self.prm.xbpmdist,
+                     self.range_v * self.prm.xbpmdist,
+                     'o-', label="V sweep")
+            axv.plot(vline, self.range_v * self.prm.xbpmdist,
+                     '^-', label="V fit")
+            axv.set_xlabel(u"$x$ [$\\mu$m]")
+            axv.set_ylabel(u"$y$ [$\\mu$m]")
+            axv.set_title("Central Vertical Sweeps")
+            axv.set_xlim((np.min(self.range_v) * 0.005 + fit_cv_h[1, 0])
+                         * self.prm.xbpmdist,
+                         (np.max(self.range_v) * 0.005 + fit_cv_h[1, 0])
+                         * self.prm.xbpmdist)
+            axv.grid(True)
+            axv.legend()
+
+        if self.prm.outputfile:
+            outfile = f"xbpm_sweeps_{self.prm.beamline}.png"
+            fig.savefig(outfile, dpi=FIGDPI)
+            print(f" Figure of central sweeps saved to file {outfile}.\n")
 
     def show_blades_at_center(self) -> None:
-        """Display blade measurements along central sweeping points.
-
-        Shows intensities measured by each blade along the horizontal
-        and vertical sweeps through the grid center with fitted lines.
-        """
-        blades_show_at_center(self.data, self.prm)
-
-    def calculate_positions(self, rtitle: str = "",
-                          nosuppress: bool = False,
-                          showmatrix: bool = True) -> list:
-        """Calculate beam positions from XBPM blade measurements.
-
-        Performs both pairwise and cross-blade calculations, applying
-        suppression matrices (unless nosuppress=True) and scaling to
-        real distances.
-
-        Args:
-            rtitle: Title for result plots.
-            nosuppress: If True, skip suppression matrix application.
-            showmatrix: If True, display blade behavior matrices.
-
-        Returns:
-            List of [pairwise_positions_dict, cross_positions_dict].
-        """
-        # Ensure we have central sweep data
+        """Display blade measurements along central sweeping points."""
+        # Ensure we have sweep data
         if self.range_h is None or self.range_v is None:
             self.analyze_central_sweeps(show=False)
 
-        return xbpm_position_calc(
-            self.data, self.prm,
-            self.range_h, self.range_v,
-            self.blades_h, self.blades_v,
-            rtitle=rtitle,
-            nosuppress=nosuppress,
-            showmatrix=showmatrix
-        )
+        if self.blades_h is None and self.blades_v is None:
+            print("\n WARNING: could not retrieve blades' currents,"
+                  " maybe there is insufficient data."
+                  " Skipping central analysis.")
+            return
 
-    def calculate_raw_positions(self, showmatrix: bool = True) -> list:
-        """Calculate positions without suppression matrix correction.
+        fig, (axh, axv) = plt.subplots(1, 2, figsize=(10, 5))
 
-        Args:
-            showmatrix: If True, display blade behavior matrices.
+        if self.blades_h is not None:
+            for key, blval in self.blades_h.items():
+                val = blval[:, 0]
+                wval = blval[:, 1]
+                weight = 1. / wval if not np.isinf(1. / wval).any else None
+                (acoef, bcoef) = np.polyfit(self.range_h, val, deg=1, w=weight)
+                axh.plot(self.range_h, self.range_h * acoef + bcoef, "o-",
+                         label=f"{key} fit")
+                axh.errorbar(self.range_h, val, wval, fmt='^-', label=key)
 
-        Returns:
-            List of [pairwise_positions_dict, cross_positions_dict].
-        """
-        return self.calculate_positions(
-            rtitle="raw XBPM positions",
-            nosuppress=True,
-            showmatrix=showmatrix
-        )
+        if self.blades_v is not None:
+            for key, blval in self.blades_v.items():
+                val = blval[:, 0]
+                wval = blval[:, 1]
+                weight = 1. / wval if not np.isinf(1. / wval).any else None
+                (acoef, bcoef) = np.polyfit(self.range_v, val, deg=1, w=weight)
+                axv.plot(self.range_v, self.range_v * acoef + bcoef, "o-",
+                         label=f"{key} fit")
+                axv.errorbar(self.range_v, val, wval, fmt='^-', label=key)
+
+        axh.set_title("Horizontal")
+        axv.set_title("Vertical")
+        axh.legend()
+        axv.legend()
+        axh.grid()
+        axv.grid()
+        axh.set_xlabel(u"$x$ $\\mu$rad")
+        axv.set_xlabel(u"$y$ $\\mu$rad")
+
+        ylabel = (u"$I$ [# counts]" if self.prm.beamline[:3]
+                  in ["MGN", "MNC"] else u"$I$ [A]")
+        axh.set_ylabel(ylabel)
+        axv.set_ylabel(ylabel)
+        fig.tight_layout()
+
+        if self.prm.outputfile:
+            outfile = f"central_sweep_{self.prm.beamline}.png"
+            fig.savefig(outfile, dpi=FIGDPI)
+            print("\n Figure of blades behaviour at central sweeps"
+                  f" saved to file {outfile}.\n")
 
     def calculate_scaled_positions(self, showmatrix: bool = True) -> list:
         """Calculate positions with suppression matrix correction.
@@ -1097,237 +1206,6 @@ def data_parse(data):
                       "\n Maybe data grid is incomplete?")
 
     return [to, ti, bi, bo], [sto, sti, sbi, sbo]
-
-
-# ## Sweep through horizontal and vertical central lines and show XBPM data.
-
-def blades_show_at_center(data, prm):
-    """Show blades' measurements along the central sweeping points.
-
-    Given the grid of positions formed by the displacements of the beam due
-    to bumps on it, show the intensities measured by each blade along the
-    sweeping.
-
-    Args:
-        data (dict) : measured data from XBPM. Keys are nominal positions,
-            values are measured counts/currents.
-        prm (dict) : general parameters of the analysis.
-
-    """
-    (hrange, vrange, hblades, vblades) = central_sweeps(data, prm,
-                                                        show=False)
-
-    if hblades is None and vblades is None:
-        print("\n WARNING: could not retrieve blades' currents,"
-              " maybe there is insufficient data."
-              " Skipping central analysis.")
-        return
-
-    fig, (axh, axv) = plt.subplots(1, 2, figsize=(10, 5))
-
-    if hblades is not None:
-        for key, blval in hblades.items():
-            val = blval[:, 0]
-            wval = blval[:, 1]
-
-            weight = 1. / wval
-            if np.isinf(weight).any:
-                weight = None
-            (acoef, bcoef) = np.polyfit(hrange, val, deg=1, w=weight)
-            axh.plot(hrange, hrange * acoef + bcoef, "o-",
-                     label=f"{key} fit")
-            axh.errorbar(hrange, val, wval, fmt='^-', label=key)
-
-            axh.plot()
-
-    if vblades is not None:
-        for key, blval in vblades.items():
-            val = blval[:, 0]
-            wval = blval[:, 1]
-
-            weight = 1. / wval
-            if np.isinf(weight).any:
-                weight = None
-            (acoef, bcoef) = np.polyfit(vrange, val, deg=1, w=weight)
-            axv.plot(vrange, vrange * acoef + bcoef, "o-",
-                     label=f"{key} fit")
-            axv.errorbar(vrange, val, wval, fmt='^-', label=key)
-
-    axh.set_title("Horizontal")
-    axv.set_title("Vertical")
-    axh.legend()
-    axv.legend()
-    axh.grid()
-    axv.grid()
-    xlabelh = u"$x$ $\\mu$rad"
-    xlabelv = u"$y$ $\\mu$rad"
-
-    if prm.beamline[:3] in ["MGN", "MNC"]:
-        ylabel = u"$I$ [# counts]"
-    else:
-        ylabel = u"$I$ [A]"
-    axh.set_xlabel(xlabelh)
-    axh.set_ylabel(ylabel)
-    axv.set_xlabel(xlabelv)
-    axv.set_ylabel(ylabel)
-    fig.tight_layout()
-
-    if prm.outputfile:
-        outfile = f"central_sweep_{prm.beamline}.png"
-        fig.savefig(outfile, dpi=FIGDPI)
-        print("\n Figure of blades behaviour at central sweeps"
-              f" saved to file {outfile}.\n")
-
-
-def central_sweeps(data, prm, show=False):
-    """Check each blade's behaviour at symmetric positions.
-
-    Args:
-        data (dict) : calculated beam positions at the grid indexed by
-            their nominal position values.
-        prm (dict) : general parameters of the analysis.
-        show (bool) : show the graphics of the sweepings or not.
-
-    Returns:
-        hrange (numpy array) : set of points of the grid swept at the
-            central horizontal line.
-        vrange (numpy array) : set of points of the grid swept at the
-            central vertical line.
-        hblades, vblades (dict) : the values measured by the blades along
-            the grid points of central sweeping.
-    """
-    # Values of blades' counting at center lines (x = 0 and y = 0).
-    # Obs.: values not as indices, but real positions.
-
-    keys = np.array(list(data.keys()))
-    range_h = np.unique(keys[:, 0])
-    range_v = np.unique(keys[:, 1])
-
-    # data indices are tuples of the grid coordinates: (x, y).
-    # Run through central horizontal (ch) line
-    # if data is not just a point at the center.
-    if len(range_h) > 1:
-        pos_ch_v, fit_ch_v, blades_h = central_sweep_horizontal(range_h, data)
-    else:
-        pos_ch_v = np.zeros(len(range_h))
-        fit_ch_v, blades_h = None, None
-
-    # Run through central vertical (cv) line
-    # if data is not just a point at the center.
-    if len(range_v) > 1:
-        pos_cv_h, fit_cv_h, blades_v = central_sweep_vertical(range_v, data)
-    else:
-        pos_cv_h = np.zeros(len(range_v))
-        fit_cv_h, blades_v = None, None
-
-    # Check whether data has information at central region.
-    # hmin, hmax = np.min(range_h), np.max(range_h)
-    # vmin, vmax = np.min(range_v), np.max(range_v)
-    # if hmin >= 0 or hmax <= 0 or vmin >= 0 or vmax <= 0:
-    #     print(" WARNING: sweeping intervals do not have sufficient data"
-    #           " for central analysis. Skipping.")
-    #     return (range_h, range_v, None, None)
-
-    if show:
-        central_sweeps_show(range_h, range_v,
-                            pos_ch_v, fit_ch_v,
-                            pos_cv_h, fit_cv_h, prm)
-
-    return (range_h, range_v, blades_h, blades_v)
-
-
-def central_sweep_horizontal(range_h, data):
-    """."""
-    try:
-        to_ch  = np.array([data[jj, 0][0] for jj in range_h])
-        ti_ch  = np.array([data[jj, 0][1] for jj in range_h])
-        bi_ch  = np.array([data[jj, 0][2] for jj in range_h])
-        bo_ch  = np.array([data[jj, 0][3] for jj in range_h])
-        blades_h = {"to": to_ch, "ti": ti_ch, "bi": bi_ch, "bo": bo_ch}
-    except Exception as err:
-        print("\n WARNING: horizontal sweeping interrupted,"
-              f" data grid may be incomplete: {err}")
-        blades = {bl: np.array([[1., 0] for _ in range_h])
-                  for bl in ["to", "ti", "bi", "bo"]}
-        return None, None, blades
-
-    # Vertical positions along central horizontal line.
-    pos_to_ti_v = (to_ch + ti_ch)
-    pos_bi_bo_v = (bo_ch + bi_ch)
-    pos_ch_v = (pos_to_ti_v - pos_bi_bo_v) / (pos_to_ti_v + pos_bi_bo_v)
-
-    # Fit a line to the central horizontal sweep.
-    fit_ch_v  = np.polyfit(range_h, pos_ch_v, deg=1)
-
-    return pos_ch_v, fit_ch_v, blades_h
-
-
-def central_sweep_vertical(range_v, data):
-    """."""
-    try:
-        to_cv  = np.array([data[0, jj][0] for jj in range_v])
-        ti_cv  = np.array([data[0, jj][1] for jj in range_v])
-        bi_cv  = np.array([data[0, jj][2] for jj in range_v])
-        bo_cv  = np.array([data[0, jj][3] for jj in range_v])
-        blades_v = {"to": to_cv, "ti": ti_cv, "bi": bi_cv, "bo": bo_cv}
-    except Exception as err:
-        print("\n WARNING: horizontal sweeping interrupted,"
-              f" data grid may be incomplete: {err}")
-        blades = {bl: np.array([[1., 0] for _ in range_v])
-                  for bl in ["to", "ti", "bi", "bo"]}
-        return None, None, blades
-
-    # Horizontal positions along central horizontal line.
-    pos_to_bo_h = (to_cv + bo_cv)
-    pos_ti_bi_h = (ti_cv + bi_cv)
-    pos_cv_h = (pos_to_bo_h - pos_ti_bi_h) / (pos_to_bo_h + pos_ti_bi_h)
-
-    # Fit a line to the central horizontal sweep.
-    fit_cv_h  = np.polyfit(range_v, pos_cv_h, deg=1)
-
-    return pos_cv_h, fit_cv_h, blades_v
-
-
-def central_sweeps_show(hrange, vrange,
-                        pos_ch_v, fit_ch_v,
-                        pos_cv_h, fit_cv_h, prm):
-    """Plot results from fittings on central sweeps."""
-    fig, (axh, axv) = plt.subplots(1, 2, figsize=(12, 5))
-
-    if fit_ch_v is not None:
-        hline = (fit_ch_v[0, 0] * hrange + fit_ch_v[1, 0]) * prm.xbpmdist
-        axh.plot(hrange * prm.xbpmdist, hline, '^-', label="H fit")
-        axh.plot(hrange * prm.xbpmdist,
-                pos_ch_v[:, 0] * prm.xbpmdist, 'o-', label="H sweep")
-        axh.set_xlabel(u"$x$ [$\\mu$m]")
-        axh.set_ylabel(u"$y$ [$\\mu$m]")
-        axh.set_title("Central Horizontal Sweeps")
-
-        ylim = np.max(np.abs(hline + pos_ch_v[:, 0] * prm.xbpmdist)) * 1.1
-        axh.set_ylim(-ylim, ylim)
-        # axh.axis('equal')
-        axh.grid(True)
-        axh.legend()
-
-    if fit_cv_h is not None:
-        vline = (fit_cv_h[0, 0] * vrange + fit_cv_h[1, 0]) * prm.xbpmdist
-        axv.plot(pos_cv_h[:, 0] * prm.xbpmdist,
-                    vrange * prm.xbpmdist, 'o-', label="V sweep")
-        axv.plot(vline, vrange * prm.xbpmdist, '^-', label="V fit")
-        axv.set_xlabel(u"$x$ [$\\mu$m]")
-        axv.set_ylabel(u"$y$ [$\\mu$m]")
-        axv.set_title("Central Vertical Sweeps")
-
-        # axv.axis('equal')
-        axv.set_xlim((np.min(vrange) * 0.005 + fit_cv_h[1, 0]) * prm.xbpmdist,
-                     (np.max(vrange) * 0.005 + fit_cv_h[1, 0]) * prm.xbpmdist)
-        axv.grid(True)
-        axv.legend()
-
-    if prm.outputfile:
-        outfile = f"xbpm_sweeps_{prm.beamline}.png"
-        fig.savefig(outfile, dpi=FIGDPI)
-        print(f" Figure of central sweeps saved to file {outfile}.\n")
 
 
 # ## Beam position from XBPM data.
