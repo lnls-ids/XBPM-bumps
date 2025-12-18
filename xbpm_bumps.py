@@ -46,16 +46,37 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pickle                 # noqa: S403
 import os
+import re
 import sys
 from copy import deepcopy
 
 
 HELP_DESCRIPTION = (
 """
-This program extract data from pickle files containing the measurements
-of XBPM blades' currents of a few beamlines (CAT, CNB, MNC, MGN) and
-calculates the respective positions based on pairwise and cross-blade
-formulas.
+This program extract data from a file or a directory with the
+measurements of XBPM blades' currents of a few beamlines
+(CAT, CNB, MNC, MGN) and calculates the respective positions
+based on pairwise and cross-blade formulas.
+
+If data is read from a text file, it  may have a header with parameters,
+starting with '#', like:
+# SR current: 300.0
+# Beamline: CAT
+# Phase/Gap: 6.0
+# XBPM distance: 15.74
+# Inter BPM distance: 6.175495
+
+The data lines must have the format:
+
+nom_x nom_y to err_to ti err_ti bi err_bi bo err_bo
+
+where nom_x and nom_y are the horizontal and vertical nominal
+positions of the beam,
+to, ti, bi, bo are the blade currents and
+err_to, err_ti, err_bi, err_bo are the respective errors.
+
+If data is read from a directory, it must contain pickle files with
+data saved.
 
 The data is treated with linear transformations first, to correct for
 distortions promoted by different gains in each blade. Firstly, gains
@@ -237,10 +258,9 @@ def cmd_options(argv=None):  # noqa: C901
 
     parser.add_argument(
         '-g', '--gridstep', type=float, default=GRIDSTEP,
-        help=(
-            'Step between neighbour sites in the grid. '
-            'Usually inferred from data, but might be provided '
-            'in some cases.'
+        help=("""Step between neighbour sites in the grid.
+            Usually inferred from data, but might be provided
+            in some cases."""
         ),
         )
 
@@ -261,7 +281,7 @@ def cmd_options(argv=None):  # noqa: C901
 
     parser.add_argument(
         '-w', '--workdir', type=str, required=True,
-        help='Working directory with measured data'
+        help='Working directory _or_ file with measured data'
         )
 
     args = parser.parse_args(argv)
@@ -280,9 +300,42 @@ def cmd_options(argv=None):  # noqa: C901
         skip             = int(args.skip),
         gridstep         = float(args.gridstep),
         maxradangle      = 20.0,
+        beamline         = None,
     )
 
     return prm
+
+
+def read_data(prm):
+    """Read data from working directory or file.
+
+    This function is a wrapper to actual data reading functions.
+
+    Args:
+        prm (Prm): parameters dataclass instance.
+
+    Returns:
+        rawdata (list): all data collected from pickle files in working
+            directory or from text file.
+    """
+    if os.path.isfile(prm.workdir):
+        data = data_text_read(prm)
+    else:
+        rawdata = get_pickle_data(prm.workdir)[prm.skip:]
+        prm.beamline = beamline_define(rawdata)
+        parameters_data_defined(prm, rawdata)
+        data = blades_fetch(rawdata, prm.beamline)
+
+    print(f"""
+### Storage ring current : {prm.current}
+### Grid step:             {prm.gridstep}
+### Working beamline:\t   {BEAMLINENAME[prm.beamline[:3]]} ({prm.beamline})
+### Distance source-XBPM : {prm.xbpmdist:.3f} m
+### Distance between BPMs: {prm.bpmdist:.3f} m
+### Gap or phase:          {prm.phaseorgap}
+""")
+
+    return data
 
 
 def get_pickle_data(workdir):
@@ -315,12 +368,86 @@ def get_pickle_data(workdir):
     return rawdata
 
 
+def data_text_read(prm):
+    """Read data from text file."""
+    data = dict()
+
+    with open(prm.workdir, 'r') as fp:
+        lines = fp.readlines()
+        for _, line in enumerate(lines):
+            if _is_empty(line):
+                continue
+            if _is_header(line):
+                _parse_header_line(line, prm)
+                continue
+            _parse_data_line(line, data)
+
+    _infer_gridstep_from_data(data, prm)
+    return data
+
+
+def _is_empty(line: str) -> bool:
+    return bool(re.match(r'^\s*$', line))
+
+
+def _is_header(line: str) -> bool:
+    return bool(re.match(r'^\s*#', line))
+
+
+def _parse_header_line(line: str, prm):
+    cline = line.strip('#')
+    kprm, vprm = cline.split(':')
+    key = kprm.strip().lower()
+    val = vprm.strip()
+
+    if re.search(r'current', key, re.IGNORECASE):
+        prm.current = float(val)
+    elif re.search(r'beamline', key, re.IGNORECASE):
+        prm.beamline = val
+    elif re.search(r'gap', key, re.IGNORECASE):
+        prm.phaseorgap = val
+    elif re.search(r'xbpm', key, re.IGNORECASE):
+        prm.xbpmdist = float(val)
+    elif re.search(r'inter bpm', key, re.IGNORECASE):
+        prm.bpmdist = float(val)
+    else:
+        prm[key] = val
+
+
+def _parse_data_line(line: str, data: dict):
+    parts = line.strip().split()
+    key = (float(parts[0]), float(parts[1]))
+    data[key] = np.array([
+        [float(parts[ii]), float(parts[ii + 1])]
+        for ii in range(2, len(parts), 2)
+    ])
+
+
+def _infer_gridstep_from_data(data: dict, prm):
+    """Infer grid step from the keys if not provided."""
+    try:
+        xs = np.unique([k[0] for k in data.keys()])
+        ys = np.unique([k[1] for k in data.keys()])
+        dx = np.min(np.diff(np.sort(xs))) if xs.size > 1 else None
+        dy = np.min(np.diff(np.sort(ys))) if ys.size > 1 else None
+        steps = [v for v in (dx, dy) if v not in (None, 0)]
+        if steps:
+            prm.gridstep = float(min(steps))
+    except Exception:
+        pass
+        steps = [v for v in [dx, dy] if v not in (None, 0)]
+        if steps:
+            prm.gridstep = float(min(steps))
+    except Exception as err:
+        print(f"\n WARNING: could not infer grid step from data: {err}.")
+        pass
+    return data
+
+
 def parameters_data_defined(prm, rawdata):
     """Define complementary parameters based on data set and tables."""
-    prm.beamline = beamline_define(rawdata)
-
     prm.current  = rawdata[0][2]["current"]
-    print(f"### Storage ring current :\t {prm.current} mA")
+    # print(f"### Storage ring current :\t {prm.current} mA")
 
     try:
         prm.phaseorgap = rawdata[0][1][prm.beamline[:3].lower()]
@@ -339,7 +466,7 @@ def parameters_data_defined(prm, rawdata):
               f" set to {prm.xbpmdist:.3f} m (beamline default).")
 
     prm.gridstep = gridstep_get(rawdata)
-    print(f" Grid step set to {prm.gridstep}.\n")
+    # print(f" Grid step set to {prm.gridstep}.\n")
 
 
 def beamline_define(rawdata):
@@ -375,8 +502,8 @@ def beamline_define(rawdata):
         print("\n Please, check your data. Aborting.")
         sys.exit(0)
 
-    print("\n### Working beamline     :\t"
-          f" {BEAMLINENAME[beamline[:3]]} ({beamline})")
+    # print("\n### Working beamline     :\t"
+    #       f" {BEAMLINENAME[beamline[:3]]} ({beamline})")
 
     return beamline
 
@@ -435,6 +562,12 @@ def beam_positions_from_bpm(rawdata, prm):
         rawdata (list) : raw data with bpms and xbpms measurements.
         prm (dict) : set of parameters of the analysis.
     """
+    if prm.section is None:
+        print("### ERROR: no section defined for the beamline"
+              " in data set.\n"
+              "### Cannot proceed with BPM data analysis. Skipping.")
+        return
+
     fig, ax = plt.subplots()
 
     # Extract the index sector of the beamline and calculate the tangents.
@@ -1669,20 +1802,14 @@ def main():
     prm = cmd_options()
 
     # Get raw data. These are the data from all sectors.
-    rawdata = get_pickle_data(prm.workdir)[prm.skip:]
-
-    # Complementary parameters.
-    parameters_data_defined(prm, rawdata)
-
-    # Extract and classify data from raw data.
-    data = blades_fetch(rawdata, prm.beamline)
+    data = read_data(prm)
 
     # Show results demanded by command line options.
 
     # Beam position at XBPM calculated from BPM data solely.
     # The sector is selected from 'section' parameter.
     if prm.xbpmfrombpm:
-        beam_positions_from_bpm(rawdata, prm)
+        beam_positions_from_bpm(data, prm)
 
     # Dictionary with measured data from blades for each nominal position.
     if prm.showblademap:
