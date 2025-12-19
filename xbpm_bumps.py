@@ -49,6 +49,7 @@ import os
 import re
 import sys
 from copy import deepcopy
+import unicodedata
 
 
 HELP_DESCRIPTION = (
@@ -94,6 +95,24 @@ STD_ROI_SIZE = 2              # Default range for ROI.
 FIGDPI = 300                  # Figure dpi saving parameter.
 
 
+def found_key(my_dict: dict, target_value: str) -> str:
+    """Find key in dictionary by its value.
+
+    Args:
+        my_dict: Dictionary to search.
+        target_value: The value to find.
+
+    Returns:
+        The key corresponding to target_value.
+
+    Raises:
+        StopIteration: If target_value is not found.
+    """
+    return next(key
+                for key, value in my_dict.items()
+                if value == target_value)
+
+
 @dataclass
 class Prm:
     """Typed container for command-line and runtime parameters.
@@ -116,7 +135,7 @@ class Prm:
     maxradangle      : float               = 20.0
 
     # runtime-filled fields
-    beamline         : Optional[str]       = None
+    beamline         : str                 = ""
     current          : Optional[Any]       = None
     phaseorgap       : Optional[Any]       = None
     bpmdist          : Optional[float]     = None
@@ -131,6 +150,216 @@ class Prm:
     def __setitem__(self, key: str, value):
         """Allow setting attributes via prm['key'] = value."""
         setattr(self, key, value)
+
+
+class ParameterBuilder:
+    """Builds and enriches Prm parameters from CLI and data sources.
+
+    Consolidates all parameter-related logic:
+    - CLI argument parsing
+    - Beamline identification from data
+    - Grid step inference
+    - Data-derived parameter enrichment
+    """
+
+    @staticmethod
+    def from_cli(argv=None) -> Prm:
+        """Parse command-line arguments and build initial Prm instance.
+
+        Args:
+            argv: List of command-line arguments. If None, uses sys.argv.
+        """
+        args = ParameterBuilder._parse_args(argv)
+        return Prm(
+            showblademap     = bool(args.showblademap),
+            centralsweep     = bool(args.centralsweep),
+            showbladescenter = bool(args.showbladescenter),
+            xbpmpositions    = bool(args.xbpmpositions),
+            xbpmfrombpm      = bool(args.xbpmfrombpm),
+            xbpmpositionsraw = bool(args.xbpmpositionsraw),
+            outputfile       = bool(args.outputfile),
+            xbpmdist         = args.xbpmdist,
+            workdir          = args.workdir,
+            skip             = int(args.skip),
+            gridstep         = float(args.gridstep),
+            maxradangle      = 20.0,
+            beamline         = "",
+        )
+
+    @staticmethod
+    def enrich_from_data(prm: Prm, rawdata: list) -> Prm:
+        """Enrich Prm with other data-derived values.
+
+        Adds beamline-specific parameters and infers grid step if needed.
+
+        Args:
+            prm: Initial Prm instance.
+            rawdata: Raw data list from measurements.
+
+        Returns:
+            prm: Enriched Prm instance.
+        """
+        if not prm.beamline:
+            prm.beamline = ParameterBuilder._identify_beamline(rawdata)
+        ParameterBuilder._add_beamline_parameters(prm, rawdata)
+        return prm
+
+    @staticmethod
+    def _parse_args(argv=None):
+        """Parse command-line arguments using argparse.
+
+        Args:
+            argv: List of command-line arguments. If None, uses sys.argv.
+        """
+        parser = argparse.ArgumentParser(
+            prog="xbpm_bumps",
+            description="Extract XBPM's data and calculate the beam position.",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog=f"{HELP_DESCRIPTION}\n")
+
+        # Boolean flags
+        parser.add_argument(
+            '-b', action='store_true', dest='xbpmfrombpm',
+            help='Show positions calculated from BPM data'
+        )
+        parser.add_argument(
+            '-c', action='store_true', dest='showbladescenter',
+            help="Show each blade's response at central line sweeps",
+        )
+        parser.add_argument(
+            '-m', action='store_true', dest='showblademap',
+            help="Show blades' map (to check blades' positions)"
+        )
+        parser.add_argument(
+            '-s', action='store_true', dest='centralsweep',
+            help='Positions when sweeping through center'
+        )
+        parser.add_argument(
+            '-r', action='store_true', dest='xbpmpositionsraw',
+            help='Positions calculated from XBPM data without suppression',
+        )
+        parser.add_argument(
+            '-x', action='store_true', dest='xbpmpositions',
+            help='Positions calculated from XBPM data'
+        )
+
+        # Options with values
+        parser.add_argument(
+            '-d', '--xbpmdist', type=float,
+            help='Distance from source to XBPM [m]'
+        )
+        parser.add_argument(
+            '-g', '--gridstep', type=float, default=GRIDSTEP,
+            help=("""Step between neighbour sites in the grid.
+                Usually inferred from data, but might be provided
+                in some cases."""
+            ),
+        )
+        parser.add_argument(
+            '-k', '--skip', type=int, default=0,
+            help='Initial data to be skipped (default=0)'
+        )
+        parser.add_argument(
+            '-o', '--outputfile', action="store_true", dest="outputfile",
+            help='Dump data to output file'
+        )
+        parser.add_argument(
+            '-w', '--workdir', type=str, required=True,
+            help='Working directory _or_ file with measured data'
+        )
+
+        return parser.parse_args(argv)
+
+    @staticmethod
+    def _identify_beamline(rawdata: list) -> str:
+        """Identify and select beamline from raw data."""
+        beamlines = sorted(list(set([
+            dic for dt in rawdata for dic in dt[0]
+            ])))
+
+        if len(beamlines) > 1:
+            print("\nWARNING: found these beamlines: " +
+                  ", ".join(beamlines))
+            print(" Which one should I work on?")
+            for ii, bl in enumerate(beamlines):
+                print(f" {ii + 1} - {bl}")
+
+            opt = None
+            while opt is None:
+                try:
+                    opt = int(input(" Pick your option: "))
+                    if opt not in list(range(1, 1 + len(beamlines))):
+                        opt = None
+                        raise Exception
+                except Exception:
+                    print(' Invalid option.')
+                    continue
+        else:
+            opt = 1
+
+        beamline = beamlines[opt - 1]
+        if beamline not in BLADEMAP.keys():
+            print(f" ERROR: beamline {beamline} not defined in blade maps.")
+            print(" Defined blade maps are:"
+                  f" {', '.join(BLADEMAP.keys())}.")
+            print("\n Please, check your data. Aborting.")
+            sys.exit(0)
+
+        return beamline
+
+    @staticmethod
+    def _add_beamline_parameters(prm: Prm, rawdata: list) -> None:
+        """Add beamline-specific parameters to prm."""
+        prm.current = rawdata[0][2]["current"]
+
+        try:
+            prm.phaseorgap = rawdata[0][1][prm.beamline[:3].lower()]
+            print(f"### Phase / Gap ({prm.beamline})   :\t"
+                  f" {prm.phaseorgap}")
+        except Exception:
+            print(f"\n WARNING: no phase/gap defined for {prm.beamline}.")
+
+        prm.bpmdist  = BPMDISTS[prm.beamline[:3]]
+        prm.section  = SECTIONS[prm.beamline[:3]]
+        prm.blademap = BLADEMAP[prm.beamline[:3]]
+
+        if prm.xbpmdist is None:
+            prm.xbpmdist = XBPMDISTS[prm.beamline]
+            print(f"\n WARNING: distance from source to {prm.beamline}'s XBPM "
+                  f" set to {prm.xbpmdist:.3f} m (beamline default).")
+
+        prm.gridstep = ParameterBuilder._infer_gridstep(rawdata)
+
+    @staticmethod
+    def _infer_gridstep(rawdata: list) -> float:
+        """Calculate grid step from data."""
+        agx = [rawdata[ii][2]['agx'] for ii in range(len(rawdata))]
+        agy = [rawdata[ii][2]['agy'] for ii in range(len(rawdata))]
+
+        xset = list(set(agx))
+        gridstepx = 0 if len(xset) == 1 else np.abs(xset[1] - xset[0])
+        yset = list(set(agy))
+        gridstepy = 0 if len(yset) == 1 else np.abs(yset[1] - yset[0])
+
+        if gridstepx != gridstepy:
+            print(f"\n WARNING: horizontal grid step ({gridstepx})"
+                  f" differs from vertical grid step ({gridstepy})."
+                  "\n I'll try it with the smaller value, if not zero.")
+
+        if gridstepx < gridstepy and gridstepx != 0:
+            return gridstepx
+        elif gridstepy != 0:
+            return gridstepy
+
+        print(" ERROR: I could not infer the grid step size. "
+              " Please, rerun and provide the value manually,"
+              " with option -g. Aborting.")
+        sys.exit(0)
+
+    @staticmethod
+    def lastfield(name: str, fld: str = ' ') -> str:
+        """Get the last part of string separated by given character."""
+        return name.split(fld)[-1]
 
 
 class DataReader:
@@ -188,13 +417,20 @@ class DataReader:
                     continue
                 self._parse_data_line(line)
 
+        if self.prm.xbpmdist is None:
+            try:
+                self.prm.xbpmdist = XBPMDISTS[self.prm.beamline]
+            except Exception:
+                self.prm.xbpmdist = 1.0
+            print("\n WARNING: distance from source to XBPM not provided."
+                  f" Using default value: {self.prm.xbpmdist} m")
+
         self._infer_gridstep()
 
     def _read_from_directory(self) -> None:
         """Read data from pickle files in a directory."""
         self.rawdata = self._get_pickle_data()[self.prm.skip:]
-        self.prm.beamline = beamline_define(self.rawdata)
-        parameters_data_defined(self.prm, self.rawdata)
+        self.prm = ParameterBuilder.enrich_from_data(self.prm, self.rawdata)
         self.data = blades_fetch(self.rawdata, self.prm.beamline)
 
     def _get_pickle_data(self) -> list:
@@ -211,7 +447,8 @@ class DataReader:
                   "Aborting.")
             sys.exit(0)
 
-        sfiles = sorted(picklefiles, key=lambda name: lastfield(name, '_'))
+        sfiles = sorted(picklefiles,
+                        key=lambda name: ParameterBuilder.lastfield(name, '_'))
         rawdata = []
         for file in sfiles:
             with open(self.prm.workdir + "/" + file, 'rb') as df:
@@ -235,20 +472,40 @@ class DataReader:
         Expected format: # Key: value
         """
         cline = line.strip('#')
-        kprm, vprm = cline.split(':')
+        # Split only on the first ':' to avoid accidental extra splits
+        kprm, vprm = cline.split(':', 1)
         key = kprm.strip().lower()
         val = vprm.strip()
 
+        # Helper to extract a numeric value from strings like "199.86 mA"
+        def _extract_float(text: str) -> float:
+            m = re.search(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?",
+                          text.strip())
+            if not m:
+                raise ValueError(f"Could not parse float from '{text}'")
+            return float(m.group(0))
+
         if re.search(r'current', key, re.IGNORECASE):
-            self.prm.current = float(val)
+            self.prm.current = _extract_float(val)
         elif re.search(r'beamline', key, re.IGNORECASE):
-            self.prm.beamline = val
+            blval = val
+            # Prefer code inside parentheses, e.g., "Caterete (CAT)" -> "CAT"
+            m = re.search(r"\(([^)]+)\)", blval)
+            if m:
+                self.prm.beamline = m.group(1).strip().upper()
+            else:
+                # Try to find the beamline code by looking up the full name
+                try:
+                    self.prm.beamline = found_key(BEAMLINENAME, blval.strip())
+                except StopIteration:
+                    # Fallback: if exact match not found, keep original
+                    self.prm.beamline = blval
         elif re.search(r'gap', key, re.IGNORECASE):
             self.prm.phaseorgap = val
         elif re.search(r'xbpm', key, re.IGNORECASE):
-            self.prm.xbpmdist = float(val)
+            self.prm.xbpmdist = _extract_float(val)
         elif re.search(r'inter bpm', key, re.IGNORECASE):
-            self.prm.bpmdist = float(val)
+            self.prm.bpmdist = _extract_float(val)
         else:
             self.prm[key] = val
 
@@ -278,16 +535,21 @@ class DataReader:
             print(f"\nWARNING: could not infer grid step from data: {err}.")
 
     def _print_summary(self) -> None:
-        bl = self.prm.beamline if self.prm.beamline else "N/A"
         """Print a summary of the loaded data and parameters."""
+        bl = self.prm.beamline or "N/A"
+        blname = BEAMLINENAME[bl[:3]]
+        xbpm_str = f"{self.prm.xbpmdist} m" if self.prm.xbpmdist else "N/A"
+        bpm_str  = f"{self.prm.bpmdist} m" if self.prm.bpmdist else "N/A"
+
         print(f"""
+### Working beamline:\t   {blname} ({bl})
 ### Storage ring current : {self.prm.current}
 ### Grid step:             {self.prm.gridstep}
-### Working beamline:\t   {BEAMLINENAME[bl[:3]]} ({bl})
-### Distance source-XBPM : {self.prm.xbpmdist:.3f} m
-### Distance between BPMs: {self.prm.bpmdist:.3f} m
+### Distance source-XBPM : {xbpm_str}
+### Distance between BPMs: {bpm_str}
 ### Gap or phase:          {self.prm.phaseorgap}
-""")
+"""
+)
 
 
 class XBPMProcessor:
@@ -490,6 +752,10 @@ class XBPMProcessor:
         axh.set_xlabel(u"$x$ $\\mu$rad")
         axv.set_xlabel(u"$y$ $\\mu$rad")
 
+        # DEBUG
+        print(f" SHOW BLADES AT CENTER: {self.prm.beamline}")
+        # DEBUG
+
         ylabel = (u"$I$ [# counts]" if self.prm.beamline[:3]
                   in ["MGN", "MNC"] else u"$I$ [A]")
         axh.set_ylabel(ylabel)
@@ -631,7 +897,8 @@ class PositionVisualizer:
     Attributes:
         prm (Prm): Parameters dataclass.
         title (str): Title for the visualization.
-        fig (matplotlib.figure.Figure): Matplotlib figure object for current visualization.
+        fig (matplotlib.figure.Figure): Matplotlib figure object for
+             current visualization.
     """
 
     def __init__(self, prm: Prm, title: str = ""):
@@ -663,7 +930,8 @@ class PositionVisualizer:
             diff_roi: RMS position differences in ROI.
             figsize: Figure size as (width, height) tuple.
         """
-        self.fig, (ax_all, ax_close, ax_color) = plt.subplots(1, 3, figsize=figsize)
+        self.fig, (ax_all, ax_close, ax_color) = plt.subplots(1, 3,
+                                                              figsize=figsize)
 
         # Full grid view
         self._plot_scaled_positions(
@@ -782,10 +1050,11 @@ BLADEMAP = {
 
 # The XBPM beamlines.
 BEAMLINENAME = {
-    "CAT": "Cateretê",
-    "CNB": "Carnaúba",
+    "CAT": "Caterete",
+    "CNB": "Carnauba",
     "MGN": "Mogno",
-    "MNC": "Manacá",
+    "MNC": "Manaca",
+    "N/A": "Not defined",
 }
 
 # Distances between two adjacent BPMs around the source of bump at each line.
@@ -1979,7 +2248,7 @@ def data_dump(data, positions, prm, sup=""):
 def main():
     """Main entry point for XBPM data analysis."""
     # Read command line options.
-    prm = cmd_options()
+    prm = ParameterBuilder.from_cli()
 
     # Read data from working directory or file.
     reader = DataReader(prm)
