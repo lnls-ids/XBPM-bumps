@@ -48,8 +48,9 @@ import pickle                 # noqa: S403
 import os
 import re
 import sys
-from copy import deepcopy
-import unicodedata
+
+# from copy import deepcopy
+# import unicodedata
 
 
 HELP_DESCRIPTION = (
@@ -550,7 +551,8 @@ class DataReader:
                 xbpm = dt[0][beamline]
                 vals = list()
                 for blade in BLADEMAP[beamline].values():
-                    av, sd = DataReader._blade_average(xbpm[f'{blade}_val'], beamline)
+                    av, sd = DataReader._blade_average(xbpm[f'{blade}_val'],
+                                                       beamline)
                     vals.append((av, sd))
                 bpm_x = dt[2]['agx']
                 bpm_y = dt[2]['agy']
@@ -838,21 +840,15 @@ class XBPMProcessor:
         """Calculate positions from blades' measured data and visualize."""
         data = self.data
         prm = self.prm
-        range_h = self.range_h
-        range_v = self.range_v
-        blades_h = self.blades_h
-        blades_v = self.blades_v
 
-        blades, _stddevs = XBPMProcessor.data_parse(data)
+        blades, _stddevs = self.data_parse()
 
-        supmat = XBPMProcessor.suppression_matrix(range_h, range_v,
-                                                  blades_h, blades_v, prm,
-                                                  showmatrix=showmatrix,
-                                                  nosuppress=nosuppress)
+        supmat = self.suppression_matrix(showmatrix=showmatrix,
+                                        nosuppress=nosuppress)
 
-        pos_pair  = XBPMProcessor.beam_position_pair(data, supmat)
+        pos_pair  = self.beam_position_pair(supmat)
         (pos_nom_h, pos_nom_v,
-         pos_pair_h, pos_pair_v) = XBPMProcessor.position_dict_parse(pos_pair, prm.gridstep)
+         pos_pair_h, pos_pair_v) = self.position_dict_parse(pos_pair)
 
         pos_nom_h *= prm.xbpmdist
         pos_nom_v *= prm.xbpmdist
@@ -967,23 +963,21 @@ class XBPMProcessor:
                     ]
         return [scaled_pos_pair, scaled_pos_cros]
 
-    @staticmethod
-    def suppression_matrix(range_h, range_v, blades_h, blades_v, prm,
-                           showmatrix=False, nosuppress=False):
+    def suppression_matrix(self, showmatrix=False, nosuppress=False):
         """Calculate the suppression matrix and persist it to disk."""
         if nosuppress:
             pch = np.ones(8).reshape(4, 2)
             pcv = np.ones(8).reshape(4, 2)
         else:
-            pch = XBPMProcessor.central_line_fit(blades_h, range_h, 'h')
-            pcv = XBPMProcessor.central_line_fit(blades_v, range_v, 'v')
+            pch = XBPMProcessor.central_line_fit(self.blades_h, self.range_h, 'h')
+            pcv = XBPMProcessor.central_line_fit(self.blades_v, self.range_v, 'v')
 
-        if len(range_h) > 1:
+        if len(self.range_h) > 1:
             pch = pch[0] / np.abs(pch)
         else:
             pch = np.ones(8).reshape(4, 2)
 
-        if len(range_v) > 1:
+        if len(self.range_v) > 1:
             pcv = pcv[0] / np.abs(pcv)
         else:
             pcv = np.ones(8).reshape(4, 2)
@@ -1003,7 +997,7 @@ class XBPMProcessor:
                 print()
             print()
 
-        Exporter(prm).write_supmat(supmat)
+        Exporter(self.prm).write_supmat(supmat)
         return supmat
 
     @staticmethod
@@ -1030,17 +1024,15 @@ class XBPMProcessor:
 
         return pc
 
-    @staticmethod
-    def beam_position_pair(data, supmat):
+    def beam_position_pair(self, supmat):
         """Calculate beam position from blades' currents (pairwise)."""
         positions = dict()
-        for pos, bld in data.items():
+        for pos, bld in self.data.items():
             dsps = supmat @ bld[:, 0]
             positions[pos] = np.array([dsps[0] / dsps[1], dsps[2] / dsps[3]])
         return positions
 
-    @staticmethod
-    def position_dict_parse(data, gridstep):
+    def position_dict_parse(self, data):
         """Parse XBPM position dict into structured arrays."""
         gridlist = np.array(list(data.keys()))
         gsh_lin = len(np.unique(gridlist[:, 1]))
@@ -1054,8 +1046,8 @@ class XBPMProcessor:
         minval_h = np.min(gridlist[:, 0])
         maxval_v = np.max(gridlist[:, 1])
         for key, val in data.items():
-            col = int((key[0] - minval_h) / gridstep)
-            lin = int((maxval_v - key[1]) / gridstep)
+            col = int((key[0] - minval_h) / self.prm.gridstep)
+            lin = int((maxval_v - key[1]) / self.prm.gridstep)
 
             try:
                 xbpm_nom_h[lin, col]  = key[0]
@@ -1112,10 +1104,9 @@ class XBPMProcessor:
         print(f"ky = {ky:12.4f},   deltay = {deltay:12.4f}\n")
         return kx, deltax, ky, deltay
 
-    @staticmethod
-    def data_parse(data):
+    def data_parse(self):
         """Extract each blade's data from whole data dict into arrays."""
-        dk = np.array(list(data.keys()))
+        dk = np.array(list(self.data.keys()))
 
         nh = np.unique(dk[:, 0])
         nv = np.unique(dk[:, 1])
@@ -1131,19 +1122,19 @@ class XBPMProcessor:
                 ilin = ngrid[0] - ii - 1
                 icol = jj
 
-                if key not in data.keys():
+                if key not in self.data.keys():
                     break
 
                 try:
-                    to[ilin, icol]  = data[key][0, 0]
-                    ti[ilin, icol]  = data[key][1, 0]
-                    bi[ilin, icol]  = data[key][2, 0]
-                    bo[ilin, icol]  = data[key][3, 0]
+                    to[ilin, icol]  = self.data[key][0, 0]
+                    ti[ilin, icol]  = self.data[key][1, 0]
+                    bi[ilin, icol]  = self.data[key][2, 0]
+                    bo[ilin, icol]  = self.data[key][3, 0]
 
-                    sto[ilin, icol] = data[key][0, 1]
-                    sti[ilin, icol] = data[key][1, 1]
-                    sbi[ilin, icol] = data[key][2, 1]
-                    sbo[ilin, icol] = data[key][3, 1]
+                    sto[ilin, icol] = self.data[key][0, 1]
+                    sti[ilin, icol] = self.data[key][1, 1]
+                    sbi[ilin, icol] = self.data[key][2, 1]
+                    sbo[ilin, icol] = self.data[key][3, 1]
                 except Exception as err:
                     print(f"\n WARNING, when trying to parse blade data: {err}"
                           f"\n nominal position: {err},"
@@ -1387,7 +1378,9 @@ class BladeMapVisualizer:
         [TI  TO]
         [BI  BO]
         """
-        blades, stddevs = XBPMProcessor.data_parse(self.data)
+        # Create temporary processor to parse blade data
+        processor = XBPMProcessor(self.data, self.prm)
+        blades, stddevs = processor.data_parse()
         to, ti, bi, bo = blades
 
         fig, rx = plt.subplots(2, 2, figsize=(8, 5))
