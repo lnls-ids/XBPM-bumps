@@ -382,8 +382,8 @@ class DataReader:
         Args:
             prm (Prm): Parameters dataclass instance.
         """
-        self.prm = prm
-        self.data = {}
+        self.prm     = prm
+        self.data    = {}
         self.rawdata = None
 
     def read(self) -> dict:
@@ -578,10 +578,10 @@ class XBPMProcessor:
             data: Measurement data dictionary.
             prm: Parameters dataclass instance.
         """
-        self.data = data
-        self.prm = prm
-        self.range_h = None
-        self.range_v = None
+        self.data     = data
+        self.prm      = prm
+        self.range_h  = None
+        self.range_v  = None
         self.blades_h = None
         self.blades_v = None
         self.suppression_matrix_val = None
@@ -1725,61 +1725,77 @@ def data_parse(data):
     return [to, ti, bi, bo], [sto, sti, sbi, sbo]
 
 
+class XBPMApp:
+    """Top-level orchestrator for XBPM analysis workflow."""
 
+    def __init__(self):
+        """Initialize app with empty state; components created during run()."""
+        self.prm: Optional[Prm] = None
+        self.reader: Optional[DataReader] = None
+        self.data = None
+        self.processor: Optional[XBPMProcessor] = None
+        self.exporter: Optional[Exporter] = None
 
+    def run(self, argv=None) -> None:
+        """Parse args, load data, run analyses, and render outputs."""
+        self.prm = ParameterBuilder.from_cli(argv)
+        self.reader = DataReader(self.prm)
+        self.data = self.reader.read()
+        self.processor = XBPMProcessor(self.data, self.prm)
+        self.exporter = Exporter(self.prm)
+
+        self._maybe_bpm_positions()
+        self._maybe_show_blade_map()
+        self._maybe_central_sweeps()
+        self._maybe_show_blades_at_center()
+        self._maybe_xbpm_positions()
+
+        plt.show()
+
+    def _maybe_bpm_positions(self) -> None:
+        if not self.prm.xbpmfrombpm:
+            return
+        raw = (self.reader.rawdata
+               if self.reader.rawdata is not None
+               else self.data)
+        bpm_processor = BPMProcessor(raw, self.prm)
+        bpm_processor.calculate_positions()
+
+    def _maybe_show_blade_map(self) -> None:
+        if not self.prm.showblademap:
+            return
+        blade_map = BladeMapVisualizer(self.data, self.prm)
+        blade_map.show()
+
+    def _maybe_central_sweeps(self) -> None:
+        if not self.prm.centralsweep:
+            return
+        self.processor.analyze_central_sweeps(show=True)
+
+    def _maybe_show_blades_at_center(self) -> None:
+        if not self.prm.showbladescenter:
+            return
+        self.processor.show_blades_at_center()
+
+    def _maybe_xbpm_positions(self) -> None:
+        if self.prm.xbpmpositionsraw:
+            positions = self.processor.calculate_raw_positions(showmatrix=True)
+            if self.prm.outputfile:
+                self.exporter.data_dump(self.data, positions, sup="raw")
+
+        if self.prm.xbpmpositions:
+            positions = self.processor.calculate_scaled_positions(
+                showmatrix=True
+                )
+            if self.prm.outputfile:
+                self.exporter.data_dump(self.data, positions, sup="scaled")
 
 
 # ## Main function.
 
 def main():
     """Main entry point for XBPM data analysis."""
-    # Read command line options.
-    prm = ParameterBuilder.from_cli()
-
-    # Read data from working directory or file.
-    reader = DataReader(prm)
-    data = reader.read()
-
-    # Initialize processor for XBPM calculations
-    processor = XBPMProcessor(data, prm)
-
-    # Show results demanded by command line options.
-
-    # Beam position at XBPM calculated from BPM data solely.
-    # The sector is selected from 'section' parameter.
-    if prm.xbpmfrombpm:
-        raw = reader.rawdata if reader.rawdata is not None else data
-        bpm_processor = BPMProcessor(raw, prm)
-        bpm_processor.calculate_positions()
-
-    # Dictionary with measured data from blades for each nominal position.
-    if prm.showblademap:
-        blade_map = BladeMapVisualizer(data, prm)
-        blade_map.show()
-
-    # Show central sweeping results.
-    if prm.centralsweep:
-        processor.analyze_central_sweeps(show=True)
-
-    # Calculate beam position from XBPM data.
-    if prm.showbladescenter:
-        processor.show_blades_at_center()
-
-    exporter = Exporter(prm)
-
-    # Calculated positions with simple matrix.
-    if prm.xbpmpositionsraw:
-        positions = processor.calculate_raw_positions(showmatrix=True)
-        if prm.outputfile:
-            exporter.data_dump(data, positions, sup="raw")
-
-    # Calculated positions with suppression matrix.
-    if prm.xbpmpositions:
-        positions = processor.calculate_scaled_positions(showmatrix=True)
-        if prm.outputfile:
-            exporter.data_dump(data, positions, sup="scaled")
-
-    plt.show()
+    XBPMApp().run()
 
 
 if __name__ == "__main__":
