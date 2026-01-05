@@ -816,6 +816,151 @@ class XBPMProcessor:
             showmatrix=showmatrix,
         )
 
+    @staticmethod
+    def suppression_matrix(range_h, range_v, blades_h, blades_v, prm,
+                           showmatrix=False, nosuppress=False):
+        """Calculate the suppression matrix and persist it to disk."""
+        if nosuppress:
+            pch = np.ones(8).reshape(4, 2)
+            pcv = np.ones(8).reshape(4, 2)
+        else:
+            pch = XBPMProcessor.central_line_fit(blades_h, range_h, 'h')
+            pcv = XBPMProcessor.central_line_fit(blades_v, range_v, 'v')
+
+        if len(range_h) > 1:
+            pch = pch[0] / np.abs(pch)
+        else:
+            pch = np.ones(8).reshape(4, 2)
+
+        if len(range_v) > 1:
+            pcv = pcv[0] / np.abs(pcv)
+        else:
+            pcv = np.ones(8).reshape(4, 2)
+
+        supmat = np.array([
+            [pcv[0, 0], -pcv[1, 0], -pcv[2, 0],  pcv[3, 0]],
+            [pcv[0, 0],  pcv[1, 0],  pcv[2, 0],  pcv[3, 0]],
+            [pch[0, 0],  pch[1, 0], -pch[2, 0], -pch[3, 0]],
+            [pch[0, 0],  pch[1, 0],  pch[2, 0],  pch[3, 0]],
+        ])
+
+        if showmatrix:
+            print("\n Suppression matrix:")
+            for lin in supmat:
+                for col in lin:
+                    print(f" {col:12.6f}", end='')
+                print()
+            print()
+
+        Exporter(prm).write_supmat(supmat)
+        return supmat
+
+    @staticmethod
+    def central_line_fit(blades, range_vals, direction):
+        """Linear fittings to each blade's data through central line."""
+        if blades is None:
+            dr = 'horizontal' if direction == 'h' else 'vertical'
+            print(f"\n WARNING: (central_line_fit) {dr} blades' values not defined."
+                  " Seetting fitting values to [1, 0].")
+            return np.array([[1, 0] for _ in range(4)])
+
+        pc = list()
+        for blade in blades.values():
+            weight = 1. / blade[:, 1]
+
+            if np.isinf(weight).any():
+                weight = None
+
+            pc.append(np.polyfit(range_vals, blade[:, 0], deg=1, w=weight))
+        pc = np.array(pc)
+
+        if np.isinf(pc).any() or (pc == 0).any():
+            pc = np.array([[1, 0] for _ in range(4)])
+
+        return pc
+
+    @staticmethod
+    def beam_position_pair(data, supmat):
+        """Calculate beam position from blades' currents (pairwise)."""
+        positions = dict()
+        for pos, bld in data.items():
+            dsps = supmat @ bld[:, 0]
+            positions[pos] = np.array([dsps[0] / dsps[1], dsps[2] / dsps[3]])
+        return positions
+
+    @staticmethod
+    def position_dict_parse(data, gridstep):
+        """Parse XBPM position dict into structured arrays."""
+        gridlist = np.array(list(data.keys()))
+        gsh_lin = len(np.unique(gridlist[:, 1]))
+        gsh_col = len(np.unique(gridlist[:, 0]))
+
+        xbpm_nom_h  = np.zeros((gsh_lin, gsh_col))
+        xbpm_nom_v  = np.zeros((gsh_lin, gsh_col))
+        xbpm_meas_h = np.zeros((gsh_lin, gsh_col))
+        xbpm_meas_v = np.zeros((gsh_lin, gsh_col))
+
+        minval_h = np.min(gridlist[:, 0])
+        maxval_v = np.max(gridlist[:, 1])
+        for key, val in data.items():
+            col = int((key[0] - minval_h) / gridstep)
+            lin = int((maxval_v - key[1]) / gridstep)
+
+            try:
+                xbpm_nom_h[lin, col]  = key[0]
+                xbpm_nom_v[lin, col]  = key[1]
+                xbpm_meas_h[lin, col] = val[0]
+                xbpm_meas_v[lin, col] = val[1]
+            except Exception as err:
+                print(f"\n WARNING: failed when parsing positions dictionary:"
+                      f"\n{err}\n lin, col = {lin}, {col}, key = {key}")
+                continue
+
+        return (xbpm_nom_h, xbpm_nom_v, xbpm_meas_h, xbpm_meas_v)
+
+    @staticmethod
+    def beam_position_cross(blades):
+        """Calculate beam position from blades' currents (cross-blade)."""
+        to, ti, bi, bo = blades
+        v1 = (to - bi) / (to + bi)
+        v2 = (ti - bo) / (ti + bo)
+        hpos = (v1 - v2)
+        vpos = (v1 + v2)
+        return [hpos, vpos]
+
+    @staticmethod
+    def scaling_fit(pos_h, pos_v, nom_h, nom_v, calctype=""):
+        """Calculate scaling coefficients from fitted positions."""
+        print(f"\n#### {calctype} blades:")
+
+        hfinitemask = np.isfinite(pos_h)
+        ph_cln = pos_h[hfinitemask]
+        nh_cln = nom_h[hfinitemask]
+
+        vfinitemask = np.isfinite(pos_v)
+        pv_cln = pos_v[vfinitemask]
+        nv_cln = nom_v[vfinitemask]
+
+        kx, deltax = 1., 0.
+        if len(set(nom_h.ravel())) > 1:
+            try:
+                kx, deltax = np.polyfit(ph_cln, nh_cln, deg=1)
+            except Exception as err:
+                print(f"\n WARNING: when calculating horizontal scaling"
+                      f" coefficients:\n{err}\n Setting to default values.")
+
+        ky, deltay = 1., 0.
+        if len(set(nom_v.ravel())) > 1:
+            try:
+                ky, deltay = np.polyfit(pv_cln, nv_cln, deg=1)
+            except Exception as err:
+                print(f"\n WARNING: when calculating vertical scaling"
+                      f" coefficients:\n{err}\n Setting to default values.")
+
+        print(f"kx = {kx:12.4f},   deltax = {deltax:12.4f}")
+        print(f"ky = {ky:12.4f},   deltay = {deltay:12.4f}\n")
+        return kx, deltax, ky, deltay
+
 
 class BPMProcessor:
     """Processes BPM-only data to estimate XBPM positions.
@@ -1218,6 +1363,54 @@ class PositionVisualizer:
             print(f" Figure saved to {filename}")
 
 
+class Exporter:
+    """Handles persistence of calc. artifacts (positions, blades, supmat)."""
+
+    def __init__(self, prm: Prm):
+        """Keep reference parameters for naming and context during exports."""
+        self.prm = prm
+
+    def write_supmat(self, supmat: np.ndarray) -> None:
+        """Write suppression matrix to disk."""
+        outfile = f"supmat_{self.prm.beamline}.dat"
+        with open(outfile, 'w') as fs:
+            for lin in supmat:
+                for col in lin:
+                    fs.write(f" {col:12.6f}")
+                fs.write("\n")
+
+    def data_dump(self, data, positions, sup: str = "") -> None:
+        """Dump blades data and calculated positions to files."""
+        outfile = f"xbpm_blades_values_{self.prm.beamline}.dat"
+        print(f"\n Writing out data to file {outfile} ...", end='')
+        with open(outfile, 'w') as df:
+            for key, val in data.items():
+                df.write(f"{key[0]}  {key[1]}")
+                for vv in val:
+                    df.write(f"  {vv[0]} {vv[1]}")
+                df.write("\n")
+
+        pos_pair, pos_cr = positions
+
+        outfilep = f"xbpm_positions_pair_{sup}_{self.prm.beamline}.dat"
+        print("\n Writing out pairwise blade calculated positions to file"
+              f" {outfilep} ...", end='')
+        with open(outfilep, 'w') as fp:
+            for key, val in pos_pair.items():
+                fp.write(f"{key[0]}  {key[1]}")
+                fp.write(f"  {val[0]} {val[1]}\n")
+
+        outfilec = f"xbpm_positions_cross_{sup}_{self.prm.beamline}.dat"
+        print("\n Writing out cross-blade calculated positions to file"
+              f" {outfilec} ...", end='')
+        with open(outfilec, 'w') as fc:
+            for key, val in pos_cr.items():
+                fc.write(f"{key[0]}  {key[1]}")
+                fc.write(f"  {val[0]} {val[1]}\n")
+
+        print("done.\n")
+
+
 # Power relative to Ampere subunits.
 AMPSUB = {
     0    : 1.0,    # no unit defined.
@@ -1289,7 +1482,6 @@ SECTIONS = {
     "MGN": "subsec:10BC",
     "MNC": "subsec:09SA"
 }
-
 
 
 # ## Select data.
@@ -1435,13 +1627,14 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
     blades, stddevs = data_parse(data)
 
     # Pairwise-blades calculation.
-    supmat = suppression_matrix(range_h, range_v,
-                                blades_h, blades_v, prm,
-                                showmatrix=showmatrix, nosuppress=nosuppress)
+    supmat = XBPMProcessor.suppression_matrix(range_h, range_v,
+                                              blades_h, blades_v, prm,
+                                              showmatrix=showmatrix,
+                                              nosuppress=nosuppress)
 
-    pos_pair  = beam_position_pair(data, supmat)
+    pos_pair  = XBPMProcessor.beam_position_pair(data, supmat)
     (pos_nom_h, pos_nom_v,
-     pos_pair_h, pos_pair_v) = position_dict_parse(pos_pair, prm.gridstep)
+     pos_pair_h, pos_pair_v) = XBPMProcessor.position_dict_parse(pos_pair, prm.gridstep)
 
     # Adjust to real distance.
     pos_nom_h *= prm.xbpmdist
@@ -1484,8 +1677,8 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
 
     # Scaling coefficients, pairwise calculation.
     (kxp, deltaxp,
-     kyp, deltayp) = scaling_fit(pos_pair_h_roi, pos_pair_v_roi,
-                                 pos_nom_h_roi, pos_nom_v_roi, "Pairwise")
+     kyp, deltayp) = XBPMProcessor.scaling_fit(pos_pair_h_roi, pos_pair_v_roi,
+                                              pos_nom_h_roi, pos_nom_v_roi, "Pairwise")
     pos_pair_h_scaled = kxp * pos_pair_h + deltaxp
     pos_pair_v_scaled = kyp * pos_pair_v + deltayp
     # ROI scaled positions.
@@ -1508,7 +1701,7 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
     )
 
     # ### Cross-blades calculation.
-    pos_cr_h, pos_cr_v = beam_position_cross(blades)
+    pos_cr_h, pos_cr_v = XBPMProcessor.beam_position_cross(blades)
 
     # ROI: crossing blades.
     if pos_nom_h.shape[0] == 1 or pos_nom_v.shape[0] == 1:
@@ -1523,8 +1716,8 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
 
     # Scaling coefficients, cross-blades calculation.
     (kxc, deltaxc,
-     kyc, deltayc) = scaling_fit(pos_cr_h_roi, pos_cr_v_roi,
-                                 pos_nom_h_roi, pos_nom_v_roi, "Cross")
+     kyc, deltayc) = XBPMProcessor.scaling_fit(pos_cr_h_roi, pos_cr_v_roi,
+                                              pos_nom_h_roi, pos_nom_v_roi, "Cross")
     pos_cr_h_scaled = kxc * pos_cr_h + deltaxc
     pos_cr_v_scaled = kyc * pos_cr_v + deltayc
     # ROI scaled positions.
@@ -1577,291 +1770,6 @@ def xbpm_position_calc(data, prm, range_h, range_v, blades_h, blades_v,
     return [scaled_pos_pair, scaled_pos_cros]
 
 
-# Pairwise blades calculation.
-
-
-def suppression_matrix(range_h, range_v, blades_h, blades_v, prm,
-                       showmatrix=False, nosuppress=False):
-    """Calculate the suppression matrix.
-
-    Args:
-        range_h (numpy array)  : horizontal coordinates to be analysed.
-        range_v (numpy array)  : vertical coordinates to be analysed.
-        blades_h (numpy array) : data recorded by blade's measurements at
-            horizontal central line.
-        blades_v (numpy array) : data recorded by blade's measurements at
-            vertical central line.
-        prm (dict) : general parameters of the system.
-
-        showmatrix (bool) : show blades' curves.
-        nosuppress (bool) : return a matrix where gains are set to 1.
-
-    Returns:
-        the suppression matrix (numpy array)
-    """
-    if nosuppress:
-        # Set all suppressions / gains to 1.
-        pch = np.ones(8).reshape(4, 2)
-        pcv = np.ones(8).reshape(4, 2)
-    else:
-        # Linear fittings to each blade's data through
-        # horizontal and vertical central lines.
-        pch = central_line_fit(blades_h, range_h, 'h')
-        pcv = central_line_fit(blades_v, range_v, 'v')
-
-    # Normalize by the first blade and define suppression as 1/m.
-    if len(range_h) > 1:
-        pch = pch[0] / np.abs(pch)
-    else:
-        pch = np.ones(8).reshape(4, 2)
-    #
-    if len(range_v) > 1:
-        pcv = pcv[0] / np.abs(pcv)
-    else:
-        pcv = np.ones(8).reshape(4, 2)
-
-    # Signs are defined according to the blade positions for pairwise
-    # calculations.
-    supmat = np.array([
-        [pcv[0, 0], -pcv[1, 0], -pcv[2, 0],  pcv[3, 0]],   # noqa: E241
-        [pcv[0, 0],  pcv[1, 0],  pcv[2, 0],  pcv[3, 0]],   # noqa: E241
-        [pch[0, 0],  pch[1, 0], -pch[2, 0], -pch[3, 0]],   # noqa: E241
-        [pch[0, 0],  pch[1, 0],  pch[2, 0],  pch[3, 0]],   # noqa: E241
-    ])
-
-    if showmatrix:
-        # blades_center_show(range_h, range_v, blades_h, blades_v,
-        #                    np.array(pch), np.array(pcv))
-        print("\n Suppression matrix:")
-        for lin in supmat:
-            for col in lin:
-                print(f" {col:12.6f}", end='')
-            print()
-        print()
-
-    with open(f"supmat_{prm.beamline}.dat", 'w') as fs:
-        for lin in supmat:
-            for col in lin:
-                fs.write(f" {col:12.6f}")
-            fs.write("\n")
-
-    return supmat
-
-
-def central_line_fit(blades, range_vals, direction):
-    """Linear fittings to each blade's data through central line."""
-    if blades is None:
-        dr = 'horizontal' if direction == 'h' else 'vertical'
-        print(f"\n WARNING: (central_line_fit) "
-              f"{dr} blades' values not defined."
-              " Seetting fitting values to [1, 0].")
-        return np.array([[1, 0] for _ in range(4)])
-
-    pc = list()
-    for blade in blades.values():
-        weight = 1. / blade[:, 1]
-
-        # Ill-defined weights: use standard.
-        if np.isinf(weight).any():
-            weight = None
-
-        pc.append(np.polyfit(range_vals, blade[:, 0], deg=1, w=weight))
-    pc = np.array(pc)
-
-    # Set elements to 1 if fitting is unsuccessful.
-    if np.isinf(pc).any() or (pc == 0).any():
-        pc = np.array([[1, 0] for _ in range(4)])
-
-    return pc
-
-
-def beam_position_pair(data, supmat):
-    """Calculate beam position from blades' currents.
-
-    Args:
-        data (dict) : fetched data from bpm and xbpm (blades) measurements.
-        supmat (numpy array): supression matrix.
-
-    Returns:
-        positions (numpy array) : h and v calculated positions for
-            bpm and xbpm.
-    """
-    positions = dict()
-    for pos, bld in data.items():
-        dsps = supmat @ bld[:, 0]  # .T
-        # Position is calculated as delta over sigma.
-        positions[pos] = np.array([dsps[0] / dsps[1], dsps[2] / dsps[3]])
-
-    # zero_origin(positions)
-    return positions
-
-
-def zero_origin(positions):
-    """Subtract the values at the center of the grid to correct offset.
-
-    Args:
-        positions (dict) : calculated values of positions, indexed by nominal
-        values at the grid.
-    """
-    zero = deepcopy(positions[0, 0])
-    for val in positions.values():
-        val -= zero
-
-
-def position_dict_parse(data, gridstep):
-    """Parse data from XBPM dictionary (scaled from BPM positions).
-
-    Args:
-        data (dict) :  calculated beam positions indexed by their respective
-                       nominal positions.
-        gridstep (float) : Step between neighbour sites in the grid.
-
-    Returns:
-        xbpm_nom_h, xbpm_nom_v (numpy array) : beam nominal positions.
-        xbpm_meas_h, xbpm_meas_v (numpy array) : beam calculated positions
-            from measured blades' currents.
-    """
-    gridlist = np.array(list(data.keys()))
-    gsh_lin = len(np.unique(gridlist[:, 1]))
-    gsh_col = len(np.unique(gridlist[:, 0]))
-
-    xbpm_nom_h  = np.zeros((gsh_lin, gsh_col))
-    xbpm_nom_v  = np.zeros((gsh_lin, gsh_col))
-    xbpm_meas_h = np.zeros((gsh_lin, gsh_col))
-    xbpm_meas_v = np.zeros((gsh_lin, gsh_col))
-
-    minval_h = np.min(gridlist[:, 0])
-    maxval_v = np.max(gridlist[:, 1])
-    for key, val in data.items():
-        col = int((key[0] - minval_h) / gridstep)
-        lin = int((maxval_v - key[1]) / gridstep)
-
-        try:
-            xbpm_nom_h[lin, col]  = key[0]
-            xbpm_nom_v[lin, col]  = key[1]
-            xbpm_meas_h[lin, col] = val[0]
-            xbpm_meas_v[lin, col] = val[1]
-        except Exception as err:
-            print(f"\n WARNING: failed when parsing positions dictionary:"
-                  f"\n{err}\n lin, col = {lin}, {col}, key = {key}")
-            continue
-
-    return (xbpm_nom_h, xbpm_nom_v, xbpm_meas_h, xbpm_meas_v)
-
-
-# Cross-blades calculation.
-
-def beam_position_cross(blades):
-    """Calculate beam position from blades' currents.
-
-    Args:
-        blades (list) : averaged values measured for each blade.
-        prm (dict) : general parameters of the analysis.
-
-    Returns:
-        pos_h, pos_v (numpy array): calculated positions by crossing
-            differences.
-    """
-    to, ti, bi, bo = blades
-    v1 = (to - bi) / (to + bi)
-    v2 = (ti - bo) / (ti + bo)
-    hpos = (v1 - v2)
-    vpos = (v1 + v2)
-    return [hpos, vpos]
-
-
-def scaling_fit(pos_h, pos_v, nom_h, nom_v, calctype=""):
-    """Calculate scaling coefficients from fitted positions.
-
-    Args:
-        pos_h (numpy array) : calculated horizontal positions.
-        pos_v (numpy array) : calculated vertical positions.
-        nom_h (numpy array) : nominal horizontal positions.
-        nom_v (numpy array) : nominal vertical positions.
-        calctype (str) : type of calculation (for printing purposes).
-
-    Returns:
-        kx, ky, deltax, deltay (float) : scaling coefficients.
-    """
-    print(f"\n#### {calctype} blades:")
-
-    # Clean up expurious numbers for fitting.
-    hfinitemask = np.isfinite(pos_h)
-    ph_cln = pos_h[hfinitemask]
-    nh_cln = nom_h[hfinitemask]
-    #
-    vfinitemask = np.isfinite(pos_v)
-    pv_cln = pos_v[vfinitemask]
-    nv_cln = nom_v[vfinitemask]
-
-    # Linear fit for scaling.
-    kx, deltax = 1., 0.
-    # Check if horizontal range spans through whole grid.
-    if len(set(nom_h.ravel())) > 1:
-        try:
-            kx, deltax = np.polyfit(ph_cln, nh_cln, deg=1)
-        except Exception as err:
-            print(f"\n WARNING: when calculating horizontal scaling"
-                  f" coefficients:\n{err}\n Setting to default values.")
-
-    ky, deltay = 1., 0.
-    # Check if vertical range spans through whole grid.
-    if len(set(nom_v.ravel())) > 1:
-        try:
-            ky, deltay = np.polyfit(pv_cln, nv_cln, deg=1)
-        except Exception as err:
-            print(f"\n WARNING: when calculating vertical scaling"
-                  f" coefficients:\n{err}\n Setting to default values.")
-
-    print(f"kx = {kx:12.4f},   deltax = {deltax:12.4f}")
-    print(f"ky = {ky:12.4f},   deltay = {deltay:12.4f}\n")
-    return kx, deltax, ky, deltay
-
-
-# ## Dump XBPM's selected and averaged data to file.
-
-
-def data_dump(data, positions, prm, sup=""):
-    """Dump data to file.
-
-    Args:
-        data (dict) : calculated beam positions at the grid indexed by
-            their nominal position values.
-
-        positions (list) : list of four arrays with positions calculated,
-            pairwise blades hor/vert, cross-blades hor/vert.
-        prm (dict) : general parameters of the analysis.
-        sup (str) : data was rescaled with suppression matrix or not.
-
-    """
-    outfile = f"xbpm_blades_values_{prm.beamline}.dat"
-    print(f"\n Writing out data to file {outfile} ...", end='')
-    with open(outfile, 'w') as df:
-        for key, val in data.items():
-            df.write(f"{key[0]}  {key[1]}")
-            for vv in val:
-                df.write(f"  {vv[0]} {vv[1]}")
-            df.write("\n")
-
-    pos_pair, pos_cr = positions
-
-    outfilep = f"xbpm_positions_pair_{sup}_{prm.beamline}.dat"
-    print("\n Writing out pairwise blade calculated positions to file"
-          f" {outfilep} ...", end='')
-    with open(outfilep, 'w') as fp:
-        for key, val in pos_pair.items():
-            fp.write(f"{key[0]}  {key[1]}")
-            fp.write(f"  {val[0]} {val[1]}\n")
-
-    outfilec = f"xbpm_positions_cross_{sup}_{prm.beamline}.dat"
-    print("\n Writing out cross-blade calculated positions to file"
-          f" {outfilec} ...", end='')
-    with open(outfilec, 'w') as fc:
-        for key, val in pos_cr.items():
-            fc.write(f"{key[0]}  {key[1]}")
-            fc.write(f"  {val[0]} {val[1]}\n")
-
-    print("done.\n")
 
 
 # ## Main function.
@@ -1900,19 +1808,19 @@ def main():
     if prm.showbladescenter:
         processor.show_blades_at_center()
 
+    exporter = Exporter(prm)
+
     # Calculated positions with simple matrix.
     if prm.xbpmpositionsraw:
         positions = processor.calculate_raw_positions(showmatrix=True)
-        # Dump data to file.
         if prm.outputfile:
-            data_dump(data, positions, prm, sup="raw")
+            exporter.data_dump(data, positions, sup="raw")
 
     # Calculated positions with suppression matrix.
     if prm.xbpmpositions:
         positions = processor.calculate_scaled_positions(showmatrix=True)
-        # Dump data to file.
         if prm.outputfile:
-            data_dump(data, positions, prm, sup="scaled")
+            exporter.data_dump(data, positions, sup="scaled")
 
     plt.show()
 
