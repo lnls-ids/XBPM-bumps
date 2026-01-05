@@ -817,6 +817,208 @@ class XBPMProcessor:
         )
 
 
+class BPMProcessor:
+    """Processes BPM-only data to estimate XBPM positions.
+
+    Encapsulates the legacy BPM calculation flow so orchestration can
+    call a single entry point instead of standalone functions.
+    """
+
+    def __init__(self, rawdata, prm: Prm):
+        """Store raw BPM/XBPM dataset and parameters for later processing."""
+        self.rawdata = rawdata
+        self.prm = prm
+
+    def calculate_positions(self):
+        """Calculate and plot XBPM positions derived from BPM data."""
+        if self.prm.section is None:
+            print("### ERROR: no section defined for the beamline in data set."
+                  "\n### Cannot proceed with BPM data analysis. Skipping.")
+            return
+
+        if self.rawdata is None:
+            print("### ERROR: no raw BPM data available."
+                  "\n### Skipping BPM analysis.")
+            return
+
+        fig, ax = plt.subplots()
+
+        sector_idx = self._sector_index()
+        tangents = self._tangents_calc(sector_idx)
+
+        print("# Distance between BPMs            ="
+              f" {self.prm.bpmdist:8.4f}  m\n"
+              "# Distance between source and XBPM ="
+              f" {self.prm.xbpmdist:8.4f} m\n")
+
+        xbpm_pos = self._positions_from_tangents(tangents, self.prm.xbpmdist)
+
+        xpos, ypos, xnom, ynom = [], [], [], []
+        for key, val in xbpm_pos.items():
+            xnom.append(key[0])
+            ynom.append(key[1])
+            xpos.append(val[0])
+            ypos.append(val[1])
+
+        self._std_dev_estimate(xnom, ynom, xpos, ypos)
+
+        ax.plot(xpos, np.array(ypos), 'bo', label="measured")
+        ax.plot(xnom, ynom, 'r+', label="nominal")
+
+        ax.set_xlabel("$x$ [$\\mu$m]")  # noqa: W605
+        ax.set_ylabel("$y$ [$\\mu$m]")  # noqa: W605
+        ax.set_title(f"Beam positions @ {self.prm.beamline} from BPM values")
+
+        lim = np.max(np.abs(xnom + ynom)) * 1.7
+        ax.axis("equal")
+        ax.set_xlim(-lim, lim)
+        ax.set_ylim(-lim, lim)
+        ax.legend()
+        ax.grid()
+
+        if self.prm.outputfile:
+            outfile = f"bpm_positions_{self.prm.beamline}.png"
+            fig.savefig(outfile, dpi=FIGDPI)
+            print(" Figure of positions calculated by BPM measurements "
+                  f"saved to file {outfile}.\n")
+
+    def _sector_index(self) -> int:
+        sector = int(self.prm.section.split(':')[1][:2])
+        return 8 * (sector - 1) - 1
+
+    def _tangents_calc(self, idx):
+        """Calculate tangents of beam angles between neighbour BPMs."""
+        nextidx = idx + 1
+        offset_x_sect, offset_y_sect = 0, 0
+        offset_x_next, offset_y_next = 0, 0
+        offsetfound = False
+
+        for dt in self.rawdata:
+            if dt[2]['agx'] == 0 and dt[2]['agy'] == 0:
+                offset_x_sect = dt[2]['orbx'][idx]
+                offset_y_sect = dt[2]['orby'][idx]
+                offset_x_next = dt[2]['orbx'][nextidx]
+                offset_y_next = dt[2]['orby'][nextidx]
+                offsetfound = True
+                break
+
+        if not offsetfound:
+            (offset_x_sect, offset_x_next,
+             offset_y_sect, offset_y_next) = self._offset_search(idx)
+
+        tangents = dict()
+        for dt in self.rawdata:
+            tx = (((dt[2]['orbx'][nextidx] - offset_x_next)) -
+                  (dt[2]['orbx'][idx]     - offset_x_sect)) / self.prm.bpmdist
+            ty = (((dt[2]['orby'][nextidx] - offset_y_next)) -
+                  (dt[2]['orby'][idx]     - offset_y_sect)) / self.prm.bpmdist
+            agx, agy = dt[2]['agx'], dt[2]['agy']
+            tangents[agx, agy] = np.array([tx, ty])
+        return tangents
+
+    def _offset_search(self, idx):
+        """Extrapolate offsets when reference orbit is missing."""
+        nextidx = idx + 1
+        agx    = np.array([dt[2]['agx']           for dt in self.rawdata])
+        orbx   = np.array([dt[2]['orbx'][idx]     for dt in self.rawdata])
+        n_orbx = np.array([dt[2]['orbx'][nextidx] for dt in self.rawdata])
+
+        agxmax = np.max(agx)
+        agxmin = np.min(agx)
+
+        osx = np.array(sorted(list(set(orbx))))
+        oxmin, oxmax = osx[0], osx[-1]
+        offset_x_sect = (oxmin * agxmax - oxmax * agxmin) / (agxmax - agxmin)
+
+        onx = np.array(sorted(list(set(n_orbx))))
+        onxmin, onxmax = onx[0], onx[-1]
+        offset_x_next = (onxmin * agxmax - onxmax * agxmin) / (agxmax - agxmin)
+
+        agy    = np.array([dt[2]['agy']           for dt in self.rawdata])
+        orby   = np.array([dt[2]['orby'][idx]     for dt in self.rawdata])
+        n_orby = np.array([dt[2]['orby'][nextidx] for dt in self.rawdata])
+
+        agymax = np.max(agy)
+        agymin = np.min(agy)
+
+        osy = np.array(sorted(list(set(orby))))
+        oymin, oymax = osy[0], osy[-1]
+        offset_y_sect = (oymin * agymax - oymax * agymin) / (agymax - agymin)
+
+        ony = np.array(sorted(list(set(n_orby))))
+        onymin, onymax = ony[0], ony[-1]
+        offset_y_next = (onymin * agymax - onymax * agymin) / (agymax - agymin)
+
+        return (offset_x_sect, offset_x_next, offset_y_sect, offset_y_next)
+
+    def _positions_from_tangents(self, tangents, xbpm_dist):
+        """Calculate beam positions from tangents at BPMs."""
+        positions = dict()
+        for key, tg in tangents.items():
+            newkey = (key[0] * xbpm_dist, key[1] * xbpm_dist)
+            positions[newkey] = tg * xbpm_dist
+        return positions
+
+    def _std_dev_estimate(self, xnom, ynom, xpos, ypos):
+        """Estimate RMS deviations between measured and nominal positions."""
+        np_x_nom = np.array(xnom)
+        np_y_nom = np.array(ynom)
+        np_x_pos = np.array(xpos)
+        np_y_pos = np.array(ypos)
+
+        nfh = np_x_nom.shape[0]
+        nfv = np_y_nom.shape[0]
+        diff_h = np.abs(np_x_nom.ravel() - np_x_pos.ravel())
+        diff_h_max = np.max(diff_h)
+        sig2_h = np.sum(diff_h**2) / nfh
+
+        diff_v = np.abs(np_y_nom.ravel() - np_y_pos.ravel())
+        diff_v_max = np.max(diff_v)
+        sig2_v = np.sum(diff_v**2) / nfv
+
+        print("Sigmas:\n"
+              f"   (all sites)     H = {np.sqrt(sig2_h):.4f}\n"
+              f"   (all sites)     V = {np.sqrt(sig2_v):.4f},\n"
+              f"   (all sites) total = {np.sqrt(sig2_h + sig2_v):.4f}\n"
+              "\n  Maximum difference:\n"
+              f"   (all sites) H = {diff_h_max:.4f}\n"
+              f"   (all sites) V = {diff_v_max:.4f},\n")
+
+        nsh_x, nsh_y = len(set(xnom)), len(set(ynom))
+        nmax = nsh_x * nsh_y
+
+        if nmax > nfh or nmax > nfv:
+            print("\n WARNING: sweeping looks incomplete, no ROI was defined. "
+                  " (Maybe just one line swept?)")
+            return
+
+        frh, uptoh = int(nsh_x / 2 - 2), int(nsh_x / 2 + 2)
+        frv, uptov = int(nsh_y / 2 - 2), int(nsh_y / 2 + 2)
+
+        if nsh_x == 1 or nsh_y == 1:
+            np_x_nom_cut = np_x_nom.reshape(nsh_x, nsh_y)[0, frv:uptov]
+            np_y_nom_cut = np_y_nom.reshape(nsh_x, nsh_y)[0, frv:uptov]
+            np_x_pos_cut = np_x_pos.reshape(nsh_x, nsh_y)[0, frv:uptov]
+            np_y_pos_cut = np_y_pos.reshape(nsh_x, nsh_y)[0, frv:uptov]
+        else:
+            np_x_nom_cut = np_x_nom.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
+            np_y_nom_cut = np_y_nom.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
+            np_x_pos_cut = np_x_pos.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
+            np_y_pos_cut = np_y_pos.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
+
+        sig2_v_roi = np.sum((np_y_nom_cut.ravel() -
+                             np_y_pos_cut.ravel())**2) / nfv
+        sig2_h_roi = np.sum((np_x_nom_cut.ravel() -
+                             np_x_pos_cut.ravel())**2) / nfh
+
+        print("  Differences in ROI\n"
+              f"   (x in [{np.min(np_x_nom_cut)}, {np.max(np_x_nom_cut)}];"
+              f"  y in [{np.min(np_y_nom_cut)}, {np.max(np_y_nom_cut)}])\n"
+              f"       H = {np.sqrt(sig2_h_roi):.4f}\n"
+              f"       V = {np.sqrt(sig2_v_roi):.4f},\n"
+              f"   total = {np.sqrt(sig2_h_roi + sig2_v_roi):.4f}")
+
+
 class BladeMapVisualizer:
     """Visualizes XBPM blade intensity maps.
 
@@ -1088,459 +1290,6 @@ SECTIONS = {
     "MNC": "subsec:09SA"
 }
 
-
-# ## Get command line options and data from work directory.
-
-def cmd_options(argv=None):  # noqa: C901
-    """Read command line parameters using argparse and return prm dict.
-
-    Accepts an optional `argv` list for testing. If None, argparse will
-    read from sys.argv.
-    """
-    parser = argparse.ArgumentParser(
-        prog="xbpm_bumps",
-        description="Extract XBPM's data and calculate the beam position.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=f"{HELP_DESCRIPTION}\n")
-
-    # boolean flags
-    parser.add_argument(
-        '-b', action='store_true', dest='xbpmfrombpm',
-        help='Show positions calculated from BPM data'
-        )
-
-    parser.add_argument(
-        '-c', action='store_true', dest='showbladescenter',
-        help="Show each blade's response at central line sweeps",
-        )
-
-    parser.add_argument(
-        '-m', action='store_true', dest='showblademap',
-        help="Show blades' map (to check blades' positions)"
-        )
-
-    parser.add_argument(
-        '-s', action='store_true', dest='centralsweep',
-        help='Positions when sweeping through center'
-        )
-
-    parser.add_argument(
-        '-r', action='store_true', dest='xbpmpositionsraw',
-        help='Positions calculated from XBPM data without suppression',
-        )
-
-    parser.add_argument(
-        '-x', action='store_true', dest='xbpmpositions',
-        help='Positions calculated from XBPM data'
-        )
-
-    # options with values
-    parser.add_argument(
-        '-d', '--xbpmdist', type=float,
-        help='Distance from source to XBPM [m]'
-        )
-
-    parser.add_argument(
-        '-g', '--gridstep', type=float, default=GRIDSTEP,
-        help=("""Step between neighbour sites in the grid.
-            Usually inferred from data, but might be provided
-            in some cases."""
-        ),
-        )
-
-    parser.add_argument(
-        '-k', '--skip', type=int, default=0,
-        help='Initial data to be skipped (default=0)'
-        )
-
-    parser.add_argument(
-        '-o', '--outputfile', action="store_true", dest="outputfile",
-        help='Dump data to output file'
-        )
-
-    parser.add_argument(
-        '-w', '--workdir', type=str, required=True,
-        help='Working directory _or_ file with measured data'
-        )
-
-    args = parser.parse_args(argv)
-
-    # Build and return a Prm dataclass instance for structured access.
-    prm = Prm(
-        showblademap     = bool(args.showblademap),
-        centralsweep     = bool(args.centralsweep),
-        showbladescenter = bool(args.showbladescenter),
-        xbpmpositions    = bool(args.xbpmpositions),
-        xbpmfrombpm      = bool(args.xbpmfrombpm),
-        xbpmpositionsraw = bool(args.xbpmpositionsraw),
-        outputfile       = bool(args.outputfile),
-        xbpmdist         = args.xbpmdist,
-        workdir          = args.workdir,
-        skip             = int(args.skip),
-        gridstep         = float(args.gridstep),
-        maxradangle      = 20.0,
-        beamline         = None,
-    )
-
-    return prm
-
-
-def parameters_data_defined(prm, rawdata):
-    """Define complementary parameters based on data set and tables."""
-    prm.current  = rawdata[0][2]["current"]
-    # print(f"### Storage ring current :\t {prm.current} mA")
-
-    try:
-        prm.phaseorgap = rawdata[0][1][prm.beamline[:3].lower()]
-        print(f"### Phase / Gap ({prm.beamline})   :\t"
-          f" {prm.phaseorgap}")
-    except Exception:
-        print(f"\n WARNING: no phase/gap defined for {prm.beamline}.")
-
-    prm.bpmdist  = BPMDISTS[prm.beamline[:3]]
-    prm.section  = SECTIONS[prm.beamline[:3]]
-    prm.blademap = BLADEMAP[prm.beamline[:3]]
-
-    if prm.xbpmdist is None:
-        prm.xbpmdist = XBPMDISTS[prm.beamline]
-        print(f"\n WARNING: distance from source to {prm.beamline}'s XBPM "
-              f" set to {prm.xbpmdist:.3f} m (beamline default).")
-
-    prm.gridstep = gridstep_get(rawdata)
-    # print(f" Grid step set to {prm.gridstep}.\n")
-
-
-def beamline_define(rawdata):
-    """Define beamline set to be analysed."""
-    # beamlines = list(set([next(iter(dt[0])) for dt in rawdata]))
-    beamlines = sorted(list(set([dic for dt in rawdata for dic in dt[0]])))
-
-    if len(beamlines) > 1:
-        print("\nWARNING: found these beamlines: " +
-              ", ".join(beamlines))
-        print(" Which one should I work on?")
-        for ii, bl in enumerate(beamlines):
-            print(f" {ii + 1} - {bl}")
-
-        opt = None
-        while opt is None:
-            try:
-                opt = int(input(" Pick your option: "))
-                if opt not in list(range(1, 1 + len(beamlines))):
-                    opt = None
-                    raise Exception
-            except Exception:
-                print(' Invalid option.')
-                continue
-    else:
-        opt = 1
-
-    beamline = beamlines[opt - 1]
-    if beamline not in BLADEMAP.keys():
-        print(f" ERROR: beamline {beamline} not defined in blade maps.")
-        print(" Defined blade maps are:"
-              f" {', '.join(BLADEMAP.keys())}.")
-        print("\n Please, check your data. Aborting.")
-        sys.exit(0)
-
-    # print("\n### Working beamline     :\t"
-    #       f" {BEAMLINENAME[beamline[:3]]} ({beamline})")
-
-    return beamline
-
-
-def lastfield(name, fld=' '):
-    """Get the last part of string separated by given character.
-
-    Args:
-        name (str) : string to be splitted;
-        fld (str) : separator character.
-
-    Returns:
-        last field of splitted string 'name'.
-    """
-    return name.split(fld)[-1]
-
-
-def gridstep_get(rawdata):
-    """Try and calculate grid step from data.
-
-    Args:
-        rawdata (list) : raw data read from the BPMs and the XBPM's blades.
-    """
-    agx = [rawdata[ii][2]['agx'] for ii in range(len(rawdata))]
-    agy = [rawdata[ii][2]['agy'] for ii in range(len(rawdata))]
-
-    # Try it from horizontal sweep.
-    xset = list(set(agx))  # Strip redundancies.
-    gridstepx = 0 if len(xset) == 1 else np.abs(xset[1] - xset[0])
-    # Try it from vertical sweep.
-    yset = list(set(agy))  # Strip redundancies.
-    gridstepy = 0 if len(yset) == 1 else np.abs(yset[1] - yset[0])
-
-    if gridstepx != gridstepy:
-        print(f"\n WARNING: horizontal grid step ({gridstepx}) differs from"
-              f" vertical grid step ({gridstepy})."
-              "\n          I'll try it with the smaller value, if not zero.")
-
-    if gridstepx < gridstepy and gridstepx != 0:
-        return gridstepx
-    elif gridstepy != 0:
-        return gridstepy
-
-    print(" ERROR: I could not infer the grid step size. "
-            " Please, rerun and provide the value manually,"
-            " with option -g. Aborting.")
-    sys.exit(0)
-
-
-# ## Estimate positions from BPM data.
-
-def beam_positions_from_bpm(rawdata, prm):
-    """Calculate the beam position at the XBPM from BPM data.
-
-    Args:
-        rawdata (list) : raw data with bpms and xbpms measurements.
-        prm (dict) : set of parameters of the analysis.
-    """
-    if prm.section is None:
-        print("### ERROR: no section defined for the beamline"
-              " in data set.\n"
-              "### Cannot proceed with BPM data analysis. Skipping.")
-        return
-
-    fig, ax = plt.subplots()
-
-    # Extract the index sector of the beamline and calculate the tangents.
-    sector = int(prm.section.split(':')[1][:2])
-    idx = 8 * (sector - 1) - 1
-    tangents = tangents_calc(rawdata, idx, prm)
-
-    print(f"# Distance between BPMs            = {prm.bpmdist:8.4f}  m\n"
-        f"# Distance between source and XBPM = {prm.xbpmdist:8.4f} m\n")
-    # xtob = prm.xbpmdist / prm.bpmdist
-
-    xbpm_pos = positions_calc_from_bpm(tangents, prm.xbpmdist)
-    xpos, ypos = list(), list()
-    xnom, ynom = list(), list()
-    for key, val in xbpm_pos.items():
-        xnom.append(key[0])
-        ynom.append(key[1])
-        xpos.append(val[0])
-        ypos.append(val[1])
-
-    # Standard deviations.
-    std_dev_bpm_estimate(xnom, ynom, xpos, ypos)
-
-    # vmax = np.max(ynom) / np.max(ypos)
-    # ax.plot(xpos, np.array(ypos) * vmax, 'bo', label="measured")
-    ax.plot(xpos, np.array(ypos), 'bo', label="measured")
-    ax.plot(xnom, ynom, 'r+', label="nominal")
-
-    ax.set_xlabel("$x$ [$\\mu$m]")  # noqa: W605
-    ax.set_ylabel("$y$ [$\\mu$m]")  # noqa: W605
-    ax.set_title(f"Beam positions @ {prm.beamline} from BPM values")
-
-    # fig.canvas.draw_idle()
-    lim = np.max(np.abs(xnom + ynom)) * 1.7
-    ax.axis("equal")
-    ax.set_xlim(-lim, lim)
-    ax.set_ylim(-lim, lim)
-    ax.legend()
-    ax.grid()
-
-    if prm.outputfile:
-        outfile = f"bpm_positions_{prm.beamline}.png"
-        fig.savefig(outfile, dpi=FIGDPI)
-        print(f" Figure of positions calculated by BPM measurements "
-              f"saved to file {outfile}.\n")
-
-
-def tangents_calc(rawdata, idx, prm):
-    """Calculate the tangents of the beam angles between neighbour BPMs.
-
-    The tangents in x and y of angles of beam's displacement, caused by
-    bumping it, at each point of the scanned grid. The calculations
-    correspond to measurements of beam positions at two neighbour BPMs.
-
-    Args:
-        rawdata (list) : raw data with bpms and xbpms measurements.
-        idx (int) : index for specific sector of the storage ring.
-        prm (dict) : general parameters of the analysis.
-
-    Returns:
-        tangents (dict) : the tangents in x and y of angles of beam's
-            displacement.
-    """
-    idx, nextidx = idx, idx + 1
-    offset_x_sect, offset_y_sect = 0, 0
-    offset_x_next, offset_y_next = 0, 0
-    offsetfound = False
-
-    # Find the offset.
-    for dt in rawdata:
-        if dt[2]['agx'] == 0 and dt[2]['agy'] == 0:
-            offset_x_sect = dt[2]['orbx'][idx]
-            offset_y_sect = dt[2]['orby'][idx]
-            offset_x_next = dt[2]['orbx'][nextidx]
-            offset_y_next = dt[2]['orby'][nextidx]
-            offsetfound = True
-            break
-
-    # Try to define an offset from the existent data.
-    if not offsetfound:
-        (offset_x_sect, offset_x_next,
-         offset_y_sect, offset_y_next) = offset_search(rawdata, idx)
-
-    # Calculate the tangents (differences) between nieghbour BPMs.
-    tangents = dict()
-    for dt in rawdata:
-        tx = (((dt[2]['orbx'][nextidx] - offset_x_next)) -
-              (dt[2]['orbx'][idx]     - offset_x_sect)) / prm.bpmdist
-        ty = (((dt[2]['orby'][nextidx] - offset_y_next)) -
-              (dt[2]['orby'][idx]     - offset_y_sect)) / prm.bpmdist
-        agx, agy = dt[2]['agx'], dt[2]['agy']
-        tangents[agx, agy] = np.array([tx, ty])  # * K_um
-    return tangents
-
-
-def offset_search(rawdata, idx):
-    """Try to find an offset from the data itself.
-
-    Extrapolate the data to zero to find out the offset. This is an attempt
-    to find offsets for the orbits registered by the BPMs when the reference
-    orbit is not available.
-
-    Args:
-        rawdata (list) : raw data with bpms and xbpms measurements.
-        idx (int) : index for specific sector of the storage ring.
-
-    Returns:
-        offsets in x and y of both BPMs.
-    """
-    nextidx = idx + 1
-    agx    = np.array([dt[2]['agx']           for dt in rawdata])  # noqa: E272
-    orbx   = np.array([dt[2]['orbx'][idx]     for dt in rawdata])  # noqa: E272
-    n_orbx = np.array([dt[2]['orbx'][nextidx] for dt in rawdata])
-    #
-    agxmax = np.max(agx)
-    agxmin = np.min(agx)
-    #
-    osx = np.array(sorted(list(set(orbx))))
-    oxmin, oxmax = osx[0], osx[-1]
-    offset_x_sect = (oxmin * agxmax - oxmax * agxmin) / (agxmax - agxmin)
-    #
-    onx = np.array(sorted(list(set(n_orbx))))
-    onxmin, onxmax = onx[0], onx[-1]
-    offset_x_next = (onxmin * agxmax - onxmax * agxmin) / (agxmax - agxmin)
-    agy    = np.array([dt[2]['agy']           for dt in rawdata])  # noqa: E272
-    orby   = np.array([dt[2]['orby'][idx]     for dt in rawdata])  # noqa: E272
-    n_orby = np.array([dt[2]['orby'][nextidx] for dt in rawdata])
-    #
-    agymax = np.max(agy)
-    agymin = np.min(agy)
-    #
-    osy = np.array(sorted(list(set(orby))))
-    oymin, oymax = osy[0], osy[-1]
-    offset_y_sect = (oymin * agymax - oymax * agymin) / (agymax - agymin)
-    #
-    ony = np.array(sorted(list(set(n_orby))))
-    onymin, onymax = ony[0], ony[-1]
-    offset_y_next = (onymin * agymax - onymax * agymin) / (agymax - agymin)
-
-    return (offset_x_sect, offset_x_next,
-            offset_y_sect, offset_y_next)
-
-
-def positions_calc_from_bpm(tangents, xbpm_dist):
-    """Calculate the beam position out of BPM data.
-
-    Given the grid of positions formed by the displacements of the beam due
-    to bumps on it, and their corresponding tangents at the BPMs
-    surrounnding the bumpings, calulate the positions at the XBPMs.
-
-    Args:
-        tangents (dict) : tangent of angle corresponding to each grid position.
-        xbpm_dist (float) : distance from source to XBPM at the beamline.
-    """
-    positions = dict()
-    for key, tg in tangents.items():
-        newkey = (key[0]* xbpm_dist, key[1] * xbpm_dist)
-        positions[newkey] = tg * xbpm_dist
-    return positions
-
-
-def std_dev_bpm_estimate(xnom, ynom, xpos, ypos):
-    """Estimate std dev of positions based on BPM measurements.
-
-    Calculate RMS values at each site when compared to formally established
-    grid of points. It corresponds to the deviation of each measured value
-    from the nominal in at the grid.
-
-    Args:
-        xnom (list) : the nominal value of x-coordinate;
-        ynom (list) : the nominal value of y-coordinate;
-        xpos (list) : the measured value of x-coordinate;
-        ypos (list) : the measured value of y-coordinate.
-    """
-    np_x_nom = np.array(xnom)
-    np_y_nom = np.array(ynom)
-    np_x_pos = np.array(xpos)
-    np_y_pos = np.array(ypos)
-
-    # Values for all sites in the grid.
-    nfh = np_x_nom.shape[0]
-    nfv = np_y_nom.shape[0]
-    diff_h = np.abs(np_x_nom.ravel() - np_x_pos.ravel())
-    diff_h_max = np.max(diff_h)
-    sig2_h = np.sum(diff_h**2) / nfh
-    #
-    diff_v = np.abs(np_y_nom.ravel() - np_y_pos.ravel())
-    diff_v_max = np.max(diff_v)
-    sig2_v = np.sum(diff_v**2) / nfv
-
-    print("Sigmas:\n"
-        f"   (all sites)     H = {np.sqrt(sig2_h):.4f}\n"
-        f"   (all sites)     V = {np.sqrt(sig2_v):.4f},\n"
-        f"   (all sites) total = {np.sqrt(sig2_h + sig2_v):.4f}\n"
-        "\n  Maximum difference:\n"
-        f"   (all sites) H = {diff_h_max:.4f}\n"
-        f"   (all sites) V = {diff_v_max:.4f},\n")
-
-    # Values for ROI.
-    nsh_x, nsh_y = len(set(xnom)), len(set(ynom))
-    nmax = nsh_x * nsh_y
-
-    if nmax > nfh or nmax > nfv:
-        print("\n WARNING: sweeping looks incomplete, no ROI was defined. "
-              " (Maybe just one line swept?)")
-        return
-
-    frh, uptoh = int(nsh_x / 2 - 2), int(nsh_x / 2 + 2)
-    frv, uptov = int(nsh_y / 2 - 2), int(nsh_y / 2 + 2)
-
-    if nsh_x == 1 or nsh_y == 1:
-        np_x_nom_cut = np_x_nom.reshape(nsh_x, nsh_y)[0, frv:uptov]
-        np_y_nom_cut = np_y_nom.reshape(nsh_x, nsh_y)[0, frv:uptov]
-        np_x_pos_cut = np_x_pos.reshape(nsh_x, nsh_y)[0, frv:uptov]
-        np_y_pos_cut = np_y_pos.reshape(nsh_x, nsh_y)[0, frv:uptov]
-    else:
-        np_x_nom_cut = np_x_nom.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
-        np_y_nom_cut = np_y_nom.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
-        np_x_pos_cut = np_x_pos.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
-        np_y_pos_cut = np_y_pos.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
-
-    sig2_v_roi = np.sum((np_y_nom_cut.ravel() -
-                            np_y_pos_cut.ravel())**2) / nfv
-    sig2_h_roi = np.sum((np_x_nom_cut.ravel() -
-                            np_x_pos_cut.ravel())**2) / nfh
-
-    print("  Differences in ROI\n"
-            f"   (x in [{np.min(np_x_nom_cut)}, {np.max(np_x_nom_cut)}];"
-            f"  y in [{np.min(np_y_nom_cut)}, {np.max(np_y_nom_cut)}])\n"
-            f"       H = {np.sqrt(sig2_h_roi):.4f}\n"
-            f"       V = {np.sqrt(sig2_v_roi):.4f},\n"
-            f"   total = {np.sqrt(sig2_h_roi + sig2_v_roi):.4f}")
 
 
 # ## Select data.
@@ -2021,23 +1770,6 @@ def beam_position_cross(blades):
     return [hpos, vpos]
 
 
-def cross_correction(hpos, nhpos, vpos, nvpos):
-    """."""
-    halfh = int(hpos.shape[0] / 2)
-    hk, hdelta = np.polyfit(nhpos[:, halfh], hpos[:, halfh], deg=1)
-    new_hpos = 1/hk * (hpos - hdelta)
-    print(f"\n (Cross corrections) H: k = {hk}, delta = {hdelta}")
-
-    halfv = int(vpos.shape[0] / 2)
-    vk, vdelta = np.polyfit(nvpos[halfv, :], vpos[halfv, :], deg=1)
-    new_vpos = 1/vk * (vpos - vdelta)
-    print(f"\n (Cross corrections) V: k = {vk}, delta = {vdelta}")
-
-    return new_hpos, new_vpos
-
-
-# Show grid.
-
 def scaling_fit(pos_h, pos_v, nom_h, nom_v, calctype=""):
     """Calculate scaling coefficients from fitted positions.
 
@@ -2084,117 +1816,6 @@ def scaling_fit(pos_h, pos_v, nom_h, nom_v, calctype=""):
     print(f"kx = {kx:12.4f},   deltax = {deltax:12.4f}")
     print(f"ky = {ky:12.4f},   deltay = {deltay:12.4f}\n")
     return kx, deltax, ky, deltay
-
-
-def invalidnum(x):
-    """Check whether a number is NaN or Inf."""
-    if np.isnan(x) or np.isinf(x):
-        return True
-    return False
-
-
-def scaled_positions_show(ax, pos_nom_h, pos_nom_v, pos_h, pos_v, title):
-    """Plot graphs of nominal and calculated positions.
-
-    Args:
-        ax (pyplot axis) : the ax where to plot
-        pos_nom_h (numpy array) : nominal positions, horizontal
-        pos_nom_v (numpy array) : nominal positions, vertical
-        pos_h (numpy array) : calculated positions, horizontal
-        pos_v (numpy array) : calculated positions, vertical
-        title (str) : graph title.
-    """
-    ax.set_title(title)
-    pos = ax.plot(pos_h, pos_v, 'bo')
-    nom = ax.plot(pos_nom_h, pos_nom_v, 'r+')
-    ax.set_xlabel(u"$x$ [$\\mu$m]")
-    ax.set_ylabel(u"$y$ [$\\mu$m]")
-    ax.axis('equal')
-    handles, labels = [], []
-    if len(nom) > 0:
-        handles.append(nom[0])
-        labels.append("Nominal")
-    if len(pos) > 0:
-        handles.append(pos[0])
-        labels.append("Calculated")
-    if handles:
-        ax.legend(handles, labels)
-    ax.grid()
-
-
-def position_difference_show(ax, diffroi, pos_nom_h=None, pos_nom_v=None,
-                             title=""):
-    """Plot graph of position differences.
-
-    Args:
-        ax (pyplot axis) : the ax where to plot
-        diffroi (numpy array) : position differences at ROI.
-        pos_nom_h (numpy array) : nominal positions, horizontal
-        pos_nom_v (numpy array) : nominal positions, vertical
-        title (str) : graph title.
-    """
-    if len(diffroi.shape) > 1:
-        im = ax.imshow(diffroi, cmap='viridis')
-        cbar = plt.colorbar(im, ax=ax)
-        cbar.set_label(u"RMS differences (ROI)")
-    else:
-        # Ensure x, y, and color arrays have matching lengths
-        if pos_nom_h is not None and pos_nom_v is not None:
-            x = np.ravel(pos_nom_h)
-            y = np.ravel(pos_nom_v)
-        else:
-            # Fallback to index-based positions when nominal positions
-            # are not provided for 1D differences
-            n = int(np.size(diffroi))
-            x = np.arange(n)
-            y = np.zeros(n)
-
-        cvals = np.ravel(diffroi)
-
-        # Align lengths if shapes are inconsistent
-        m = min(len(x), len(y), len(cvals))
-        x, y, cvals = x[:m], y[:m], cvals[:m]
-
-        scatter = ax.scatter(x, y, c=cvals, cmap='viridis', s=50)
-        ax.set_title('RMS position differences [$\\mu$m]')
-        plt.colorbar(scatter, ax=ax, label='Difference [$\\mu$m]')
-    ax.set_title(title)
-    ax.set_xlabel(u"$x$ [$\\mu$m]")
-    ax.set_ylabel(u"$y$ [$\\mu$m]")
-
-
-def blades_center_show(range_h, range_v, blades_h, blades_v, pch, pcv):
-    """Show blades' behaviour and fittings at central sweep lines."""
-    fig, (axh, axv) = plt.subplots(1, 2, figsize=(14, 6))
-
-    idx = 0
-    for lbl, blade in blades_h.items():
-        bld = blade[:, 0]  # / blade[0, 0]
-        axh.plot(range_h, bld, 'o-', label=lbl)
-        bfit = pch[idx, 0] * range_h + pch[idx, 1]
-        axh.plot(range_h, bfit, '^',
-                 linestyle="dashed", label=f"{lbl} fit")
-        idx += 1
-
-    idx = 0
-    for lbl, blade in blades_v.items():
-        axv.plot(range_v, blade[:, 0], 'o-', label=lbl)
-        bfit = pcv[idx, 0] * range_v + pcv[idx, 1]
-        axv.plot(range_v, bfit, '^',
-                 linestyle="dashed", label=f"{lbl} fit")
-        idx += 1
-
-    for ax in [axh, axv]:
-        ax.set_ylabel(u"blade counts [a.u]")
-        ax.legend()
-        ax.grid()
-
-    axh.set_xlabel(u"$x$ [a.u]")
-    axh.set_title("Horizontal sweeps")
-    #
-    axv.set_xlabel(u"$y$ [a.u]")
-    axv.set_title("Vertical sweeps")
-    fig.tight_layout()
 
 
 # ## Dump XBPM's selected and averaged data to file.
@@ -2263,7 +1884,8 @@ def main():
     # The sector is selected from 'section' parameter.
     if prm.xbpmfrombpm:
         raw = reader.rawdata if reader.rawdata is not None else data
-        beam_positions_from_bpm(raw, prm)
+        bpm_processor = BPMProcessor(raw, prm)
+        bpm_processor.calculate_positions()
 
     # Dictionary with measured data from blades for each nominal position.
     if prm.showblademap:
