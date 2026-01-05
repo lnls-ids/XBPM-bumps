@@ -288,10 +288,10 @@ class ParameterBuilder:
             opt = 1
 
         beamline = beamlines[opt - 1]
-        if beamline not in BLADEMAP.keys():
+        if beamline not in Config.BLADEMAP.keys():
             print(f" ERROR: beamline {beamline} not defined in blade maps.")
             print(" Defined blade maps are:"
-                  f" {', '.join(BLADEMAP.keys())}.")
+                  f" {', '.join(Config.BLADEMAP.keys())}.")
             print("\n Please, check your data. Aborting.")
             sys.exit(0)
 
@@ -308,12 +308,12 @@ class ParameterBuilder:
         except Exception:
             print(f"\n WARNING: no phase/gap defined for {self.prm.beamline}.")
 
-        self.prm.bpmdist  = BPMDISTS[self.prm.beamline[:3]]
-        self.prm.section  = SECTIONS[self.prm.beamline[:3]]
-        self.prm.blademap = BLADEMAP[self.prm.beamline[:3]]
+        self.prm.bpmdist  = Config.BPMDISTS[self.prm.beamline[:3]]
+        self.prm.section  = Config.SECTIONS[self.prm.beamline[:3]]
+        self.prm.blademap = Config.BLADEMAP[self.prm.beamline[:3]]
 
         if self.prm.xbpmdist is None:
-            self.prm.xbpmdist = XBPMDISTS[self.prm.beamline]
+            self.prm.xbpmdist = Config.XBPMDISTS[self.prm.beamline]
             print(f"\n WARNING: distance from source to {self.prm.beamline}'s XBPM "
                   f" set to {self.prm.xbpmdist:.3f} m (beamline default).")
 
@@ -414,7 +414,7 @@ class DataReader:
 
         if self.prm.xbpmdist is None:
             try:
-                self.prm.xbpmdist = XBPMDISTS[self.prm.beamline]
+                self.prm.xbpmdist = Config.XBPMDISTS[self.prm.beamline]
             except Exception:
                 self.prm.xbpmdist = 1.0
             print("\n WARNING: distance from source to XBPM not provided."
@@ -491,8 +491,9 @@ class DataReader:
             else:
                 # Try to find the beamline code by looking up the full name
                 try:
-                    self.prm.beamline = self.builder.found_key(BEAMLINENAME,
-                                                               blval.strip())
+                    self.prm.beamline = self.builder.found_key(
+                        Config.BEAMLINENAME, blval.strip()
+                        )
                 except StopIteration:
                     # Fallback: if exact match not found, keep original
                     self.prm.beamline = blval
@@ -533,7 +534,7 @@ class DataReader:
     def _print_summary(self) -> None:
         """Print a summary of the loaded data and parameters."""
         bl = self.prm.beamline or "N/A"
-        blname = BEAMLINENAME[bl[:3]]
+        blname = Config.BEAMLINENAME[bl[:3]]
         xbpm_str = f"{self.prm.xbpmdist} m" if self.prm.xbpmdist else "N/A"
         bpm_str  = f"{self.prm.bpmdist} m" if self.prm.bpmdist else "N/A"
 
@@ -556,7 +557,7 @@ class DataReader:
             try:
                 xbpm = dt[0][beamline]
                 vals = list()
-                for blade in BLADEMAP[beamline].values():
+                for blade in Config.BLADEMAP[beamline].values():
                     av, sd = self._blade_average(xbpm[f'{blade}_val'])
                     vals.append((av, sd))
                 bpm_x = dt[2]['agx']
@@ -573,7 +574,7 @@ class DataReader:
             return np.average(blade), np.std(blade)
 
         vals = np.array([
-            vv * AMPSUB[un] for vv, un in blade
+            vv * Config.AMPSUB[un] for vv, un in blade
         ])
         return np.average(vals), np.std(vals)
 
@@ -778,10 +779,6 @@ class XBPMProcessor:
         axh.set_xlabel(u"$x$ $\\mu$rad")
         axv.set_xlabel(u"$y$ $\\mu$rad")
 
-        # DEBUG
-        print(f" SHOW BLADES AT CENTER: {self.prm.beamline}")
-        # DEBUG
-
         ylabel = (u"$I$ [# counts]" if self.prm.beamline[:3]
                   in ["MGN", "MNC"] else u"$I$ [A]")
         axh.set_ylabel(ylabel)
@@ -888,8 +885,8 @@ class XBPMProcessor:
             pos_pair_v_roi = pos_pair_v[frh:uph, frv:upv]
 
         (kxp, deltaxp,
-         kyp, deltayp) = XBPMProcessor.scaling_fit(pos_pair_h_roi, pos_pair_v_roi,
-                                                  pos_nom_h_roi, pos_nom_v_roi, "Pairwise")
+         kyp, deltayp) = XBPMProcessor.scaling_fit(pos_pair_h_roi,
+                pos_pair_v_roi, pos_nom_h_roi, pos_nom_v_roi, "Pairwise")
         pos_pair_h_scaled = kxp * pos_pair_h + deltaxp
         pos_pair_v_scaled = kyp * pos_pair_v + deltayp
         pos_pair_h_roi_scaled = kxp * pos_pair_h_roi + deltaxp
@@ -921,8 +918,10 @@ class XBPMProcessor:
             pos_cr_v_roi  = pos_cr_v[frh:uph, frv:upv]
 
         (kxc, deltaxc,
-         kyc, deltayc) = XBPMProcessor.scaling_fit(pos_cr_h_roi, pos_cr_v_roi,
-                                                  pos_nom_h_roi, pos_nom_v_roi, "Cross")
+         kyc, deltayc) = XBPMProcessor.scaling_fit(pos_cr_h_roi,
+                                                   pos_cr_v_roi,
+                                                   pos_nom_h_roi,
+                                                   pos_nom_v_roi, "Cross")
         pos_cr_h_scaled = kxc * pos_cr_h + deltaxc
         pos_cr_v_scaled = kyc * pos_cr_v + deltayc
         pos_cr_h_roi_scaled = kxc * pos_cr_h_roi + deltaxc
@@ -973,8 +972,10 @@ class XBPMProcessor:
             pch = np.ones(8).reshape(4, 2)
             pcv = np.ones(8).reshape(4, 2)
         else:
-            pch = XBPMProcessor.central_line_fit(self.blades_h, self.range_h, 'h')
-            pcv = XBPMProcessor.central_line_fit(self.blades_v, self.range_v, 'v')
+            pch = XBPMProcessor.central_line_fit(self.blades_h,
+                                                 self.range_h, 'h')
+            pcv = XBPMProcessor.central_line_fit(self.blades_v,
+                                                 self.range_v, 'v')
 
         if len(self.range_h) > 1:
             pch = pch[0] / np.abs(pch)
@@ -1448,9 +1449,9 @@ class PositionVisualizer:
         self.fig = None
 
     def show_position_results(self, pos_nom_h, pos_nom_v,
-                         pos_h, pos_v, pos_h_roi, pos_v_roi,
-                         pos_nom_h_roi, pos_nom_v_roi,
-                         diff_roi, figsize=(18, 6)) -> None:
+                              pos_h, pos_v, pos_h_roi, pos_v_roi,
+                              pos_nom_h_roi, pos_nom_v_roi,
+                              diff_roi, figsize=(18, 6)) -> None:
         """Display full position results in 1x3 subplot layout.
 
         Args:
@@ -1599,77 +1600,86 @@ class Exporter:
         print("done.\n")
 
 
-# Power relative to Ampere subunits.
-AMPSUB = {
-    0    : 1.0,    # no unit defined.
-    "mA" : 1e-3,   # mili
-    "uA" : 1e-6,   # micro
-    "nA" : 1e-9,   # nano
-    "pA" : 1e-12,  # pico
-    "fA" : 1e-15,  # femto
-    "aA" : 1e-18,  # atto
-}
+class Config:
+    """Beamline configuration and constants."""
 
-# Map of blades positions in each XBPM.
-# TO, TI, BO, BI : top/bottom, in/out, relative to the storage ring;
-# A, B, C, D : names of respective P.V.s
-BLADEMAP = {
-    "MNC"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-    "MNC1" : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-    "MNC2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-    "CAT"  : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-    "CAT1" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+    # Power relative to Ampere subunits.
+    AMPSUB = {
+        0    : 1.0,    # no unit defined.
+        "mA" : 1e-3,   # mili
+        "uA" : 1e-6,   # micro
+        "nA" : 1e-9,   # nano
+        "pA" : 1e-12,  # pico
+        "fA" : 1e-15,  # femto
+        "aA" : 1e-18,  # atto
+    }
 
-    # ## To be checked: ## #
-    # "CAT2": {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-    "CNB"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-    "CNB1" : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-    "CNB2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-    "MGN"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-    "MGN1" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-    "MGN2" : {"TO": 'B', "TI": 'C', "BI": 'A', "BO": 'D'},
-    "SIMUL": {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
-}
+    # Map of blades positions in each XBPM.
+    # TO, TI, BO, BI : top/bottom, in/out, relative to the storage ring;
+    # A, B, C, D : names of respective P.V.s
+    BLADEMAP = {
+        "MNC"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+        "MNC1" : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+        "MNC2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+        "CAT"  : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+        "CAT1" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
 
-# The XBPM beamlines.
-BEAMLINENAME = {
-    "CAT": "Caterete",
-    "CNB": "Carnauba",
-    "MGN": "Mogno",
-    "MNC": "Manaca",
-    "N/A": "Not defined",
-}
+        # ## To be checked: ## #
+        # "CAT2": {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+        "CNB"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+        "CNB1" : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+        "CNB2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+        "MGN"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+        "MGN1" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+        "MGN2" : {"TO": 'B', "TI": 'C', "BI": 'A', "BO": 'D'},
+        "SIMUL": {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+    }
 
-# Distances between two adjacent BPMs around the source of bump at each line.
-BPMDISTS = {
-    "CAT": 6.175495,
-    "CNB": 6.175495,
-    "MGN": 2.2769999999999015,
-    "MNC": 7.035495,
-}
+    # The XBPM beamlines.
+    BEAMLINENAME = {
+        "CAT": "Caterete",
+        "CNB": "Carnauba",
+        "MGN": "Mogno",
+        "MNC": "Manaca",
+        "N/A": "Not defined",
+    }
 
-# Distance from source (its center) to XBPM at each beamline.
-# Obtained from comissioning reports.
-XBPMDISTS = {
-    "CAT":  15.740,
-    "CAT1": 15.740,
-    "CAT2": 19.590,
-    "CNB": 15.740,
-    "CNB1": 15.740,
-    "CNB2": 19.590,
-    "MGN1": 10.237,
-    "MGN2": 16.167,
-    "MNC1": 15.740,
-    "MNC2": 19.590,
-}
+    # Distances between two adjacent BPMs around the source of bump
+    #  at each line.
+    BPMDISTS = {
+        "CAT": 6.175495,
+        "CNB": 6.175495,
+        "MGN": 2.2769999999999015,
+        "MNC": 7.035495,
+    }
 
-# Sections of the ring for each beamline.
-SECTIONS = {
-    "CAT": "subsec:07SP",
-    "CNB": "subsec:06SB",
-    "MGN": "subsec:10BC",
-    "MNC": "subsec:09SA"
-}
+    # Distance from source (its center) to XBPM at each beamline.
+    # Obtained from comissioning reports.
+    XBPMDISTS = {
+        "CAT":  15.740,
+        "CAT1": 15.740,
+        "CAT2": 19.590,
+        "CNB": 15.740,
+        "CNB1": 15.740,
+        "CNB2": 19.590,
+        "MGN1": 10.237,
+        "MGN2": 16.167,
+        "MNC1": 15.740,
+        "MNC2": 19.590,
+    }
+
+    # Sections of the ring for each beamline.
+    SECTIONS = {
+        "CAT": "subsec:07SP",
+        "CNB": "subsec:06SB",
+        "MGN": "subsec:10BC",
+        "MNC": "subsec:09SA"
+    }
+
+    @classmethod
+    def get_beamline_name(cls, code: str) -> str:
+        """Get full beamline name from code."""
+        return cls.BEAMLINENAME.get(code, "N/A")
 
 
 class XBPMApp:
