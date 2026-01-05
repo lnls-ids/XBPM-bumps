@@ -145,15 +145,19 @@ class ParameterBuilder:
     - Data-derived parameter enrichment
     """
 
-    @staticmethod
-    def from_cli(argv=None) -> Prm:
+    def __init__(self, prm: Optional[Prm] = None):
+        """Initialize builder with optional pre-existing parameters."""
+        self.prm: Optional[Prm] = prm
+        self.rawdata: Optional[list] = None
+
+    def from_cli(self, argv=None) -> Prm:
         """Parse command-line arguments and build initial Prm instance.
 
         Args:
             argv: List of command-line arguments. If None, uses sys.argv.
         """
-        args = ParameterBuilder._parse_args(argv)
-        return Prm(
+        args = self._parse_args(argv)
+        self.prm = Prm(
             showblademap     = bool(args.showblademap),
             centralsweep     = bool(args.centralsweep),
             showbladescenter = bool(args.showbladescenter),
@@ -168,27 +172,31 @@ class ParameterBuilder:
             maxradangle      = 20.0,
             beamline         = "",
         )
+        return self.prm
 
-    @staticmethod
-    def enrich_from_data(prm: Prm, rawdata: list) -> Prm:
+    def enrich_from_data(self, rawdata: list) -> Prm:
         """Enrich Prm with other data-derived values.
 
         Adds beamline-specific parameters and infers grid step if needed.
 
         Args:
-            prm: Initial Prm instance.
             rawdata: Raw data list from measurements.
 
         Returns:
             prm: Enriched Prm instance.
         """
-        if not prm.beamline:
-            prm.beamline = ParameterBuilder._identify_beamline(rawdata)
-        ParameterBuilder._add_beamline_parameters(prm, rawdata)
-        return prm
+        self.rawdata = rawdata
 
-    @staticmethod
-    def _parse_args(argv=None):
+        if self.prm is None:
+            self.prm = Prm()
+
+        if not self.prm.beamline:
+            self.prm.beamline = self._identify_beamline()
+
+        self._add_beamline_parameters()
+        return self.prm
+
+    def _parse_args(self, argv=None):
         """Parse command-line arguments using argparse.
 
         Args:
@@ -253,11 +261,10 @@ class ParameterBuilder:
 
         return parser.parse_args(argv)
 
-    @staticmethod
-    def _identify_beamline(rawdata: list) -> str:
+    def _identify_beamline(self) -> str:
         """Identify and select beamline from raw data."""
         beamlines = sorted(list(set([
-            dic for dt in rawdata for dic in dt[0]
+            dic for dt in self.rawdata for dic in dt[0]
             ])))
 
         if len(beamlines) > 1:
@@ -290,34 +297,32 @@ class ParameterBuilder:
 
         return beamline
 
-    @staticmethod
-    def _add_beamline_parameters(prm: Prm, rawdata: list) -> None:
+    def _add_beamline_parameters(self) -> None:
         """Add beamline-specific parameters to prm."""
-        prm.current = rawdata[0][2]["current"]
+        self.prm.current = self.rawdata[0][2]["current"]
 
         try:
-            prm.phaseorgap = rawdata[0][1][prm.beamline[:3].lower()]
-            print(f"### Phase / Gap ({prm.beamline})   :\t"
-                  f" {prm.phaseorgap}")
+            self.prm.phaseorgap = self.rawdata[0][1][self.prm.beamline[:3].lower()]
+            print(f"### Phase / Gap ({self.prm.beamline})   :\t"
+                  f" {self.prm.phaseorgap}")
         except Exception:
-            print(f"\n WARNING: no phase/gap defined for {prm.beamline}.")
+            print(f"\n WARNING: no phase/gap defined for {self.prm.beamline}.")
 
-        prm.bpmdist  = BPMDISTS[prm.beamline[:3]]
-        prm.section  = SECTIONS[prm.beamline[:3]]
-        prm.blademap = BLADEMAP[prm.beamline[:3]]
+        self.prm.bpmdist  = BPMDISTS[self.prm.beamline[:3]]
+        self.prm.section  = SECTIONS[self.prm.beamline[:3]]
+        self.prm.blademap = BLADEMAP[self.prm.beamline[:3]]
 
-        if prm.xbpmdist is None:
-            prm.xbpmdist = XBPMDISTS[prm.beamline]
-            print(f"\n WARNING: distance from source to {prm.beamline}'s XBPM "
-                  f" set to {prm.xbpmdist:.3f} m (beamline default).")
+        if self.prm.xbpmdist is None:
+            self.prm.xbpmdist = XBPMDISTS[self.prm.beamline]
+            print(f"\n WARNING: distance from source to {self.prm.beamline}'s XBPM "
+                  f" set to {self.prm.xbpmdist:.3f} m (beamline default).")
 
-        prm.gridstep = ParameterBuilder._infer_gridstep(rawdata)
+        self.prm.gridstep = self._infer_gridstep()
 
-    @staticmethod
-    def _infer_gridstep(rawdata: list) -> float:
+    def _infer_gridstep(self) -> float:
         """Calculate grid step from data."""
-        agx = [rawdata[ii][2]['agx'] for ii in range(len(rawdata))]
-        agy = [rawdata[ii][2]['agy'] for ii in range(len(rawdata))]
+        agx = [self.rawdata[ii][2]['agx'] for ii in range(len(self.rawdata))]
+        agy = [self.rawdata[ii][2]['agy'] for ii in range(len(self.rawdata))]
 
         xset = list(set(agx))
         gridstepx = 0 if len(xset) == 1 else np.abs(xset[1] - xset[0])
@@ -339,13 +344,11 @@ class ParameterBuilder:
               " with option -g. Aborting.")
         sys.exit(0)
 
-    @staticmethod
-    def lastfield(name: str, fld: str = ' ') -> str:
+    def lastfield(self, name: str, fld: str = ' ') -> str:
         """Get the last part of string separated by given character."""
         return name.split(fld)[-1]
 
-    @staticmethod
-    def found_key(my_dict: dict, target_value: str) -> str:
+    def found_key(self, my_dict: dict, target_value: str) -> str:
         """Find key in dictionary by its value."""
         return next(key
                     for key, value in my_dict.items()
@@ -366,13 +369,15 @@ class DataReader:
         data (dict): Dictionary containing parsed measurement data.
     """
 
-    def __init__(self, prm: Prm):
+    def __init__(self, prm: Prm, builder: Optional[ParameterBuilder] = None):
         """Initialize DataReader with parameters.
 
         Args:
             prm (Prm): Parameters dataclass instance.
+            builder: Optional ParameterBuilder instance to share state.
         """
         self.prm     = prm
+        self.builder = builder or ParameterBuilder(prm)
         self.data    = {}
         self.rawdata = None
 
@@ -420,7 +425,7 @@ class DataReader:
     def _read_from_directory(self) -> None:
         """Read data from pickle files in a directory."""
         self.rawdata = self._get_pickle_data()[self.prm.skip:]
-        self.prm = ParameterBuilder.enrich_from_data(self.prm, self.rawdata)
+        self.prm = self.builder.enrich_from_data(self.rawdata)
         self.data = self._blades_fetch(self.rawdata, self.prm.beamline)
 
     def _get_pickle_data(self) -> list:
@@ -438,7 +443,7 @@ class DataReader:
             sys.exit(0)
 
         sfiles = sorted(picklefiles,
-                        key=lambda name: ParameterBuilder.lastfield(name, '_'))
+                        key=lambda name: self.builder.lastfield(name, '_'))
         rawdata = []
         for file in sfiles:
             with open(self.prm.workdir + "/" + file, 'rb') as df:
@@ -486,7 +491,7 @@ class DataReader:
             else:
                 # Try to find the beamline code by looking up the full name
                 try:
-                    self.prm.beamline = ParameterBuilder.found_key(BEAMLINENAME, blval.strip())
+                    self.prm.beamline = self.builder.found_key(BEAMLINENAME, blval.strip())
                 except StopIteration:
                     # Fallback: if exact match not found, keep original
                     self.prm.beamline = blval
@@ -1674,6 +1679,7 @@ class XBPMApp:
     def __init__(self):
         """Initialize app with empty state; components created during run()."""
         self.prm: Optional[Prm] = None
+        self.builder: Optional[ParameterBuilder] = None
         self.reader: Optional[DataReader] = None
         self.data = None
         self.processor: Optional[XBPMProcessor] = None
@@ -1681,8 +1687,9 @@ class XBPMApp:
 
     def run(self, argv=None) -> None:
         """Parse args, load data, run analyses, and render outputs."""
-        self.prm = ParameterBuilder.from_cli(argv)
-        self.reader = DataReader(self.prm)
+        self.builder = ParameterBuilder()
+        self.prm = self.builder.from_cli(argv)
+        self.reader = DataReader(self.prm, self.builder)
         self.data = self.reader.read()
         self.processor = XBPMProcessor(self.data, self.prm)
         self.exporter = Exporter(self.prm)
