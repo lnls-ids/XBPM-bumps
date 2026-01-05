@@ -95,24 +95,6 @@ STD_ROI_SIZE = 2              # Default range for ROI.
 FIGDPI = 300                  # Figure dpi saving parameter.
 
 
-def found_key(my_dict: dict, target_value: str) -> str:
-    """Find key in dictionary by its value.
-
-    Args:
-        my_dict: Dictionary to search.
-        target_value: The value to find.
-
-    Returns:
-        The key corresponding to target_value.
-
-    Raises:
-        StopIteration: If target_value is not found.
-    """
-    return next(key
-                for key, value in my_dict.items()
-                if value == target_value)
-
-
 @dataclass
 class Prm:
     """Typed container for command-line and runtime parameters.
@@ -361,6 +343,13 @@ class ParameterBuilder:
         """Get the last part of string separated by given character."""
         return name.split(fld)[-1]
 
+    @staticmethod
+    def found_key(my_dict: dict, target_value: str) -> str:
+        """Find key in dictionary by its value."""
+        return next(key
+                    for key, value in my_dict.items()
+                    if value == target_value)
+
 
 class DataReader:
     """Handles reading XBPM data from files or pickle directories.
@@ -431,7 +420,7 @@ class DataReader:
         """Read data from pickle files in a directory."""
         self.rawdata = self._get_pickle_data()[self.prm.skip:]
         self.prm = ParameterBuilder.enrich_from_data(self.prm, self.rawdata)
-        self.data = blades_fetch(self.rawdata, self.prm.beamline)
+        self.data = self._blades_fetch(self.rawdata, self.prm.beamline)
 
     def _get_pickle_data(self) -> list:
         """Open pickle files in directory and extract data.
@@ -496,7 +485,7 @@ class DataReader:
             else:
                 # Try to find the beamline code by looking up the full name
                 try:
-                    self.prm.beamline = found_key(BEAMLINENAME, blval.strip())
+                    self.prm.beamline = ParameterBuilder.found_key(BEAMLINENAME, blval.strip())
                 except StopIteration:
                     # Fallback: if exact match not found, keep original
                     self.prm.beamline = blval
@@ -550,6 +539,37 @@ class DataReader:
 ### Gap or phase:          {self.prm.phaseorgap}
 """
 )
+
+    @staticmethod
+    def _blades_fetch(rawdata, beamline):
+        """Retrieve each blade's data and average over their values."""
+        data = dict()
+
+        for dt in rawdata:
+            try:
+                xbpm = dt[0][beamline]
+                vals = list()
+                for blade in BLADEMAP[beamline].values():
+                    av, sd = DataReader._blade_average(xbpm[f'{blade}_val'], beamline)
+                    vals.append((av, sd))
+                bpm_x = dt[2]['agx']
+                bpm_y = dt[2]['agy']
+                data[bpm_x, bpm_y] = np.array(vals)
+            except Exception as err:
+                print("\n WARNING: when fetching blades' values and averaging:"
+                      f" {err}\n")
+        return data
+
+    @staticmethod
+    def _blade_average(blade, beamline):
+        """Calculate the average of blades' values."""
+        if beamline in ["MGN", "MNC"]:
+            return np.average(blade), np.std(blade)
+
+        vals = np.array([
+            vv * AMPSUB[un] for vv, un in blade
+        ])
+        return np.average(vals), np.std(vals)
 
 
 class XBPMProcessor:
@@ -823,7 +843,7 @@ class XBPMProcessor:
         blades_h = self.blades_h
         blades_v = self.blades_v
 
-        blades, _stddevs = data_parse(data)
+        blades, _stddevs = XBPMProcessor.data_parse(data)
 
         supmat = XBPMProcessor.suppression_matrix(range_h, range_v,
                                                   blades_h, blades_v, prm,
@@ -1092,6 +1112,46 @@ class XBPMProcessor:
         print(f"ky = {ky:12.4f},   deltay = {deltay:12.4f}\n")
         return kx, deltax, ky, deltay
 
+    @staticmethod
+    def data_parse(data):
+        """Extract each blade's data from whole data dict into arrays."""
+        dk = np.array(list(data.keys()))
+
+        nh = np.unique(dk[:, 0])
+        nv = np.unique(dk[:, 1])
+        ngrid = (nv.shape[0], nh.shape[0])
+        to,  ti  = np.zeros(ngrid), np.zeros(ngrid)
+        bo,  bi  = np.zeros(ngrid), np.zeros(ngrid)
+        sto, sti = np.zeros(ngrid), np.zeros(ngrid)
+        sbo, sbi = np.zeros(ngrid), np.zeros(ngrid)
+
+        for ii, nl in enumerate(nv):
+            for jj, nc in enumerate(nh):
+                key = (nc, nl)
+                ilin = ngrid[0] - ii - 1
+                icol = jj
+
+                if key not in data.keys():
+                    break
+
+                try:
+                    to[ilin, icol]  = data[key][0, 0]
+                    ti[ilin, icol]  = data[key][1, 0]
+                    bi[ilin, icol]  = data[key][2, 0]
+                    bo[ilin, icol]  = data[key][3, 0]
+
+                    sto[ilin, icol] = data[key][0, 1]
+                    sti[ilin, icol] = data[key][1, 1]
+                    sbi[ilin, icol] = data[key][2, 1]
+                    sbo[ilin, icol] = data[key][3, 1]
+                except Exception as err:
+                    print(f"\n WARNING, when trying to parse blade data: {err}"
+                          f"\n nominal position: {err},"
+                          f" array index: {ilin}, {icol}"
+                          "\n Maybe data grid is incomplete?")
+
+        return [to, ti, bi, bo], [sto, sti, sbi, sbo]
+
 
 class BPMProcessor:
     """Processes BPM-only data to estimate XBPM positions.
@@ -1327,7 +1387,7 @@ class BladeMapVisualizer:
         [TI  TO]
         [BI  BO]
         """
-        blades, stddevs = data_parse(self.data)
+        blades, stddevs = XBPMProcessor.data_parse(self.data)
         to, ti, bi, bo = blades
 
         fig, rx = plt.subplots(2, 2, figsize=(8, 5))
@@ -1613,116 +1673,6 @@ SECTIONS = {
     "MGN": "subsec:10BC",
     "MNC": "subsec:09SA"
 }
-
-
-# ## Select data.
-
-def blades_fetch(rawdata, beamline):
-    """Retrieve each blade's data and average over their values.
-
-    Obs.: A map of the blade positions must be provided for each beamline.
-
-    Args:
-        rawdata (list) : acquired data from bpm and xbpm measurements.
-        beamline (str) : beamline to be analysed.
-
-    Returns:
-        data (dict) : averaged and std dev values from blades' measured
-            data; bpm h and v angular positions (in urad), taken as 'real'
-            positions, work as indices.
-    """
-    data = dict()
-
-    for dt in rawdata:
-        try:
-            xbpm = dt[0][beamline]
-            vals = list()
-            for blade in BLADEMAP[beamline].values():
-                # Average and std dev over measured values of current blade.
-                av, sd = blade_average(xbpm[f'{blade}_val'], beamline)
-                vals.append((av, sd))
-            bpm_x = dt[2]['agx']
-            bpm_y = dt[2]['agy']
-            data[bpm_x, bpm_y] = np.array(vals)
-        except Exception as err:
-            print("\n WARNING: when fetching blades' values and averaging:"
-                  f" {err}\n")
-    return data
-
-
-def blade_average(blade, beamline):
-    """Calculate the average of blades' values.
-
-    Args:
-        blade (numpy array) : raw data measured by given blade.
-        beamline (str) : beamline identifier to define the type of data
-            for averaging.
-
-    Returns: averaged measured value for the blade and its standard deviation.
-    """
-    # Decide the the type of data to be average over.
-    # If data is given in arbitrary units.
-    if beamline in ["MGN", "MNC"]:
-        return np.average(blade), np.std(blade)
-
-    # If data is in subunits, convert to Amperes.
-    vals = np.array([
-        vv * AMPSUB[un] for vv, un in blade
-    ])
-    return np.average(vals), np.std(vals)
-
-
-def data_parse(data):
-    """Extract each blade's data from whole data.
-
-    Args:
-        data (dict): keys are (x, y) grid positions, values are blades'
-            measurements with errors (order: to, ti, bi, bo).
-
-    Returns:
-        to, ti, bi, bo (numpy arrays): the values read by each blade.
-
-    Note: the keys in data are the positions in the coordinate system, but the
-        indexing of the numpy arrrays to, ti, bi, bo are the conventional ones,
-        so the [0, 0] index corresponds to the left-upmost position etc.
-    """
-    dk = np.array(list(data.keys()))
-
-    nh = np.unique(dk[:, 0])
-    nv = np.unique(dk[:, 1])
-    ngrid = (nv.shape[0], nh.shape[0])
-    to,  ti  = np.zeros(ngrid), np.zeros(ngrid)
-    bo,  bi  = np.zeros(ngrid), np.zeros(ngrid)
-    sto, sti = np.zeros(ngrid), np.zeros(ngrid)
-    sbo, sbi = np.zeros(ngrid), np.zeros(ngrid)
-
-    for ii, nl in enumerate(nv):
-        for jj, nc in enumerate(nh):
-            key = (nc, nl)
-            ilin = ngrid[0] - ii - 1
-            icol = jj
-
-            # Check whether data ends prematurely.
-            if key not in data.keys():
-                break
-
-            try:
-                to[ilin, icol]  = data[key][0, 0]
-                ti[ilin, icol]  = data[key][1, 0]
-                bi[ilin, icol]  = data[key][2, 0]
-                bo[ilin, icol]  = data[key][3, 0]
-
-                sto[ilin, icol] = data[key][0, 1]
-                sti[ilin, icol] = data[key][1, 1]
-                sbi[ilin, icol] = data[key][2, 1]
-                sbo[ilin, icol] = data[key][3, 1]
-            except Exception as err:
-                print(f"\n WARNING, when trying to parse blade data: {err}"
-                      f"\n nominal position: {err},"
-                      f" array index: {ilin}, {icol}"
-                      "\n Maybe data grid is incomplete?")
-
-    return [to, ti, bi, bo], [sto, sti, sbi, sbo]
 
 
 class XBPMApp:
