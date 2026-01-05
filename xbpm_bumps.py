@@ -147,7 +147,7 @@ class ParameterBuilder:
 
     def __init__(self, prm: Optional[Prm] = None):
         """Initialize builder with optional pre-existing parameters."""
-        self.prm: Optional[Prm] = prm
+        self.prm:     Optional[Prm]  = prm
         self.rawdata: Optional[list] = None
 
     def from_cli(self, argv=None) -> Prm:
@@ -426,7 +426,7 @@ class DataReader:
         """Read data from pickle files in a directory."""
         self.rawdata = self._get_pickle_data()[self.prm.skip:]
         self.prm = self.builder.enrich_from_data(self.rawdata)
-        self.data = self._blades_fetch(self.rawdata, self.prm.beamline)
+        self.data = self._blades_fetch()
 
     def _get_pickle_data(self) -> list:
         """Open pickle files in directory and extract data.
@@ -491,7 +491,8 @@ class DataReader:
             else:
                 # Try to find the beamline code by looking up the full name
                 try:
-                    self.prm.beamline = self.builder.found_key(BEAMLINENAME, blval.strip())
+                    self.prm.beamline = self.builder.found_key(BEAMLINENAME,
+                                                               blval.strip())
                 except StopIteration:
                     # Fallback: if exact match not found, keep original
                     self.prm.beamline = blval
@@ -546,18 +547,17 @@ class DataReader:
 """
 )
 
-    @staticmethod
-    def _blades_fetch(rawdata, beamline):
+    def _blades_fetch(self) -> dict:
         """Retrieve each blade's data and average over their values."""
         data = dict()
+        beamline = self.prm.beamline
 
-        for dt in rawdata:
+        for dt in self.rawdata:
             try:
                 xbpm = dt[0][beamline]
                 vals = list()
                 for blade in BLADEMAP[beamline].values():
-                    av, sd = DataReader._blade_average(xbpm[f'{blade}_val'],
-                                                       beamline)
+                    av, sd = self._blade_average(xbpm[f'{blade}_val'])
                     vals.append((av, sd))
                 bpm_x = dt[2]['agx']
                 bpm_y = dt[2]['agy']
@@ -567,10 +567,9 @@ class DataReader:
                       f" {err}\n")
         return data
 
-    @staticmethod
-    def _blade_average(blade, beamline):
-        """Calculate the average of blades' values."""
-        if beamline in ["MGN", "MNC"]:
+    def _blade_average(self, blade):
+        """Calculate the average of blades' values for current beamline."""
+        if self.prm.beamline in ["MGN", "MNC"]:
             return np.average(blade), np.std(blade)
 
         vals = np.array([
