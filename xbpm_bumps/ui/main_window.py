@@ -14,6 +14,7 @@ import os
 from .widgets.parameter_panel import ParameterPanel
 from .widgets.mpl_canvas import MatplotlibCanvas
 from .dialogs.beamline_dialog import BeamlineSelectionDialog
+from .dialogs.help_dialog import HelpDialog
 from .analyzer import XBPMAnalyzer
 from ..core.config import Config
 from ..core.constants import FIGDPI
@@ -72,6 +73,11 @@ class XBPMMainWindow(QMainWindow):
         # Status bar
         self._create_status_bar()
 
+        # Menubar: Help
+        help_menu = self.menuBar().addMenu("Help")
+        help_action = help_menu.addAction("Help…")
+        help_action.triggered.connect(self._on_help_clicked)
+
     def _create_control_panel(self) -> QWidget:
         """Create the left control panel with parameters and buttons."""
         panel = QWidget()
@@ -99,6 +105,10 @@ class XBPMMainWindow(QMainWindow):
         self.export_btn.setMinimumHeight(40)
         self.export_btn.clicked.connect(self._on_export_clicked)
 
+        self.help_btn = QPushButton("Help")
+        self.help_btn.setMinimumHeight(40)
+        self.help_btn.clicked.connect(self._on_help_clicked)
+
         self.quit_btn = QPushButton("Quit")
         self.quit_btn.setMinimumHeight(40)
         self.quit_btn.clicked.connect(self.close)
@@ -106,6 +116,7 @@ class XBPMMainWindow(QMainWindow):
         button_layout.addWidget(self.run_btn)
         button_layout.addWidget(self.stop_btn)
         button_layout.addWidget(self.export_btn)
+        button_layout.addWidget(self.help_btn)
         button_layout.addWidget(self.quit_btn)
         layout.addLayout(button_layout)
 
@@ -414,6 +425,20 @@ class XBPMMainWindow(QMainWindow):
             )
         except Exception as exc:  # pragma: no cover
             self.show_error("Export Failed", str(exc))
+
+    @pyqtSlot()
+    def _on_help_clicked(self):
+        """Open Help dialog with program guidance (non-blocking)."""
+        try:
+            if not hasattr(self, '_help_dialog') or self._help_dialog is None:
+                self._help_dialog = HelpDialog(self)
+            self._help_dialog.show()
+            self._help_dialog.raise_()
+            self._help_dialog.activateWindow()
+            self.log_message("Help dialog opened")
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception("Failed to open Help dialog")
+            self.show_error("Help", f"Could not open Help: {exc}")
 
     def _export_xbpm_raw(self, prefix: str, params: dict) -> bool:
         """Export raw XBPM positions and figures.
