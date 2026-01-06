@@ -3,16 +3,20 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTextEdit, QSplitter, QTabWidget,
-    QStatusBar, QProgressBar, QMessageBox
+    QStatusBar, QProgressBar, QMessageBox, QFileDialog
 )
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot, QThread
 from PyQt5.QtGui import QFont
 import numpy as np
+import logging
 
 from .widgets.parameter_panel import ParameterPanel
 from .widgets.mpl_canvas import MatplotlibCanvas
 from .dialogs.beamline_dialog import BeamlineSelectionDialog
 from .analyzer import XBPMAnalyzer
+
+
+logger = logging.getLogger(__name__)
 
 
 class XBPMMainWindow(QMainWindow):
@@ -88,12 +92,17 @@ class XBPMMainWindow(QMainWindow):
         self.stop_btn.setMinimumHeight(40)
         self.stop_btn.setEnabled(False)
 
+        self.export_btn = QPushButton("Export…")
+        self.export_btn.setMinimumHeight(40)
+        self.export_btn.clicked.connect(self._on_export_clicked)
+
         self.quit_btn = QPushButton("Quit")
         self.quit_btn.setMinimumHeight(40)
         self.quit_btn.clicked.connect(self.close)
 
         button_layout.addWidget(self.run_btn)
         button_layout.addWidget(self.stop_btn)
+        button_layout.addWidget(self.export_btn)
         button_layout.addWidget(self.quit_btn)
         layout.addLayout(button_layout)
 
@@ -109,15 +118,7 @@ class XBPMMainWindow(QMainWindow):
         self.console.setFont(QFont("Courier", 9))
         self.results_tabs.addTab(self.console, "Console")
 
-        # Visualization tabs
-        xbpm_raw_tab, xbpm_raw_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(xbpm_raw_tab, "XBPM Raw")
-        self.canvases["xbpm_raw"] = xbpm_raw_canvas
-
-        xbpm_scaled_tab, xbpm_scaled_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(xbpm_scaled_tab, "XBPM Scaled")
-        self.canvases["xbpm_scaled"] = xbpm_scaled_canvas
-
+        # Visualization tabs (ordered to match analysis options)
         bpm_tab, bpm_canvas = self._create_canvas_tab()
         self.results_tabs.addTab(bpm_tab, "BPM Positions")
         self.canvases["bpm"] = bpm_canvas
@@ -133,6 +134,14 @@ class XBPMMainWindow(QMainWindow):
         blades_center_tab, blades_center_canvas = self._create_canvas_tab()
         self.results_tabs.addTab(blades_center_tab, "Blades at Center")
         self.canvases["blades_center"] = blades_center_canvas
+
+        xbpm_raw_tab, xbpm_raw_canvas = self._create_canvas_tab()
+        self.results_tabs.addTab(xbpm_raw_tab, "XBPM Raw")
+        self.canvases["xbpm_raw"] = xbpm_raw_canvas
+
+        xbpm_scaled_tab, xbpm_scaled_canvas = self._create_canvas_tab()
+        self.results_tabs.addTab(xbpm_scaled_tab, "XBPM Scaled")
+        self.canvases["xbpm_scaled"] = xbpm_scaled_canvas
 
         return self.results_tabs
 
@@ -179,7 +188,9 @@ class XBPMMainWindow(QMainWindow):
                 sys.stderr = log_capture
 
                 # Perform actual read to populate rawdata and beamline
-                data = reader.read(beamline_selector=self._create_beamline_selector())
+                data = reader.read(
+                    beamline_selector=self._create_beamline_selector()
+                )
             finally:
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
@@ -236,7 +247,6 @@ class XBPMMainWindow(QMainWindow):
             self.log_message(
                 f"Auto-selected beamline: {beamlines[0]}"
             )
-
 
     def setup_worker_thread(self):
         """Initialize worker thread for analysis execution."""
@@ -299,6 +309,8 @@ class XBPMMainWindow(QMainWindow):
         Args:
             results: Dictionary with analysis results.
         """
+        # Keep last results for potential export
+        self._last_results = results
         self.set_analysis_running(False)
         self.log_message("=" * 60)
         self.log_message("Analysis completed successfully!")
@@ -313,6 +325,95 @@ class XBPMMainWindow(QMainWindow):
                 self.log_message(f"Generated positions: {key}")
 
         self.status_bar.showMessage("Analysis complete", 5000)
+
+    def _on_export_clicked(self):
+        """Handle Export button: write data/positions to user-chosen files."""
+        try:
+            # Ensure app is initialized and beamline selected
+            if not hasattr(self, 'analyzer') or not self.analyzer.app:
+                QMessageBox.warning(
+                    self,
+                    "Unavailable",
+                    (
+                        "Run analysis at least once"
+                        " before exporting."
+                    ),
+                )
+                return
+
+            # Choose base filename prefix
+            default_name = (
+                f"xbpm_export_{self.analyzer.app.prm.beamline}.dat"
+            )
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Choose export base filename",
+                default_name,
+                "Data Files (*.dat);;All Files (*)"
+            )
+            if not path:
+                return
+
+            # Strip extension to use as prefix
+            import os
+            prefix, _ext = os.path.splitext(path)
+
+            from ..core.exporters import Exporter
+
+            exporter = Exporter(self.analyzer.app.prm)
+
+            # Use current parameter selections to decide what to export
+            params = self.param_panel.get_parameters()
+            exported_any = False
+
+            # Shortcut local for processor
+            processor = self.analyzer.app.processor
+
+            # Export raw XBPM positions if selected
+            if params.get('xbpmpositionsraw'):
+                positions_raw = processor.calculate_raw_positions(
+                    showmatrix=True
+                )
+                exporter.data_dump_with_prefix(
+                    prefix,
+                    self.analyzer.app.data,
+                    positions_raw,
+                    sup="raw",
+                )
+                exported_any = True
+
+            # Export scaled XBPM positions if selected
+            if params.get('xbpmpositions'):
+                positions_scaled = processor.calculate_scaled_positions(
+                    showmatrix=True
+                )
+                exporter.data_dump_with_prefix(
+                    prefix,
+                    self.analyzer.app.data,
+                    positions_scaled,
+                    sup="scaled",
+                )
+                exported_any = True
+
+            if not exported_any:
+                QMessageBox.information(
+                    self,
+                    "Nothing to export",
+                    (
+                        "Enable XBPM Raw or XBPM Scaled options "
+                        "to export positions."
+                    ),
+                )
+                return
+
+            self.log_message(f"Exported data using prefix: {prefix}")
+            QMessageBox.information(
+                self,
+                "Export Complete",
+                "Data export finished.",
+            )
+        except Exception as exc:  # pragma: no cover
+            self.show_error("Export Failed", str(exc))
 
     @pyqtSlot(str, str)
     def _on_analysis_error(self, title: str, message: str):
@@ -333,8 +434,10 @@ class XBPMMainWindow(QMainWindow):
             return
 
         params = self._ensure_beamline(params)
-        self.log_message("Starting analysis with workdir:"
-                         f" {params['workdir']}")
+        self.log_message(
+            "Starting analysis with workdir: "
+            f"{params['workdir']}"
+        )
         self.analysisRequested.emit(params)
 
     def _validate_workdir(self, params: dict) -> bool:
@@ -561,8 +664,11 @@ class XBPMMainWindow(QMainWindow):
             if canvas.figure and canvas.figure != source_fig:
                 try:
                     plt.close(canvas.figure)
-                except Exception:
-                    pass
+                except Exception:  # pragma: no cover - defensive
+                    logger.warning(
+                        "Failed to close previous figure during embed",
+                        exc_info=True,
+                    )
 
             # Replace canvas figure references
             canvas.figure = source_fig
@@ -600,9 +706,9 @@ class XBPMMainWindow(QMainWindow):
                     transform=canvas.ax.transAxes,
                 )
                 canvas.canvas.draw_idle()
-            except Exception as fallback_exc:  # noqa: BLE001
-                # Log fallback failure to stderr for debugging
-                print(f"Fallback figure embed failed: {fallback_exc}")
+            except Exception:  # noqa: BLE001
+                # Log fallback failure for debugging
+                logger.exception("Fallback figure embed failed")
 
     def closeEvent(self, event):  # noqa: N802
         """Clean up worker thread on window close."""

@@ -104,36 +104,37 @@ class ParameterPanel(QWidget):
         group = QGroupBox("Analysis Options")
         layout = QVBoxLayout()
 
-        self.xbpm_check = QCheckBox("Calculate XBPM positions (-x)")
-        self.xbpm_check.setChecked(True)
-        self.xbpm_check.toggled.connect(self.parametersChanged.emit)
-        layout.addWidget(self.xbpm_check)
+        # 1. Calculate BPM positions
+        self.bpm_check = QCheckBox("Calculate BPM positions (-b)")
+        self.bpm_check.toggled.connect(self.parametersChanged.emit)
+        layout.addWidget(self.bpm_check)
 
+        # 2. Show blade map
+        self.blademap_check = QCheckBox("Show blade map (-m)")
+        self.blademap_check.toggled.connect(self.parametersChanged.emit)
+        layout.addWidget(self.blademap_check)
+
+        # 3. Show central line sweeps
+        self.central_check = QCheckBox("Show central line sweeps (-c)")
+        self.central_check.toggled.connect(self.parametersChanged.emit)
+        layout.addWidget(self.central_check)
+
+        # 4. Show positions at center
+        self.center_check = QCheckBox("Show positions at center (-s)")
+        self.center_check.toggled.connect(self.parametersChanged.emit)
+        layout.addWidget(self.center_check)
+
+        # 5. XBPM positions without suppression
         self.xbpm_raw_check = QCheckBox(
             "XBPM positions without suppression (-r)"
         )
         self.xbpm_raw_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.xbpm_raw_check)
 
-        self.bpm_check = QCheckBox("Calculate BPM positions (-b)")
-        self.bpm_check.toggled.connect(self.parametersChanged.emit)
-        layout.addWidget(self.bpm_check)
-
-        self.blademap_check = QCheckBox("Show blade map (-m)")
-        self.blademap_check.toggled.connect(self.parametersChanged.emit)
-        layout.addWidget(self.blademap_check)
-
-        self.central_check = QCheckBox("Show central line sweeps (-c)")
-        self.central_check.toggled.connect(self.parametersChanged.emit)
-        layout.addWidget(self.central_check)
-
-        self.center_check = QCheckBox("Show positions at center (-s)")
-        self.center_check.toggled.connect(self.parametersChanged.emit)
-        layout.addWidget(self.center_check)
-
-        self.output_check = QCheckBox("Export data to file (-o)")
-        self.output_check.toggled.connect(self.parametersChanged.emit)
-        layout.addWidget(self.output_check)
+        # 6. Calculate XBPM positions (scaled)
+        self.xbpm_check = QCheckBox("Calculate XBPM positions (-x)")
+        self.xbpm_check.toggled.connect(self.parametersChanged.emit)
+        layout.addWidget(self.xbpm_check)
 
         group.setLayout(layout)
         return group
@@ -183,13 +184,12 @@ class ParameterPanel(QWidget):
                 else None
             ),
             'skip': self.skip_spin.value(),
-            'xbpmpositions': self.xbpm_check.isChecked(),
             'xbpmpositionsraw': self.xbpm_raw_check.isChecked(),
+            'xbpmpositions': self.xbpm_check.isChecked(),
             'xbpmfrombpm': self.bpm_check.isChecked(),
             'showblademap': self.blademap_check.isChecked(),
             'centralsweep': self.central_check.isChecked(),
             'showbladescenter': self.center_check.isChecked(),
-            'outputfile': self.output_check.isChecked(),
         }
         return params
 
@@ -211,13 +211,12 @@ class ParameterPanel(QWidget):
 
         # Boolean checkboxes - map parameter name to widget
         checkboxes = {
-            'xbpmpositions'    : self.xbpm_check,
             'xbpmpositionsraw' : self.xbpm_raw_check,
+            'xbpmpositions'    : self.xbpm_check,
             'xbpmfrombpm'      : self.bpm_check,
             'showblademap'     : self.blademap_check,
             'centralsweep'     : self.central_check,
             'showbladescenter' : self.center_check,
-            'outputfile'       : self.output_check,
         }
         for param, checkbox in checkboxes.items():
             if param in params:

@@ -51,3 +51,42 @@ class Exporter:
                 fc.write(f"  {val[0]} {val[1]}\n")
 
         print("done.\n")
+
+    def data_dump_with_prefix(self, prefix: str, data,
+                              positions, sup: str = "") -> None:
+        """Dump blades data and calculated positions using a filename prefix.
+
+        Args:
+            prefix: Base path (without extension) to prepend to output files.
+            data: Raw blades data dictionary.
+            positions: Tuple of (pair_positions_dict, cross_positions_dict).
+            sup: Suffix indicating 'raw' or 'scaled'.
+        """
+        blades_file = f"{prefix}_blades_values_{self.prm.beamline}.dat"
+        print(f"\n Writing out data to file {blades_file} ...", end='')
+        with open(blades_file, 'w') as df:
+            for key, val in data.items():
+                df.write(f"{key[0]}  {key[1]}")
+                for vv in val:
+                    df.write(f"  {vv[0]} {vv[1]}")
+                df.write("\n")
+
+        pos_pair, pos_cr = positions
+
+        pair_file = f"{prefix}_positions_pair_{sup}_{self.prm.beamline}.dat"
+        print("\n Writing out pairwise blade calculated positions to file"
+              f" {pair_file} ...", end='')
+        with open(pair_file, 'w') as fp:
+            for key, val in pos_pair.items():
+                fp.write(f"{key[0]}  {key[1]}")
+                fp.write(f"  {val[0]} {val[1]}\n")
+
+        cross_file = f"{prefix}_positions_cross_{sup}_{self.prm.beamline}.dat"
+        print("\n Writing out cross-blade calculated positions to file"
+              f" {cross_file} ...", end='')
+        with open(cross_file, 'w') as fc:
+            for key, val in pos_cr.items():
+                fc.write(f"{key[0]}  {key[1]}")
+                fc.write(f"  {val[0]} {val[1]}\n")
+
+        print("done.\n")
