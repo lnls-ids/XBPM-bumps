@@ -10,57 +10,64 @@ from PyQt5.QtCore import pyqtSignal
 
 class ParameterPanel(QWidget):
     """Widget for inputting XBPM analysis parameters.
-    
+
     Emits parametersChanged signal when any parameter is modified.
     """
-    
-    parametersChanged = pyqtSignal()
-    
+
+    parametersChanged = pyqtSignal()  # noqa: N815
+
     def __init__(self, parent=None):
+        """Initialize the parameter panel.
+
+        Args:
+            parent: Optional parent widget.
+        """
         super().__init__(parent)
         self.setup_ui()
-        
+
     def setup_ui(self):
         """Initialize the UI layout and widgets."""
         layout = QVBoxLayout(self)
-        
+
         # Input files group
         files_group = self._create_files_group()
         layout.addWidget(files_group)
-        
+
         # Parameters group
         params_group = self._create_parameters_group()
         layout.addWidget(params_group)
-        
+
         # Analysis options group
         options_group = self._create_options_group()
         layout.addWidget(options_group)
-        
+
         layout.addStretch()
-        
+
     def _create_files_group(self) -> QGroupBox:
         """Create the file/directory selection group."""
         group = QGroupBox("Input Data")
         layout = QHBoxLayout()
-        
+
         self.workdir_edit = QLineEdit()
-        self.workdir_edit.setPlaceholderText("Select working directory or data file...")
+        self.workdir_edit.setPlaceholderText(
+            "Select working directory or data file..."
+        )
         self.workdir_edit.textChanged.connect(self.parametersChanged.emit)
-        
+
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self._browse_workdir)
-        
+
         layout.addWidget(self.workdir_edit)
         layout.addWidget(browse_btn)
         group.setLayout(layout)
-        
+
         return group
-    
+
     def _create_parameters_group(self) -> QGroupBox:
         """Create the numerical parameters group."""
         group = QGroupBox("Parameters")
         layout = QFormLayout()
-        
+
         # XBPM distance
         self.xbpmdist_spin = QDoubleSpinBox()
         self.xbpmdist_spin.setRange(0.0, 100.0)
@@ -70,7 +77,7 @@ class ParameterPanel(QWidget):
         self.xbpmdist_spin.setSpecialValueText("Auto (from beamline)")
         self.xbpmdist_spin.valueChanged.connect(self.parametersChanged.emit)
         layout.addRow("XBPM Distance:", self.xbpmdist_spin)
-        
+
         # Grid step
         self.gridstep_spin = QDoubleSpinBox()
         self.gridstep_spin.setRange(0.0, 100.0)
@@ -80,7 +87,7 @@ class ParameterPanel(QWidget):
         self.gridstep_spin.setSpecialValueText("Auto (infer from data)")
         self.gridstep_spin.valueChanged.connect(self.parametersChanged.emit)
         layout.addRow("Grid Step:", self.gridstep_spin)
-        
+
         # Skip initial data
         self.skip_spin = QSpinBox()
         self.skip_spin.setRange(0, 1000)
@@ -88,47 +95,49 @@ class ParameterPanel(QWidget):
         self.skip_spin.setSuffix(" points")
         self.skip_spin.valueChanged.connect(self.parametersChanged.emit)
         layout.addRow("Skip Initial:", self.skip_spin)
-        
+
         group.setLayout(layout)
         return group
-    
+
     def _create_options_group(self) -> QGroupBox:
         """Create the analysis options checkboxes group."""
         group = QGroupBox("Analysis Options")
         layout = QVBoxLayout()
-        
+
         self.xbpm_check = QCheckBox("Calculate XBPM positions (-x)")
         self.xbpm_check.setChecked(True)
         self.xbpm_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.xbpm_check)
-        
-        self.xbpm_raw_check = QCheckBox("XBPM positions without suppression (-r)")
+
+        self.xbpm_raw_check = QCheckBox(
+            "XBPM positions without suppression (-r)"
+        )
         self.xbpm_raw_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.xbpm_raw_check)
-        
+
         self.bpm_check = QCheckBox("Calculate BPM positions (-b)")
         self.bpm_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.bpm_check)
-        
+
         self.blademap_check = QCheckBox("Show blade map (-m)")
         self.blademap_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.blademap_check)
-        
+
         self.central_check = QCheckBox("Show central line sweeps (-c)")
         self.central_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.central_check)
-        
+
         self.center_check = QCheckBox("Show positions at center (-s)")
         self.center_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.center_check)
-        
+
         self.output_check = QCheckBox("Export data to file (-o)")
         self.output_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.output_check)
-        
+
         group.setLayout(layout)
         return group
-    
+
     def _browse_workdir(self):
         """Open file/directory browser dialog."""
         # Try directory first, then file
@@ -137,7 +146,7 @@ class ParameterPanel(QWidget):
             "Select Working Directory",
             self.workdir_edit.text() or "."
         )
-        
+
         if not path:
             # Try selecting a file instead
             path, _ = QFileDialog.getOpenFileName(
@@ -146,21 +155,29 @@ class ParameterPanel(QWidget):
                 self.workdir_edit.text() or ".",
                 "Data Files (*.dat *.txt);;All Files (*)"
             )
-        
+
         if path:
             self.workdir_edit.setText(path)
-    
+
     def get_parameters(self) -> dict:
         """Extract current parameter values as a dictionary.
-        
+
         Returns:
             Dictionary with parameter names and values compatible with
             ParameterBuilder.from_cli() format.
         """
         params = {
             'workdir': self.workdir_edit.text(),
-            'xbpmdist': self.xbpmdist_spin.value() if self.xbpmdist_spin.value() > 0 else None,
-            'gridstep': self.gridstep_spin.value() if self.gridstep_spin.value() > 0 else None,
+            'xbpmdist': (
+                self.xbpmdist_spin.value()
+                if self.xbpmdist_spin.value() > 0
+                else None
+            ),
+            'gridstep': (
+                self.gridstep_spin.value()
+                if self.gridstep_spin.value() > 0
+                else None
+            ),
             'skip': self.skip_spin.value(),
             'xbpmpositions': self.xbpm_check.isChecked(),
             'xbpmpositionsraw': self.xbpm_raw_check.isChecked(),
@@ -171,13 +188,14 @@ class ParameterPanel(QWidget):
             'outputfile': self.output_check.isChecked(),
         }
         return params
-    
+
     def set_parameters(self, params: dict):
         """Set parameter values from a dictionary.
-        
+
         Args:
             params: Dictionary with parameter names and values.
         """
+        # Text and numeric parameters
         if 'workdir' in params:
             self.workdir_edit.setText(params['workdir'])
         if 'xbpmdist' in params and params['xbpmdist'] is not None:
@@ -186,17 +204,17 @@ class ParameterPanel(QWidget):
             self.gridstep_spin.setValue(params['gridstep'])
         if 'skip' in params:
             self.skip_spin.setValue(params['skip'])
-        if 'xbpmpositions' in params:
-            self.xbpm_check.setChecked(params['xbpmpositions'])
-        if 'xbpmpositionsraw' in params:
-            self.xbpm_raw_check.setChecked(params['xbpmpositionsraw'])
-        if 'xbpmfrombpm' in params:
-            self.bpm_check.setChecked(params['xbpmfrombpm'])
-        if 'showblademap' in params:
-            self.blademap_check.setChecked(params['showblademap'])
-        if 'centralsweep' in params:
-            self.central_check.setChecked(params['centralsweep'])
-        if 'showbladescenter' in params:
-            self.center_check.setChecked(params['showbladescenter'])
-        if 'outputfile' in params:
-            self.output_check.setChecked(params['outputfile'])
+
+        # Boolean checkboxes - map parameter name to widget
+        checkboxes = {
+            'xbpmpositions'    : self.xbpm_check,
+            'xbpmpositionsraw' : self.xbpm_raw_check,
+            'xbpmfrombpm'      : self.bpm_check,
+            'showblademap'     : self.blademap_check,
+            'centralsweep'     : self.central_check,
+            'showbladescenter' : self.center_check,
+            'outputfile'       : self.output_check,
+        }
+        for param, checkbox in checkboxes.items():
+            if param in params:
+                checkbox.setChecked(params[param])
