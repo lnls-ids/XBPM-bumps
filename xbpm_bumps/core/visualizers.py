@@ -2,9 +2,14 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
+import logging
 
 from .parameters import Prm
 from .constants import FIGDPI
+
+
+# Module logger
+logger = logging.getLogger(__name__)
 
 
 class BladeMapVisualizer:
@@ -73,12 +78,12 @@ class BladeMapVisualizer:
                 rx[idy][idx].set_ylabel(u"$y$ [$\\mu$rad]")
                 rx[idy][idx].set_title(names[idy][idx])
 
-        fig.tight_layout(pad=0., w_pad=-15., h_pad=2.)
+        fig.tight_layout(pad=0., w_pad=-10., h_pad=2.)
 
         if self.prm.outputfile:
             outfile = f"blade_map_{self.prm.beamline}.png"
             fig.savefig(outfile, dpi=FIGDPI)
-            print(f" Figure of blades' map saved to file {outfile}.\n")
+            logger.info("Figure of blades' map saved to file %s", outfile)
 
         return fig
 
@@ -112,6 +117,9 @@ class PositionVisualizer:
         self.title = title
         self.fig = None
 
+        # Module logger
+        self._logger = logging.getLogger(__name__)
+
     def show_position_results(self, pos_nom_h, pos_nom_v,
                               pos_h, pos_v, pos_h_roi, pos_v_roi,
                               pos_nom_h_roi, pos_nom_v_roi,
@@ -130,8 +138,28 @@ class PositionVisualizer:
             diff_roi: RMS position differences in ROI.
             figsize: Figure size as (width, height) tuple.
         """
-        self.fig, (ax_all, ax_close, ax_color) = plt.subplots(1, 3,
-                                                              figsize=figsize)
+        self.fig, (ax_all, ax_close, ax_color) = plt.subplots(
+            1, 3, figsize=figsize, constrained_layout=True
+        )
+        # Reduce vertical/horizontal padding between subplots
+        # and figure edges for a tighter layout.
+        try:
+            engine = self.fig.get_layout_engine()
+            if engine is not None and hasattr(engine, "set"):
+                engine.set(
+                    w_pad=0.02,   # space figure edge / axes, horizontal
+                    h_pad=0.0,    # space figure edge / axes, vertical
+                    wspace=0.02,  # space between axes, horizontal
+                    hspace=0.0,   # space between axes, vertical
+                )
+            else:
+                raise AttributeError("Layout engine missing or immutable")
+        except Exception:
+            # Log and continue if environment lacks this API
+            self._logger.warning(
+                "Layout engine padding not applied; falling back",
+                exc_info=True,
+            )
 
         # Full grid view
         self._plot_scaled_positions(
@@ -152,17 +180,41 @@ class PositionVisualizer:
             f"{self.title} @ {self.prm.beamline}"
         )
 
-        self.fig.tight_layout()
+        # constrained_layout handles spacing; avoid mixing with tight_layout
 
     def _plot_scaled_positions(self, ax, pos_nom_h, pos_nom_v,
                               pos_h, pos_v, title):
         """Plot nominal vs calculated positions on given axis."""
-        ax.set_title(title)
+        ax.set_title(title, pad=2)
         pos = ax.plot(pos_h, pos_v, 'bo')
         nom = ax.plot(pos_nom_h, pos_nom_v, 'r+')
         ax.set_xlabel(u"$x$ [$\\mu$m]")
         ax.set_ylabel(u"$y$ [$\\mu$m]")
-        ax.axis('equal')
+
+        # Compute common limits to ensure equal aspect ratio with margin
+        # Flatten all data to find overall min/max
+        all_h = np.concatenate([np.ravel(pos_h), np.ravel(pos_nom_h)])
+        all_v = np.concatenate([np.ravel(pos_v), np.ravel(pos_nom_v)])
+
+        h_min, h_max = np.min(all_h), np.max(all_h)
+        v_min, v_max = np.min(all_v), np.max(all_v)
+
+        h_range = h_max - h_min if h_max > h_min else 1
+        v_range = v_max - v_min if v_max > v_min else 1
+
+        # Add 15% margin (30% total: 15% on each side)
+        total_range = max(h_range, v_range) * 1.3
+
+        # Center the limits and expand to match max range
+        h_center = (h_min + h_max) / 2
+        v_center = (v_min + v_max) / 2
+
+        ax.set_xlim(h_center - total_range / 2, h_center + total_range / 2)
+        ax.set_ylim(v_center - total_range / 2, v_center + total_range / 2)
+
+        # Force 1:1 aspect ratio after setting limits
+        ax.set_aspect('equal', adjustable='box')
+
         handles, labels = [], []
         if len(nom) > 0:
             handles.append(nom[0])
@@ -179,7 +231,7 @@ class PositionVisualizer:
         """Plot position difference heatmap or scatter on given axis."""
         if len(diffroi.shape) > 1:
             im = ax.imshow(diffroi, cmap='viridis')
-            cbar = plt.colorbar(im, ax=ax)
+            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
             cbar.set_label(u"RMS differences (ROI)")
         else:
             # Ensure x, y, and color arrays have matching lengths
@@ -201,7 +253,7 @@ class PositionVisualizer:
             scatter = ax.scatter(x, y, c=cvals, cmap='viridis', s=50)
             plt.colorbar(scatter, ax=ax, label='Difference [$\\mu$m]')
 
-        ax.set_title(title)
+        ax.set_title(title, pad=2)
         ax.set_xlabel(u"$x$ [$\\mu$m]")
         ax.set_ylabel(u"$y$ [$\\mu$m]")
 
@@ -213,4 +265,4 @@ class PositionVisualizer:
         """
         if self.fig is not None:
             self.fig.savefig(filename, dpi=FIGDPI, bbox_inches='tight')
-            print(f" Figure saved to {filename}")
+            logger.info("Figure saved to %s", filename)

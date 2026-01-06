@@ -395,7 +395,25 @@ class XBPMProcessor:
                     pos_cr_h_scaled[ii, jj],
                     pos_cr_v_scaled[ii, jj]
                     ]
-        return [scaled_pos_pair, scaled_pos_cros]
+        return {
+            'positions': [scaled_pos_pair, scaled_pos_cros],
+            'pairwise_figure': pair_visualizer.fig,
+            'cross_figure': cross_visualizer.fig,
+            'scales': {
+                'pair': {
+                    'kx': kxp,
+                    'ky': kyp,
+                    'dx': deltaxp,
+                    'dy': deltayp,
+                },
+                'cross': {
+                    'kx': kxc,
+                    'ky': kyc,
+                    'dx': deltaxc,
+                    'dy': deltayc,
+                },
+            },
+        }
 
     def suppression_matrix(self, showmatrix=False, nosuppress=False):
         """Calculate the suppression matrix and persist it to disk."""

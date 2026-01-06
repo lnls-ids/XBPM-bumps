@@ -23,6 +23,7 @@ class ParameterPanel(QWidget):
             parent: Optional parent widget.
         """
         super().__init__(parent)
+        self._all_checked = False  # Track toggle state
         self.setup_ui()
 
     def setup_ui(self):
@@ -136,8 +137,28 @@ class ParameterPanel(QWidget):
         self.xbpm_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.xbpm_check)
 
+        # Button row for "All" option
+        layout.addSpacing(10)
+        button_layout = QHBoxLayout()
+        all_btn = QPushButton("All")
+        all_btn.clicked.connect(self._check_all_options)
+        button_layout.addWidget(all_btn)
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+
         group.setLayout(layout)
         return group
+
+    def _check_all_options(self):
+        """Toggle all analysis option checkboxes."""
+        self._all_checked = not self._all_checked
+        self.bpm_check.setChecked(self._all_checked)
+        self.blademap_check.setChecked(self._all_checked)
+        self.central_check.setChecked(self._all_checked)
+        self.center_check.setChecked(self._all_checked)
+        self.xbpm_raw_check.setChecked(self._all_checked)
+        self.xbpm_check.setChecked(self._all_checked)
+        self.parametersChanged.emit()
 
     def _browse_workdir(self):
         """Open file/directory browser dialog."""

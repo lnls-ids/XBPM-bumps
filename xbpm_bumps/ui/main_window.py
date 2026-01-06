@@ -9,11 +9,14 @@ from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot, QThread
 from PyQt5.QtGui import QFont
 import numpy as np
 import logging
+import os
 
 from .widgets.parameter_panel import ParameterPanel
 from .widgets.mpl_canvas import MatplotlibCanvas
 from .dialogs.beamline_dialog import BeamlineSelectionDialog
 from .analyzer import XBPMAnalyzer
+from ..core.config import Config
+from ..core.constants import FIGDPI
 
 
 logger = logging.getLogger(__name__)
@@ -204,6 +207,8 @@ class XBPMMainWindow(QMainWindow):
                 self.log_message(
                     f"Preselected beamline: {reader.prm.beamline}"
                 )
+                # Update XBPM distance based on selected beamline
+                self._update_xbpmdist_from_beamline(reader.prm.beamline)
             else:
                 self._handle_fallback_beamline_selection(reader, workdir, data)
 
@@ -229,6 +234,25 @@ class XBPMMainWindow(QMainWindow):
                 if line.strip():
                     self.log_message(line)
 
+    def _update_xbpmdist_from_beamline(self, beamline: str) -> None:
+        """Update the XBPM distance field from Config.XBPMDISTS.
+
+        Args:
+            beamline: Selected beamline code (e.g., 'MNC1').
+        """
+        try:
+            if not beamline:
+                return
+            dist = Config.XBPMDISTS.get(beamline)
+            if dist is not None and hasattr(self, 'param_panel'):
+                # Update UI spinbox to reflect auto value from beamline
+                self.param_panel.xbpmdist_spin.setValue(float(dist))
+                self.log_message(
+                    f"XBPM distance set from beamline {beamline}: {dist:.3f} m"
+                )
+        except Exception as exc:  # pragma: no cover - defensive
+            self.log_message(f"Could not set XBPM distance: {exc}")
+
     def _handle_fallback_beamline_selection(self, reader, workdir, data):
         """Handle beamline selection when initial read doesn't set it."""
         import os
@@ -247,6 +271,8 @@ class XBPMMainWindow(QMainWindow):
             self.log_message(
                 f"Auto-selected beamline: {beamlines[0]}"
             )
+            # Update XBPM distance based on auto-selected beamline
+            self._update_xbpmdist_from_beamline(beamlines[0])
 
     def setup_worker_thread(self):
         """Initialize worker thread for analysis execution."""
@@ -317,6 +343,7 @@ class XBPMMainWindow(QMainWindow):
         self.log_message("=" * 60)
 
         self._update_canvases(results)
+        self._show_detail_figures(results)
 
         # TODO: Populate result tabs with visualization widgets
         # For now, just log what we have
@@ -355,53 +382,26 @@ class XBPMMainWindow(QMainWindow):
                 return
 
             # Strip extension to use as prefix
-            import os
             prefix, _ext = os.path.splitext(path)
 
-            from ..core.exporters import Exporter
-
-            exporter = Exporter(self.analyzer.app.prm)
-
-            # Use current parameter selections to decide what to export
             params = self.param_panel.get_parameters()
+            results = getattr(self, '_last_results', {})
             exported_any = False
 
-            # Shortcut local for processor
-            processor = self.analyzer.app.processor
+            # Export XBPM data and figures
+            exported_any |= self._export_xbpm_raw(prefix, params)
+            exported_any |= self._export_xbpm_scaled(prefix, params)
 
-            # Export raw XBPM positions if selected
-            if params.get('xbpmpositionsraw'):
-                positions_raw = processor.calculate_raw_positions(
-                    showmatrix=True
-                )
-                exporter.data_dump_with_prefix(
-                    prefix,
-                    self.analyzer.app.data,
-                    positions_raw,
-                    sup="raw",
-                )
-                exported_any = True
-
-            # Export scaled XBPM positions if selected
-            if params.get('xbpmpositions'):
-                positions_scaled = processor.calculate_scaled_positions(
-                    showmatrix=True
-                )
-                exporter.data_dump_with_prefix(
-                    prefix,
-                    self.analyzer.app.data,
-                    positions_scaled,
-                    sup="scaled",
-                )
-                exported_any = True
+            # Export other analysis figures and data
+            exported_any |= self._export_other_figures(prefix, params, results)
 
             if not exported_any:
                 QMessageBox.information(
                     self,
                     "Nothing to export",
                     (
-                        "Enable XBPM Raw or XBPM Scaled options "
-                        "to export positions."
+                        "Enable at least one analysis option "
+                        "to export results."
                     ),
                 )
                 return
@@ -410,10 +410,249 @@ class XBPMMainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Export Complete",
-                "Data export finished.",
+                "Data and figures export finished.",
             )
         except Exception as exc:  # pragma: no cover
             self.show_error("Export Failed", str(exc))
+
+    def _export_xbpm_raw(self, prefix: str, params: dict) -> bool:
+        """Export raw XBPM positions and figures.
+
+        Args:
+            prefix: Export filename prefix.
+            params: Parameter dictionary from UI.
+
+        Returns:
+            True if export occurred, False otherwise.
+        """
+        if not params.get('xbpmpositionsraw'):
+            return False
+
+        from ..core.exporters import Exporter
+
+        exporter = Exporter(self.analyzer.app.prm)
+        processor = self.analyzer.app.processor
+
+        result_raw = processor.calculate_raw_positions(showmatrix=True)
+        exporter.data_dump_with_prefix(
+            prefix,
+            self.analyzer.app.data,
+            result_raw['positions'],
+            sup="raw",
+        )
+
+        # Save figures
+        if result_raw.get('pairwise_figure'):
+            fig_pair = os.path.join(
+                os.path.dirname(prefix),
+                f"{os.path.basename(prefix)}_pair_raw.png"
+            )
+            result_raw['pairwise_figure'].savefig(
+                fig_pair, dpi=FIGDPI, bbox_inches='tight'
+            )
+            logger.info("Pairwise figure saved to %s", fig_pair)
+
+        if result_raw.get('cross_figure'):
+            fig_cross = os.path.join(
+                os.path.dirname(prefix),
+                f"{os.path.basename(prefix)}_cross_raw.png"
+            )
+            result_raw['cross_figure'].savefig(
+                fig_cross, dpi=FIGDPI, bbox_inches='tight'
+            )
+            logger.info("Cross figure saved to %s", fig_cross)
+
+        # Export scaling factors if available
+        scales = result_raw.get('scales') or {}
+        pair_scales = scales.get('pair')
+        if pair_scales:
+            scale_path = os.path.join(
+                os.path.dirname(prefix),
+                f"{os.path.basename(prefix)}_pair_raw_scales.dat"
+            )
+            with open(scale_path, 'w') as fp:
+                fp.write("kx ky dx dy\n")
+                fp.write(
+                    f"{pair_scales.get('kx', 0):.6f} "
+                    f"{pair_scales.get('ky', 0):.6f} "
+                    f"{pair_scales.get('dx', 0):.6f} "
+                    f"{pair_scales.get('dy', 0):.6f}\n"
+                )
+            logger.info("Pairwise raw scales saved to %s", scale_path)
+
+        return True
+
+    def _export_xbpm_scaled(self, prefix: str, params: dict) -> bool:
+        """Export scaled XBPM positions and figures.
+
+        Args:
+            prefix: Export filename prefix.
+            params: Parameter dictionary from UI.
+
+        Returns:
+            True if export occurred, False otherwise.
+        """
+        if not params.get('xbpmpositions'):
+            return False
+
+        from ..core.exporters import Exporter
+
+        exporter = Exporter(self.analyzer.app.prm)
+        processor = self.analyzer.app.processor
+
+        result_scaled = processor.calculate_scaled_positions(showmatrix=True)
+        exporter.data_dump_with_prefix(
+            prefix,
+            self.analyzer.app.data,
+            result_scaled['positions'],
+            sup="scaled",
+        )
+
+        # Save figures
+        if result_scaled.get('pairwise_figure'):
+            fig_pair = os.path.join(
+                os.path.dirname(prefix),
+                f"{os.path.basename(prefix)}_pair_scaled.png"
+            )
+            result_scaled['pairwise_figure'].savefig(
+                fig_pair, dpi=FIGDPI, bbox_inches='tight'
+            )
+            logger.info("Pairwise figure saved to %s", fig_pair)
+
+        if result_scaled.get('cross_figure'):
+            fig_cross = os.path.join(
+                os.path.dirname(prefix),
+                f"{os.path.basename(prefix)}_cross_scaled.png"
+            )
+            result_scaled['cross_figure'].savefig(
+                fig_cross, dpi=FIGDPI, bbox_inches='tight'
+            )
+            logger.info("Cross figure saved to %s", fig_cross)
+
+        # Export scaling factors if available
+        scales = result_scaled.get('scales') or {}
+        pair_scales = scales.get('pair')
+        cross_scales = scales.get('cross')
+
+        if pair_scales:
+            scale_path = os.path.join(
+                os.path.dirname(prefix),
+                f"{os.path.basename(prefix)}_pair_scaled_scales.dat"
+            )
+            with open(scale_path, 'w') as fp:
+                fp.write("kx ky dx dy\n")
+                fp.write(
+                    f"{pair_scales.get('kx', 0):.6f} "
+                    f"{pair_scales.get('ky', 0):.6f} "
+                    f"{pair_scales.get('dx', 0):.6f} "
+                    f"{pair_scales.get('dy', 0):.6f}\n"
+                )
+            logger.info("Pairwise scaled scales saved to %s", scale_path)
+
+        if cross_scales:
+            scale_path = os.path.join(
+                os.path.dirname(prefix),
+                f"{os.path.basename(prefix)}_cross_scaled_scales.dat"
+            )
+            with open(scale_path, 'w') as fp:
+                fp.write("kx ky dx dy\n")
+                fp.write(
+                    f"{cross_scales.get('kx', 0):.6f} "
+                    f"{cross_scales.get('ky', 0):.6f} "
+                    f"{cross_scales.get('dx', 0):.6f} "
+                    f"{cross_scales.get('dy', 0):.6f}\n"
+                )
+            logger.info("Cross scaled scales saved to %s", scale_path)
+
+        return True
+
+    def _export_other_figures(self, prefix: str, params: dict,
+                              results: dict) -> bool:
+        """Export analysis figures (blade map, sweeps, etc) and sweeps data.
+
+        Args:
+            prefix: Export filename prefix.
+            params: Parameter dictionary from UI.
+            results: Results dictionary from last analysis.
+
+        Returns:
+            True if any export occurred, False otherwise.
+        """
+        exported = False
+
+        # Blade map and blades-at-center figures
+        figure_exports = [
+            ('showblademap', 'blade_figure', 'blade_map.png'),
+            ('showbladescenter', 'blades_center_figure',
+             'blades_center.png'),
+        ]
+
+        for option_key, result_key, filename in figure_exports:
+            if params.get(option_key) and result_key in results:
+                fig = results.get(result_key)
+                if fig is not None:
+                    fig_path = os.path.join(
+                        os.path.dirname(prefix), filename
+                    )
+                    fig.savefig(fig_path, dpi=FIGDPI, bbox_inches='tight')
+                    logger.info("Figure saved to %s", fig_path)
+                    exported = True
+
+        # Central sweeps: export figure and data when available
+        if params.get('centralsweep'):
+            if ('sweeps_figure' in results and
+                results['sweeps_figure'] is not None):
+                fig_path = os.path.join(
+                    os.path.dirname(prefix), 'central_sweeps.png'
+                )
+                results['sweeps_figure'].savefig(
+                    fig_path, dpi=FIGDPI, bbox_inches='tight'
+                )
+                logger.info("Figure saved to %s", fig_path)
+                exported = True
+
+            sweeps_data = results.get('sweeps_data')
+            if sweeps_data:
+                range_h, range_v, blades_h, blades_v = sweeps_data
+                try:
+                    # blades_h and blades_v are dicts keyed by blade labels
+                    h_arrays = [blades_h.get(k)
+                                for k in ("to", "ti", "bi", "bo")]
+                    v_arrays = [blades_v.get(k)
+                                for k in ("to", "ti", "bi", "bo")]
+
+                    if all(arr is not None for arr in h_arrays):
+                        h_out = os.path.join(
+                            os.path.dirname(prefix),
+                            'central_sweeps_horizontal.dat'
+                        )
+                        h_cols = np.column_stack([range_h, *h_arrays])
+                        np.savetxt(
+                            h_out, h_cols,
+                            header="range_h to ti bi bo",
+                            fmt="%.6f"
+                        )
+                        logger.info("Horizontal sweeps data saved to %s",
+                                    h_out)
+                        exported = True
+
+                    if all(arr is not None for arr in v_arrays):
+                        v_out = os.path.join(
+                            os.path.dirname(prefix),
+                            'central_sweeps_vertical.dat'
+                        )
+                        v_cols = np.column_stack([range_v, *v_arrays])
+                        np.savetxt(
+                            v_out, v_cols,
+                            header="range_v to ti bi bo",
+                            fmt="%.6f"
+                        )
+                        logger.info("Vertical sweeps data saved to %s", v_out)
+                        exported = True
+                except Exception:
+                    logger.exception("Failed to save central sweeps data")
+
+        return exported
 
     @pyqtSlot(str, str)
     def _on_analysis_error(self, title: str, message: str):
@@ -482,6 +721,8 @@ class XBPMMainWindow(QMainWindow):
                 params['beamline'] = beamlines[0]
                 self._preselected_beamline = beamlines[0]
                 self.log_message(f"Auto-selected beamline: {beamlines[0]}")
+                # Update XBPM distance based on auto-selected beamline
+                self._update_xbpmdist_from_beamline(beamlines[0])
             elif len(beamlines) > 1:
                 if not self._prompt_beamline_dialog(beamlines, params):
                     return params
@@ -502,6 +743,8 @@ class XBPMMainWindow(QMainWindow):
             params['beamline'] = selected
             self._preselected_beamline = selected
             self.log_message(f"Selected beamline: {selected}")
+            # Update XBPM distance based on user-selected beamline
+            self._update_xbpmdist_from_beamline(selected)
             return True
 
         QMessageBox.warning(self, "No Selection", "Please select a beamline.")
@@ -688,11 +931,7 @@ class XBPMMainWindow(QMainWindow):
                 figsize_h = canvas_height / dpi
                 canvas.figure.set_size_inches(figsize_w, figsize_h)
 
-            # Use subplots_adjust to ensure content fits within figure bounds
-            canvas.figure.subplots_adjust(
-                left=0.1, right=0.95, top=0.95, bottom=0.1,
-                wspace=0.3, hspace=0.3
-            )
+            # Respect original figure layout (tight/constrained) without overriding
 
             # Redraw
             canvas.canvas.draw_idle()
@@ -710,8 +949,82 @@ class XBPMMainWindow(QMainWindow):
                 # Log fallback failure for debugging
                 logger.exception("Fallback figure embed failed")
 
+    def _show_detail_figures(self, results: dict):
+        """Display detailed XBPM position figures in popup windows.
+
+        Opens auxiliary windows for pairwise and cross-blade calculations
+        if available.
+        """
+        figures_to_show = [
+            ('xbpm_raw_pairwise_figure', 'XBPM Raw - Pairwise Positions'),
+            ('xbpm_raw_cross_figure', 'XBPM Raw - Cross-blades Positions'),
+            ('xbpm_scaled_pairwise_figure',
+             'XBPM Scaled - Pairwise Positions'),
+            ('xbpm_scaled_cross_figure',
+             'XBPM Scaled - Cross-blades Positions'),
+        ]
+
+        found_any = False
+        for fig_key, title in figures_to_show:
+            if fig_key in results and results[fig_key] is not None:
+                self.log_message(f"Opening detail figure: {title}")
+                self._show_figure_in_window(results[fig_key], title)
+                found_any = True
+            else:
+                logger.debug("Figure not found or None: %s", fig_key)
+
+        if not found_any:
+            logger.debug("No detail figures available in results")
+
+    def _show_figure_in_window(self, fig, title: str):
+        """Display matplotlib figure in a separate popup window.
+
+        Args:
+            fig: Matplotlib figure object.
+            title: Window title.
+        """
+        try:
+            # Create popup window
+            popup = QMainWindow()
+            popup.setWindowTitle(title)
+            popup.resize(1400, 700)  # Wider to maintain aspect ratio
+
+            # Create canvas and embed figure
+            canvas_widget = QWidget()
+            layout = QVBoxLayout(canvas_widget)
+            canvas = MatplotlibCanvas()
+            layout.addWidget(canvas)
+            popup.setCentralWidget(canvas_widget)
+
+            # Embed figure
+            self._embed_figure(canvas, fig)
+
+            # Show window (non-blocking)
+            popup.show()
+            popup.raise_()
+            popup.activateWindow()
+
+            # Keep reference to prevent garbage collection
+            if not hasattr(self, '_detail_windows'):
+                self._detail_windows = []
+            self._detail_windows.append(popup)
+
+            logger.info("Displayed detail figure: %s", title)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception("Failed to show detail figure %s", title)
+            self.log_message(f"Error displaying {title}: {exc}")
+
     def closeEvent(self, event):  # noqa: N802
-        """Clean up worker thread on window close."""
+        """Clean up worker thread and detail windows on close."""
+        # Close all detail windows
+        if hasattr(self, '_detail_windows'):
+            for window in self._detail_windows:
+                try:
+                    window.close()
+                except Exception:  # pragma: no cover
+                    pass
+
+        # Clean up worker thread
         if hasattr(self, 'worker_thread'):
             self.worker_thread.quit()
             self.worker_thread.wait()

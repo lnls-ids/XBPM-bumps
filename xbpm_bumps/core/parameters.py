@@ -195,9 +195,12 @@ class ParameterBuilder:
         if len(beamlines) == 1:
             beamline = beamlines[0]
         else:
-            choice = beamline_selector(beamlines) if beamline_selector else None
+            choice = (beamline_selector(beamlines)
+                      if beamline_selector
+                      else None)
             if not choice:
-                print("WARNING: multiple beamlines found; defaulting to first.")
+                print("WARNING: multiple beamlines found;"
+                      " defaulting to first.")
             beamline = choice or beamlines[0]
         if beamline not in Config.BLADEMAP.keys():
             print(f" ERROR: beamline {beamline} not defined in blade maps.")

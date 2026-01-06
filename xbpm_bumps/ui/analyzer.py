@@ -387,8 +387,12 @@ class XBPMAnalyzer(QObject):
 
         # Recreate the sweep visualization
         if range_h is not None and range_v is not None:
-            fig = self._generate_sweep_figure(range_h, range_v, blades_h, blades_v)
+            fig = self._generate_sweep_figure(range_h, range_v,
+                                              blades_h, blades_v)
             results['sweeps_figure'] = fig
+            results['sweeps_data'] = (
+                range_h, range_v, blades_h, blades_v
+            )
 
         # Also store supmat for potential other uses
         supmat = self.app.processor.suppression_matrix()
@@ -466,14 +470,30 @@ class XBPMAnalyzer(QObject):
     def _step_xbpm_raw(self, results: dict):
         """Calculate raw XBPM positions."""
         self.analysisProgress.emit("Calculating raw XBPM positions...")
-        positions = self.app.processor.calculate_raw_positions(
+        result_data = self.app.processor.calculate_raw_positions(
             showmatrix=True
         )
+        # Handle both dict and list returns for backward compatibility
+        if isinstance(result_data, dict):
+            positions = result_data.get('positions', [])
+            pairwise_fig = result_data.get('pairwise_figure')
+            cross_fig = result_data.get('cross_figure')
+        else:
+            positions = result_data
+            pairwise_fig = None
+            cross_fig = None
+
         measured, nominal = self._extract_measured_and_nominal(positions)
         results['positions']['xbpm_raw'] = {
             'measured': measured,
             'nominal': nominal,
         }
+        if pairwise_fig:
+            results['xbpm_raw_pairwise_figure'] = pairwise_fig
+            self.logMessage.emit("Captured raw pairwise figure")
+        if cross_fig:
+            results['xbpm_raw_cross_figure'] = cross_fig
+            self.logMessage.emit("Captured raw cross-blade figure")
 
         if self.app.prm.outputfile:
             self.app.exporter.data_dump(self.app.data, positions, sup="raw")
@@ -481,14 +501,30 @@ class XBPMAnalyzer(QObject):
     def _step_xbpm_scaled(self, results: dict):
         """Calculate scaled XBPM positions."""
         self.analysisProgress.emit("Calculating scaled XBPM positions...")
-        positions = self.app.processor.calculate_scaled_positions(
+        result_data = self.app.processor.calculate_scaled_positions(
             showmatrix=True
         )
+        # Handle both dict and list returns for backward compatibility
+        if isinstance(result_data, dict):
+            positions = result_data.get('positions', [])
+            pairwise_fig = result_data.get('pairwise_figure')
+            cross_fig = result_data.get('cross_figure')
+        else:
+            positions = result_data
+            pairwise_fig = None
+            cross_fig = None
+
         measured, nominal = self._extract_measured_and_nominal(positions)
         results['positions']['xbpm_scaled'] = {
             'measured': measured,
             'nominal': nominal,
         }
+        if pairwise_fig:
+            results['xbpm_scaled_pairwise_figure'] = pairwise_fig
+            self.logMessage.emit("Captured scaled pairwise figure")
+        if cross_fig:
+            results['xbpm_scaled_cross_figure'] = cross_fig
+            self.logMessage.emit("Captured scaled cross-blade figure")
 
         if self.app.prm.outputfile:
             self.app.exporter.data_dump(self.app.data, positions, sup="scaled")
@@ -515,7 +551,8 @@ class XBPMAnalyzer(QObject):
 
             pos_to_ti_v = (to_ch + ti_ch)
             pos_bi_bo_v = (bo_ch + bi_ch)
-            pos_ch_v = (pos_to_ti_v - pos_bi_bo_v) / (pos_to_ti_v + pos_bi_bo_v)
+            pos_ch_v = ((pos_to_ti_v - pos_bi_bo_v) /
+                        (pos_to_ti_v + pos_bi_bo_v))
             fit_ch_v = np.polyfit(range_h, pos_ch_v, deg=1)
 
         pos_cv_h = None
@@ -528,7 +565,8 @@ class XBPMAnalyzer(QObject):
 
             pos_to_bo_h = (to_cv + bo_cv)
             pos_ti_bi_h = (ti_cv + bi_cv)
-            pos_cv_h = (pos_to_bo_h - pos_ti_bi_h) / (pos_to_bo_h + pos_ti_bi_h)
+            pos_cv_h = ((pos_to_bo_h - pos_ti_bi_h) /
+                        (pos_to_bo_h + pos_ti_bi_h))
             fit_cv_h = np.polyfit(range_v, pos_cv_h, deg=1)
 
         # Create figure
@@ -540,7 +578,8 @@ class XBPMAnalyzer(QObject):
             axh.plot(range_h * self.app.prm.xbpmdist, hline,
                      '^-', label="H fit")
             axh.plot(range_h * self.app.prm.xbpmdist,
-                    pos_ch_v[:, 0] * self.app.prm.xbpmdist, 'o-', label="H sweep")
+                    pos_ch_v[:, 0] * self.app.prm.xbpmdist, 'o-',
+                    label="H sweep")
             axh.set_xlabel("$x$ [$\\mu$m]")
             axh.set_ylabel("$y$ [$\\mu$m]")
             axh.set_title("Central Horizontal Sweeps")
@@ -577,7 +616,8 @@ class XBPMAnalyzer(QObject):
         import numpy as np
 
         # Ensure we have sweep data
-        if self.app.processor.range_h is None or self.app.processor.range_v is None:
+        if (self.app.processor.range_h is None or
+            self.app.processor.range_v is None):
             self.app.processor.analyze_central_sweeps(show=False)
 
         blades_h = self.app.processor.blades_h
