@@ -52,7 +52,7 @@ class ParameterPanel(QWidget):
         self.workdir_edit.setPlaceholderText(
             "Select working directory or data file..."
         )
-        self.workdir_edit.textChanged.connect(self.parametersChanged.emit)
+        self.workdir_edit.textChanged.connect(self._on_workdir_changed)
 
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self._browse_workdir)
@@ -158,6 +158,10 @@ class ParameterPanel(QWidget):
 
         if path:
             self.workdir_edit.setText(path)
+
+    def _on_workdir_changed(self, text: str):
+        """Emit parametersChanged only when text actually changes."""
+        self.parametersChanged.emit()
 
     def get_parameters(self) -> dict:
         """Extract current parameter values as a dictionary.

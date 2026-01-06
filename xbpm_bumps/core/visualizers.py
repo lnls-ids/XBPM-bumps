@@ -28,7 +28,7 @@ class BladeMapVisualizer:
         self.data = data
         self.prm = prm
 
-    def show(self) -> None:
+    def show(self):
         """Display blade intensity maps for all four blades.
 
         Creates a 2x2 subplot figure showing heatmaps for:
@@ -38,10 +38,13 @@ class BladeMapVisualizer:
         Arranges blades in quadrants:
         [TI  TO]
         [BI  BO]
+
+        Returns:
+            matplotlib.figure.Figure: The generated figure.
         """
         # Import here to avoid circular dependency
         from .processors import XBPMProcessor
-        
+
         # Create temporary processor to parse blade data
         processor = XBPMProcessor(self.data, self.prm)
         blades, stddevs = processor.data_parse()
@@ -76,6 +79,8 @@ class BladeMapVisualizer:
             outfile = f"blade_map_{self.prm.beamline}.png"
             fig.savefig(outfile, dpi=FIGDPI)
             print(f" Figure of blades' map saved to file {outfile}.\n")
+
+        return fig
 
 
 class PositionVisualizer:

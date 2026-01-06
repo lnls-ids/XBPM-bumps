@@ -88,13 +88,22 @@ class ParameterBuilder:
         )
         return self.prm
 
-    def enrich_from_data(self, rawdata: list) -> Prm:
+    def enrich_from_data(
+        self,
+        rawdata: list,
+        selected_beamline: Optional[str] = None,
+        beamline_selector=None,
+    ) -> Prm:
         """Enrich Prm with other data-derived values.
 
         Adds beamline-specific parameters and infers grid step if needed.
 
         Args:
-            rawdata: Raw data list from measurements.
+                rawdata: Raw data list from measurements.
+                selected_beamline: Optional pre-selected beamline to skip
+                    selection dialog.
+                beamline_selector: Optional callback to choose a beamline when
+                    multiple are found (UI dialog in GUI mode).
 
         Returns:
             prm: Enriched Prm instance.
@@ -105,7 +114,9 @@ class ParameterBuilder:
             self.prm = Prm()
 
         if not self.prm.beamline:
-            self.prm.beamline = self._identify_beamline()
+            self.prm.beamline = selected_beamline or self._identify_beamline(
+                beamline_selector
+            )
 
         self._add_beamline_parameters()
         return self.prm
@@ -175,33 +186,19 @@ class ParameterBuilder:
 
         return parser.parse_args(argv)
 
-    def _identify_beamline(self) -> str:
-        """Identify and select beamline from raw data."""
-        beamlines = sorted(list(set([
-            dic for dt in self.rawdata for dic in dt[0]
-            ])))
+    def _identify_beamline(self, beamline_selector=None) -> str:
+        """Identify and select beamline from raw data without terminal input."""
+        beamlines = self._extract_beamlines()
+        if not beamlines:
+            raise ValueError("No beamlines detected in data.")
 
-        if len(beamlines) > 1:
-            print("\nWARNING: found these beamlines: " +
-                  ", ".join(beamlines))
-            print(" Which one should I work on?")
-            for ii, bl in enumerate(beamlines):
-                print(f" {ii + 1} - {bl}")
-
-            opt = None
-            while opt is None:
-                try:
-                    opt = int(input(" Pick your option: "))
-                    if opt not in list(range(1, 1 + len(beamlines))):
-                        opt = None
-                        raise Exception
-                except Exception:
-                    print(' Invalid option.')
-                    continue
+        if len(beamlines) == 1:
+            beamline = beamlines[0]
         else:
-            opt = 1
-
-        beamline = beamlines[opt - 1]
+            choice = beamline_selector(beamlines) if beamline_selector else None
+            if not choice:
+                print("WARNING: multiple beamlines found; defaulting to first.")
+            beamline = choice or beamlines[0]
         if beamline not in Config.BLADEMAP.keys():
             print(f" ERROR: beamline {beamline} not defined in blade maps.")
             print(" Defined blade maps are:"
@@ -211,12 +208,37 @@ class ParameterBuilder:
 
         return beamline
 
+    def _extract_beamlines(self) -> list:
+        """Extract unique beamlines from raw data headers."""
+        try:
+            beamlines = set()
+            for record in self.rawdata or []:
+                if not (isinstance(record, (list, tuple)) and len(record) > 0):
+                    continue
+
+                header = record[0]
+
+                if isinstance(header, dict):
+                    # Beamlines are dict keys (e.g., 'MNC1', 'MNC2', 'CAT')
+                    for key in header.keys():
+                        if isinstance(key, str):
+                            beamlines.add(key)
+                elif isinstance(header, (list, tuple)):
+                    for item in header:
+                        if isinstance(item, str):
+                            beamlines.add(item)
+            return list(beamlines)
+        except Exception:
+            return []
+
     def _add_beamline_parameters(self) -> None:
         """Add beamline-specific parameters to prm."""
         self.prm.current = self.rawdata[0][2]["current"]
 
         try:
-            self.prm.phaseorgap = self.rawdata[0][1][self.prm.beamline[:3].lower()]
+            self.prm.phaseorgap = self.rawdata[0][1][
+                self.prm.beamline[:3].lower()
+                ]
             print(f"### Phase / Gap ({self.prm.beamline})   :\t"
                   f" {self.prm.phaseorgap}")
         except Exception:
@@ -228,8 +250,9 @@ class ParameterBuilder:
 
         if self.prm.xbpmdist is None:
             self.prm.xbpmdist = Config.XBPMDISTS[self.prm.beamline]
-            print(f"\n WARNING: distance from source to {self.prm.beamline}'s XBPM "
-                  f" set to {self.prm.xbpmdist:.3f} m (beamline default).")
+            print("\n WARNING: distance from source to"
+                  f" {self.prm.beamline}'s XBPM set to"
+                  f" {self.prm.xbpmdist:.3f} m (beamline default).")
 
         self.prm.gridstep = self._infer_gridstep()
 
@@ -264,6 +287,6 @@ class ParameterBuilder:
 
     def found_key(self, my_dict: dict, target_value: str) -> str:
         """Find key in dictionary by its value."""
-        return next(key
-                    for key, value in my_dict.items()
-                    if value == target_value)
+        return next(
+            key for key, value in my_dict.items() if value == target_value
+        )

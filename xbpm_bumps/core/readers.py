@@ -3,6 +3,7 @@
 import os
 import re
 import pickle
+import sys
 import numpy as np
 from typing import Optional
 
@@ -36,7 +37,7 @@ class DataReader:
         self.data    = {}
         self.rawdata = None
 
-    def read(self) -> dict:
+    def read(self, beamline_selector=None) -> dict:
         """Read data from working directory or file.
 
         Automatically determines whether to read from a text file or
@@ -46,16 +47,18 @@ class DataReader:
             dict: Parsed measurement data dictionary.
         """
         if os.path.isfile(self.prm.workdir):
-            self._read_from_file()
+            self._read_from_file(beamline_selector)
         else:
-            self._read_from_directory()
+            self._read_from_directory(beamline_selector)
 
         self._print_summary()
         return self.data
 
-    def _read_from_file(self) -> None:
+    def _read_from_file(self, beamline_selector=None) -> None:
         """Read data from a text file with optional header metadata."""
         self.data = {}
+        self.rawdata = []
+        header_meta = {}
 
         with open(self.prm.workdir, 'r') as fp:
             lines = fp.readlines()
@@ -67,6 +70,38 @@ class DataReader:
                     continue
                 self._parse_data_line(line)
 
+        # Capture minimal header info for beamline extraction fallback
+        if self.prm.beamline:
+            header_meta['beamline'] = self.prm.beamline
+        if header_meta:
+            self.rawdata = [(header_meta, self.data)]
+
+        # Handle beamline selection and xbpmdist configuration
+        self._handle_beamline_selection_file(beamline_selector)
+        self._configure_xbpmdist()
+        self._infer_gridstep()
+
+    def _handle_beamline_selection_file(self, beamline_selector) -> None:
+        """Handle beamline selection logic for file-based input."""
+        # If beamline still unknown, try selector to avoid terminal prompt
+        if beamline_selector and not self.prm.beamline:
+            beamlines = self._extract_beamlines_from_header()
+            if not beamlines:
+                beamlines = self._extract_beamlines_fallback(self.rawdata)
+
+            if len(beamlines) == 1:
+                chosen = beamlines[0]
+                self.prm.beamline = chosen
+                self.builder.prm.beamline = chosen
+            elif beamlines:
+                selected = beamline_selector(beamlines)
+                # If user cancels, pick first to avoid terminal prompt
+                chosen = selected or beamlines[0]
+                self.prm.beamline = chosen
+                self.builder.prm.beamline = chosen
+
+    def _configure_xbpmdist(self) -> None:
+        """Configure XBPM distance from source."""
         if self.prm.xbpmdist is None:
             try:
                 self.prm.xbpmdist = Config.XBPMDISTS[self.prm.beamline]
@@ -75,13 +110,83 @@ class DataReader:
             print("\n WARNING: distance from source to XBPM not provided."
                   f" Using default value: {self.prm.xbpmdist} m")
 
-        self._infer_gridstep()
-
-    def _read_from_directory(self) -> None:
+    def _read_from_directory(self, beamline_selector=None) -> None:
         """Read data from pickle files in a directory."""
         self.rawdata = self._get_pickle_data()[self.prm.skip:]
-        self.prm = self.builder.enrich_from_data(self.rawdata)
+
+        # If beamline not set, try provided selector to avoid terminal prompt
+        if beamline_selector and not self.prm.beamline:
+            beamlines = self._extract_beamlines(self.rawdata)
+            if not beamlines:
+                beamlines = self._extract_beamlines_fallback(self.rawdata)
+            if len(beamlines) == 1:
+                chosen = beamlines[0]
+                self.prm.beamline = chosen
+                self.builder.prm.beamline = chosen
+            elif beamlines:
+                selected = beamline_selector(beamlines)
+                # If user cancels, pick first to avoid terminal prompt
+                chosen = selected or beamlines[0]
+                self.prm.beamline = chosen
+                self.builder.prm.beamline = chosen
+
+        # Enrich parameters (will skip prompt if beamline already set)
+        self.prm = self.builder.enrich_from_data(
+            self.rawdata,
+            selected_beamline=self.prm.beamline,
+            beamline_selector=beamline_selector,
+        )
         self.data = self._blades_fetch()
+
+    @staticmethod
+    def _extract_beamlines(rawdata):
+        """Extract unique beamlines from raw data list."""
+        try:
+            beamlines = set()
+            for record in rawdata:
+                if not (isinstance(record, (list, tuple)) and len(record) > 0):
+                    continue
+
+                header = record[0]
+
+                if isinstance(header, dict):
+                    # Beamlines are dict keys (e.g., 'MNC1', 'MNC2', 'CAT')
+                    for key in header.keys():
+                        if isinstance(key, str):
+                            beamlines.add(key)
+                elif isinstance(header, (list, tuple)):
+                    for item in header:
+                        if isinstance(item, str):
+                            beamlines.add(item)
+            return list(beamlines)
+        except Exception:
+            return []
+
+    @staticmethod
+    def _extract_beamlines_fallback(rawdata):
+        """Fallback: gather all header keys/values as beamline candidates."""
+        try:
+            beamlines = set()
+            for record in rawdata:
+                if not (isinstance(record, (list, tuple)) and len(record) > 0):
+                    continue
+                header = record[0]
+                if isinstance(header, dict):
+                    # Try to get keys first (primary beamline identifiers)
+                    for key in header.keys():
+                        if isinstance(key, str):
+                            beamlines.add(key)
+                elif isinstance(header, (list, tuple)):
+                    for item in header:
+                        if isinstance(item, str):
+                            beamlines.add(item)
+            return list(beamlines)
+        except Exception:
+            return []
+
+    def _extract_beamlines_from_header(self):
+        """Extract beamline from already parsed header if present."""
+        return [self.prm.beamline] if self.prm.beamline else []
 
     def _get_pickle_data(self) -> list:
         """Open pickle files in directory and extract data.

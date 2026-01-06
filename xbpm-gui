@@ -11,10 +11,10 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("XBPM Analysis")
     app.setOrganizationName("LNLS")
-    
+
     window = XBPMMainWindow()
     window.show()
-    
+
     sys.exit(app.exec_())
 
 

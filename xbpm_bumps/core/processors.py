@@ -1,5 +1,6 @@
 """XBPM and BPM data processors."""
 
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -592,16 +593,20 @@ class BPMProcessor:
         self.prm = prm
 
     def calculate_positions(self):
-        """Calculate and plot XBPM positions derived from BPM data."""
+        """Calculate and plot XBPM positions derived from BPM data.
+
+        Returns:
+            Array of [x, y] coordinates or None if calculation fails.
+        """
         if self.prm.section is None:
             print("### ERROR: no section defined for the beamline in data set."
                   "\n### Cannot proceed with BPM data analysis. Skipping.")
-            return
+            return None
 
         if self.rawdata is None:
             print("### ERROR: no raw BPM data available."
                   "\n### Skipping BPM analysis.")
-            return
+            return None
 
         fig, ax = plt.subplots()
 
@@ -643,6 +648,11 @@ class BPMProcessor:
             fig.savefig(outfile, dpi=FIGDPI)
             print(" Figure of positions calculated by BPM measurements "
                   f"saved to file {outfile}.\n")
+
+        # Return measured and nominal coordinates
+        measured = np.column_stack((xpos, ypos)) if xpos else None
+        nominal = np.column_stack((xnom, ynom)) if xnom else None
+        return measured, nominal
 
     def _sector_index(self) -> int:
         sector = int(self.prm.section.split(':')[1][:2])
