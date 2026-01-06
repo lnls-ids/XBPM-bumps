@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""XBPM Bumps - Command Line Interface.
+
+Extract XBPM's data and calculate the beam position.
+
+This program extract data from pickle files containing the measurements
+of XBPM blades' currents of a few beamlines (CAT, CNB, MNC, MGN) and
+calculates the respective positions based on pairwise and cross-blade
+formulas.
+
+Usage:
+    xbpm-cli [OPTION] [VALUE]
+
+where options are:
+  -h : this help
+
+Input parameters:
+  -w <directory> : the directory with measured data
+  -d <distance>  : distance from source to XBPM (optional; if not given,
+                   the standard ones from Sirius are used)
+  -g <step>      : step between neighbour sites in the grid, default = 4.0
+  -k <number>    : initial data to be skipped, default = 0
+
+Output parameters (information to be shown):
+  -b  : positions calculated from BPM data
+  -c  : show each blade's response at central line sweeps
+  -m  : the blade map (to check blades' positions)
+  -r  : positions calculated from XBPM data without suppression
+  -s  : anaysis of blades' behaviour by sweeping through the center
+        of canvas. Fit lines to data.
+  -x  : positions calculated from XBPM data
+"""
+
+from xbpm_bumps.core.app import XBPMApp
+
+
+def main():
+    """Main entry point for XBPM data analysis."""
+    app = XBPMApp()
+    app.run()
+    print("\n\n Done.")
+
+
+if __name__ == "__main__":
+    main()
