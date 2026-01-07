@@ -709,9 +709,12 @@ class BPMProcessor:
     def _offset_search(self, idx):
         """Extrapolate offsets when reference orbit is missing."""
         nextidx = idx + 1
-        agx    = np.array([dt[2]['agx']           for dt in self.rawdata])
-        orbx   = np.array([dt[2]['orbx'][idx]     for dt in self.rawdata])
-        n_orbx = np.array([dt[2]['orbx'][nextidx] for dt in self.rawdata])
+        agx    = np.array([dt[2]['agx']
+                           for dt in self.rawdata])
+        orbx   = np.array([dt[2]['orbx'][idx]
+                           for dt in self.rawdata])
+        n_orbx = np.array([dt[2]['orbx'][nextidx]
+                           for dt in self.rawdata])
 
         agxmax = np.max(agx)
         agxmin = np.min(agx)
@@ -724,9 +727,12 @@ class BPMProcessor:
         onxmin, onxmax = onx[0], onx[-1]
         offset_x_next = (onxmin * agxmax - onxmax * agxmin) / (agxmax - agxmin)
 
-        agy    = np.array([dt[2]['agy']           for dt in self.rawdata])
-        orby   = np.array([dt[2]['orby'][idx]     for dt in self.rawdata])
-        n_orby = np.array([dt[2]['orby'][nextidx] for dt in self.rawdata])
+        agy    = np.array([dt[2]['agy']
+                           for dt in self.rawdata])
+        orby   = np.array([dt[2]['orby'][idx]
+                           for dt in self.rawdata])
+        n_orby = np.array([dt[2]['orby'][nextidx]
+                           for dt in self.rawdata])
 
         agymax = np.max(agy)
         agymin = np.min(agy)

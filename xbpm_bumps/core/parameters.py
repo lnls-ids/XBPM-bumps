@@ -187,7 +187,11 @@ class ParameterBuilder:
         return parser.parse_args(argv)
 
     def _identify_beamline(self, beamline_selector=None) -> str:
-        """Identify and select beamline from raw data without terminal input."""
+        """Identify and select beamline from raw data.
+
+        Avoids terminal prompts by using an optional selector callback
+        when multiple beamlines are found.
+        """
         beamlines = self._extract_beamlines()
         if not beamlines:
             raise ValueError("No beamlines detected in data.")

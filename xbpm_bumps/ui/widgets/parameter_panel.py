@@ -181,8 +181,8 @@ class ParameterPanel(QWidget):
         if path:
             self.workdir_edit.setText(path)
 
-    def _on_workdir_changed(self, text: str):
-        """Emit parametersChanged only when text actually changes."""
+    def _on_workdir_changed(self, _text: str):
+        """Emit parametersChanged when workdir text updates."""
         self.parametersChanged.emit()
 
     def get_parameters(self) -> dict:
