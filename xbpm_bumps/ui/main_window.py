@@ -73,6 +73,21 @@ class XBPMMainWindow(QMainWindow):
         # Status bar
         self._create_status_bar()
 
+        # Menubar: File
+        file_menu = self.menuBar().addMenu("File")
+        open_action = file_menu.addAction("Open…")
+        open_action.triggered.connect(self._on_open_workdir)
+
+        export_action = file_menu.addAction("Export…")
+        export_action.triggered.connect(self._on_export_clicked)
+
+        export_hdf5_action = file_menu.addAction("Export to HDF5…")
+        export_hdf5_action.triggered.connect(self._on_export_hdf5_clicked)
+
+        file_menu.addSeparator()
+        quit_action = file_menu.addAction("Quit")
+        quit_action.triggered.connect(self.close)
+
         # Menubar: Help
         help_menu = self.menuBar().addMenu("Help")
         help_action = help_menu.addAction("Help…")
@@ -101,22 +116,12 @@ class XBPMMainWindow(QMainWindow):
         self.stop_btn.setMinimumHeight(40)
         self.stop_btn.setEnabled(False)
 
-        self.export_btn = QPushButton("Export…")
-        self.export_btn.setMinimumHeight(40)
-        self.export_btn.clicked.connect(self._on_export_clicked)
-
-        self.help_btn = QPushButton("Help")
-        self.help_btn.setMinimumHeight(40)
-        self.help_btn.clicked.connect(self._on_help_clicked)
-
         self.quit_btn = QPushButton("Quit")
         self.quit_btn.setMinimumHeight(40)
         self.quit_btn.clicked.connect(self.close)
 
         button_layout.addWidget(self.run_btn)
         button_layout.addWidget(self.stop_btn)
-        button_layout.addWidget(self.export_btn)
-        button_layout.addWidget(self.help_btn)
         button_layout.addWidget(self.quit_btn)
         layout.addLayout(button_layout)
 
@@ -425,6 +430,75 @@ class XBPMMainWindow(QMainWindow):
             )
         except Exception as exc:  # pragma: no cover
             self.show_error("Export Failed", str(exc))
+
+    @pyqtSlot()
+    def _on_export_hdf5_clicked(self):
+        """Export full analysis package to an HDF5 file."""
+        try:
+            # Ensure app is initialized and we have results
+            if not hasattr(self, 'analyzer') or not self.analyzer.app:
+                QMessageBox.warning(
+                    self,
+                    "Unavailable",
+                    (
+                        "Run analysis at least once "
+                        "before exporting to HDF5."
+                    ),
+                )
+                return
+
+            default_name = (
+                f"xbpm_{self.analyzer.app.prm.beamline or 'export'}.h5"
+            )
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export to HDF5",
+                default_name,
+                "HDF5 Files (*.h5 *.hdf5);;All Files (*)",
+            )
+            if not path:
+                return
+
+            results = getattr(self, '_last_results', {}) or {}
+
+            # Export using current data and last results
+            from ..core.exporters import Exporter
+            exporter = Exporter(self.analyzer.app.prm)
+            exporter.write_hdf5(path, self.analyzer.app.data, results,
+                                include_figures=True)
+
+            self.log_message(f"HDF5 export written: {path}")
+            QMessageBox.information(
+                self,
+                "Export Complete",
+                "Exported analysis and figures to HDF5.",
+            )
+        except Exception as exc:  # pragma: no cover
+            self.show_error("Export to HDF5 Failed", str(exc))
+
+    @pyqtSlot()
+    def _on_open_workdir(self):
+        """Open dialog to select working directory or data file."""
+        # Prefer directory; fall back to file selection
+        path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Working Directory",
+            os.getcwd(),
+        )
+
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select Data File",
+                os.getcwd(),
+                "Data Files (*.dat *.txt *.h5 *.hdf5);;All Files (*)",
+            )
+
+        if path:
+            # Store workdir in parameter panel and update status bar
+            self.param_panel.set_workdir(path)
+            self.status_bar.showMessage(f"Opened: {path}")
+            self._on_parameters_changed()
 
     @pyqtSlot()
     def _on_help_clicked(self):
@@ -956,7 +1030,8 @@ class XBPMMainWindow(QMainWindow):
                 figsize_h = canvas_height / dpi
                 canvas.figure.set_size_inches(figsize_w, figsize_h)
 
-            # Respect original figure layout (tight/constrained) without overriding
+            # Respect original figure layout (tight/constrained)
+            # without overriding
 
             # Redraw
             canvas.canvas.draw_idle()
@@ -1047,7 +1122,7 @@ class XBPMMainWindow(QMainWindow):
                 try:
                     window.close()
                 except Exception:  # pragma: no cover
-                    pass
+                    logger.exception("Failed to close detail window")
 
         # Clean up worker thread
         if hasattr(self, 'worker_thread'):

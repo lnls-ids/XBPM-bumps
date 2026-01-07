@@ -2,8 +2,7 @@
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QLineEdit, QCheckBox, QPushButton, QFileDialog,
-    QGroupBox, QDoubleSpinBox, QSpinBox
+    QCheckBox, QGroupBox, QDoubleSpinBox, QSpinBox, QPushButton
 )
 from PyQt5.QtCore import pyqtSignal
 
@@ -24,15 +23,14 @@ class ParameterPanel(QWidget):
         """
         super().__init__(parent)
         self._all_checked = False  # Track toggle state
+        self._workdir: str = ""
         self.setup_ui()
 
     def setup_ui(self):
         """Initialize the UI layout and widgets."""
         layout = QVBoxLayout(self)
 
-        # Input files group
-        files_group = self._create_files_group()
-        layout.addWidget(files_group)
+        # Input source selection moved to File menu; no input field here.
 
         # Parameters group
         params_group = self._create_parameters_group()
@@ -44,25 +42,7 @@ class ParameterPanel(QWidget):
 
         layout.addStretch()
 
-    def _create_files_group(self) -> QGroupBox:
-        """Create the file/directory selection group."""
-        group = QGroupBox("Input Data")
-        layout = QHBoxLayout()
-
-        self.workdir_edit = QLineEdit()
-        self.workdir_edit.setPlaceholderText(
-            "Select working directory or data file..."
-        )
-        self.workdir_edit.textChanged.connect(self._on_workdir_changed)
-
-        browse_btn = QPushButton("Browse...")
-        browse_btn.clicked.connect(self._browse_workdir)
-
-        layout.addWidget(self.workdir_edit)
-        layout.addWidget(browse_btn)
-        group.setLayout(layout)
-
-        return group
+    # No files group: selection handled via main menu.
 
     def _create_parameters_group(self) -> QGroupBox:
         """Create the numerical parameters group."""
@@ -160,30 +140,15 @@ class ParameterPanel(QWidget):
         self.xbpm_check.setChecked(self._all_checked)
         self.parametersChanged.emit()
 
-    def _browse_workdir(self):
-        """Open file/directory browser dialog."""
-        # Try directory first, then file
-        path = QFileDialog.getExistingDirectory(
-            self,
-            "Select Working Directory",
-            self.workdir_edit.text() or "."
-        )
+    def set_workdir(self, path: str) -> None:
+        """Set the working directory/file path programmatically.
 
-        if not path:
-            # Try selecting a file instead
-            path, _ = QFileDialog.getOpenFileName(
-                self,
-                "Select Data File",
-                self.workdir_edit.text() or ".",
-                "Data Files (*.dat *.txt);;All Files (*)"
-            )
-
-        if path:
-            self.workdir_edit.setText(path)
-
-    def _on_workdir_changed(self, _text: str):
-        """Emit parametersChanged when workdir text updates."""
-        self.parametersChanged.emit()
+        This replaces the old editable field; triggers parametersChanged.
+        """
+        path = path or ""
+        if path != self._workdir:
+            self._workdir = path
+            self.parametersChanged.emit()
 
     def get_parameters(self) -> dict:
         """Extract current parameter values as a dictionary.
@@ -193,7 +158,7 @@ class ParameterPanel(QWidget):
             ParameterBuilder.from_cli() format.
         """
         params = {
-            'workdir': self.workdir_edit.text(),
+            'workdir': self._workdir,
             'xbpmdist': (
                 self.xbpmdist_spin.value()
                 if self.xbpmdist_spin.value() > 0
@@ -222,7 +187,7 @@ class ParameterPanel(QWidget):
         """
         # Text and numeric parameters
         if 'workdir' in params:
-            self.workdir_edit.setText(params['workdir'])
+            self.set_workdir(params['workdir'])
         if 'xbpmdist' in params and params['xbpmdist'] is not None:
             self.xbpmdist_spin.setValue(params['xbpmdist'])
         if 'gridstep' in params and params['gridstep'] is not None:
