@@ -404,8 +404,10 @@ class Exporter:
     def _write_supmat_dataset(self, analysis, supmat) -> None:
         if supmat is None:
             return
-        analysis.create_dataset('suppression_matrix',
-                                data=np.asarray(supmat))
+        supmat_arr = np.asarray(supmat)
+        analysis.create_dataset('suppression_matrix', data=supmat_arr)
+        analysis.create_dataset('optimized_suppression_matrix',
+                                data=supmat_arr)
 
     def _write_sweeps_group(self, analysis, sweeps) -> None:
         if not sweeps:
