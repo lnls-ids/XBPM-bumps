@@ -381,9 +381,8 @@ class XBPMAnalyzer(QObject):
         self.analysisProgress.emit("Analyzing central sweeps...")
 
         # Analyze and generate figure
-        range_h, range_v, blades_h, blades_v = (
-            self.app.processor.analyze_central_sweeps(show=False)
-        )
+        (range_h, range_v, blades_h, blades_v, pos_h, pos_v,
+         fit_h, fit_v) = self.app.processor.analyze_central_sweeps(show=False)
 
         # Recreate the sweep visualization
         if range_h is not None and range_v is not None:
@@ -391,7 +390,8 @@ class XBPMAnalyzer(QObject):
                                               blades_h, blades_v)
             results['sweeps_figure'] = fig
             results['sweeps_data'] = (
-                range_h, range_v, blades_h, blades_v
+                range_h, range_v, blades_h, blades_v,
+                pos_h, pos_v, fit_h, fit_v
             )
 
         # Also store supmat for potential other uses
@@ -475,14 +475,21 @@ class XBPMAnalyzer(QObject):
         )
         # Handle both dict and list returns for backward compatibility
         if isinstance(result_data, dict):
+            # New format: positions is [pairwise_dict, cross_dict]
             positions = result_data.get('positions', [])
             pairwise_fig = result_data.get('pairwise_figure')
             cross_fig = result_data.get('cross_figure')
+            # Store the full dict including positions list for HDF5 export
+            results['positions_raw_full'] = result_data
         else:
+            # Old format: positions is list [pairwise_dict, cross_dict]
             positions = result_data
             pairwise_fig = None
             cross_fig = None
+            # Wrap in dict format for HDF5 export
+            results['positions_raw_full'] = {'positions': positions}
 
+        # Extract pairwise for backward compatibility display
         measured, nominal = self._extract_measured_and_nominal(positions)
         results['positions']['xbpm_raw'] = {
             'measured': measured,
@@ -506,14 +513,21 @@ class XBPMAnalyzer(QObject):
         )
         # Handle both dict and list returns for backward compatibility
         if isinstance(result_data, dict):
+            # New format: positions is [pairwise_dict, cross_dict]
             positions = result_data.get('positions', [])
             pairwise_fig = result_data.get('pairwise_figure')
             cross_fig = result_data.get('cross_figure')
+            # Store the full dict including positions list for HDF5 export
+            results['positions_scaled_full'] = result_data
         else:
+            # Old format: positions is list [pairwise_dict, cross_dict]
             positions = result_data
             pairwise_fig = None
             cross_fig = None
+            # Wrap in dict format for HDF5 export
+            results['positions_scaled_full'] = {'positions': positions}
 
+        # Extract pairwise for backward compatibility display
         measured, nominal = self._extract_measured_and_nominal(positions)
         results['positions']['xbpm_scaled'] = {
             'measured': measured,

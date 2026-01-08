@@ -54,7 +54,8 @@ class XBPMProcessor:
             show: Whether to display sweep plots.
 
         Returns:
-            Tuple of (range_h, range_v, blades_h, blades_v).
+            Tuple of (range_h, range_v, blades_h, blades_v, pos_h, pos_v)
+            where pos_h and pos_v are the calculated positions.
         """
         keys = np.array(list(self.data.keys()))
         self.range_h = np.unique(keys[:, 0])
@@ -78,7 +79,8 @@ class XBPMProcessor:
         if show:
             self._central_sweeps_show(pos_ch_v, fit_ch_v, pos_cv_h, fit_cv_h)
 
-        return (self.range_h, self.range_v, self.blades_h, self.blades_v)
+        return (self.range_h, self.range_v, self.blades_h, self.blades_v,
+                pos_ch_v, pos_cv_h, fit_ch_v, fit_cv_h)
 
     def _central_sweep_horizontal(self) -> tuple:
         """Extract blade measurements along horizontal center line."""
@@ -126,41 +128,22 @@ class XBPMProcessor:
 
     def _central_sweeps_show(self, pos_ch_v, fit_ch_v, pos_cv_h, fit_cv_h):
         """Plot results from fittings on central sweeps."""
-        fig, (axh, axv) = plt.subplots(1, 2, figsize=(12, 5))
+        from .visualizers import SweepVisualizer
 
-        if fit_ch_v is not None:
-            hline = ((fit_ch_v[0, 0] * self.range_h + fit_ch_v[1, 0])
-                     * self.prm.xbpmdist)
-            axh.plot(self.range_h * self.prm.xbpmdist, hline,
-                     '^-', label="H fit")
-            axh.plot(self.range_h * self.prm.xbpmdist,
-                    pos_ch_v[:, 0] * self.prm.xbpmdist, 'o-', label="H sweep")
-            axh.set_xlabel(u"$x$ [$\\mu$m]")
-            axh.set_ylabel(u"$y$ [$\\mu$m]")
-            axh.set_title("Central Horizontal Sweeps")
-            ylim = (np.max(np.abs(hline + pos_ch_v[:, 0]
-                                  * self.prm.xbpmdist)) * 1.1)
-            axh.set_ylim(-ylim, ylim)
-            axh.grid(True)
-            axh.legend()
+        # Extract fit coefficients if available
+        fit_h = fit_ch_v[:, 0] if fit_ch_v is not None else None
+        fit_v = fit_cv_h[:, 0] if fit_cv_h is not None else None
 
-        if fit_cv_h is not None:
-            vline = ((fit_cv_h[0, 0] * self.range_v + fit_cv_h[1, 0])
-                     * self.prm.xbpmdist)
-            axv.plot(pos_cv_h[:, 0] * self.prm.xbpmdist,
-                     self.range_v * self.prm.xbpmdist,
-                     'o-', label="V sweep")
-            axv.plot(vline, self.range_v * self.prm.xbpmdist,
-                     '^-', label="V fit")
-            axv.set_xlabel(u"$x$ [$\\mu$m]")
-            axv.set_ylabel(u"$y$ [$\\mu$m]")
-            axv.set_title("Central Vertical Sweeps")
-            axv.set_xlim((np.min(self.range_v) * 0.005 + fit_cv_h[1, 0])
-                         * self.prm.xbpmdist,
-                         (np.max(self.range_v) * 0.005 + fit_cv_h[1, 0])
-                         * self.prm.xbpmdist)
-            axv.grid(True)
-            axv.legend()
+        # Extract position values
+        pos_h = pos_ch_v[:, 0] if pos_ch_v is not None else None
+        pos_v = pos_cv_h[:, 0] if pos_cv_h is not None else None
+
+        fig = SweepVisualizer.plot_from_arrays(
+            self.range_h, self.range_v,
+            pos_h, pos_v,
+            fit_h, fit_v,
+            xbpm_dist=self.prm.xbpmdist
+        )
 
         if self.prm.outputfile:
             outfile = f"xbpm_sweeps_{self.prm.beamline}.png"
@@ -169,6 +152,8 @@ class XBPMProcessor:
 
     def show_blades_at_center(self) -> None:
         """Display blade measurements along central sweeping points."""
+        from .visualizers import BladeCurrentVisualizer
+
         # Ensure we have sweep data
         if self.range_h is None or self.range_v is None:
             self.analyze_central_sweeps(show=False)
@@ -179,42 +164,11 @@ class XBPMProcessor:
                   " Skipping central analysis.")
             return
 
-        fig, (axh, axv) = plt.subplots(1, 2, figsize=(10, 5))
-
-        if self.blades_h is not None:
-            for key, blval in self.blades_h.items():
-                val = blval[:, 0]
-                wval = blval[:, 1]
-                weight = 1. / wval if not np.isinf(1. / wval).any else None
-                (acoef, bcoef) = np.polyfit(self.range_h, val, deg=1, w=weight)
-                axh.plot(self.range_h, self.range_h * acoef + bcoef, "o-",
-                         label=f"{key} fit")
-                axh.errorbar(self.range_h, val, wval, fmt='^-', label=key)
-
-        if self.blades_v is not None:
-            for key, blval in self.blades_v.items():
-                val = blval[:, 0]
-                wval = blval[:, 1]
-                weight = 1. / wval if not np.isinf(1. / wval).any else None
-                (acoef, bcoef) = np.polyfit(self.range_v, val, deg=1, w=weight)
-                axv.plot(self.range_v, self.range_v * acoef + bcoef, "o-",
-                         label=f"{key} fit")
-                axv.errorbar(self.range_v, val, wval, fmt='^-', label=key)
-
-        axh.set_title("Horizontal")
-        axv.set_title("Vertical")
-        axh.legend()
-        axv.legend()
-        axh.grid()
-        axv.grid()
-        axh.set_xlabel(u"$x$ $\\mu$rad")
-        axv.set_xlabel(u"$y$ $\\mu$rad")
-
-        ylabel = (u"$I$ [# counts]" if self.prm.beamline[:3]
-                  in ["MGN", "MNC"] else u"$I$ [A]")
-        axh.set_ylabel(ylabel)
-        axv.set_ylabel(ylabel)
-        fig.tight_layout()
+        fig = BladeCurrentVisualizer.plot_from_dicts(
+            self.blades_h, self.blades_v,
+            self.range_h, self.range_v,
+            beamline=self.prm.beamline
+        )
 
         if self.prm.outputfile:
             outfile = f"central_sweep_{self.prm.beamline}.png"

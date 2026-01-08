@@ -42,6 +42,7 @@ class DataReader:
         self.builder = builder or ParameterBuilder(prm)
         self.data    = {}
         self.rawdata = None
+        self._hdf5_path = None
 
     def read(self, beamline_selector=None) -> dict:
         """Read data from working directory or file.
@@ -112,6 +113,9 @@ class DataReader:
             self._infer_gridstep_from_grid(grid_x, grid_y)
             self._fallback_beamline_from_meta(h5)
 
+        # Store HDF5 path for later figure loading
+        self._hdf5_path = self.prm.workdir
+
     def _load_hdf5_parameters(self, h5file):
         """Load parameter attributes from HDF5 into prm."""
         if 'parameters' in h5file:
@@ -127,9 +131,22 @@ class DataReader:
         return None, None
 
     def _load_hdf5_grid(self, h5file, grid_x, grid_y):
-        """Load grid x/y arrays and pair lists from HDF5 if present."""
+        """Extract grid info from /data table or legacy /grid group."""
         pairs = None
         pairs_nom = None
+
+        # New format: extract from /data table
+        data_dset = self._get_data_table(h5file)
+        if (data_dset is not None and hasattr(data_dset, 'dtype') and
+            data_dset.dtype.names):
+            table = np.array(data_dset)
+            grid_x = np.unique(table['x_nom'])
+            grid_y = np.unique(table['y_nom'])
+            pairs_nom = np.column_stack([table['x_nom'], table['y_nom']])
+            self.grid_pairs_nom = pairs_nom
+            return grid_x, grid_y, pairs, pairs_nom
+
+        # Legacy format: read from /grid group
         if 'grid' not in h5file:
             return grid_x, grid_y, pairs, pairs_nom
 
@@ -166,11 +183,67 @@ class DataReader:
         self._populate_data_from_grid(blades, grid_x, grid_y, ny, nx)
 
     def _get_blades_array(self, h5file) -> Optional[np.ndarray]:
-        """Extract and validate blades array from HDF5."""
-        if 'data' not in h5file or 'blades' not in h5file['data']:
+        """Extract and validate blades data from HDF5.
+
+        Handles both old format (data/blades 4D array) and new format
+        (data structured table).
+        """
+        table_dset = self._get_data_table(h5file)
+        if table_dset is not None:
+            # Structured table
+            if hasattr(table_dset, 'dtype') and table_dset.dtype.names:
+                return self._blades_from_table(table_dset)
+            # Legacy 4D array
+            blades = np.array(table_dset)
+            return blades if blades.size else None
+
+        return None
+
+    def _get_data_table(self, h5file):
+        """Locate the raw measurement table.
+
+        Preference order:
+        1) /raw_data/measurements (standard)
+        2) /data (legacy fallback)
+        3) /data/blades (very old)
+        """
+        # Try new standard path first
+        if 'raw_data' in h5file and 'measurements' in h5file['raw_data']:
+            return h5file['raw_data']['measurements']
+
+        # Legacy fallbacks
+        if 'data' in h5file:
+            # If group with blades subdataset
+            if hasattr(h5file['data'], 'keys') and 'blades' in h5file['data']:
+                return h5file['data']['blades']
+            return h5file['data']
+
+        return None
+
+    def _blades_from_table(self, table_dset) -> Optional[np.ndarray]:
+        """Reconstruct blades array from structured table.
+
+        Extracts blade measurements directly into data dict using
+        nominal coords.
+        """
+        table = np.array(table_dset)
+        if not table.size:
             return None
-        blades = np.array(h5file['data']['blades'])
-        return blades if blades.size else None
+
+        # Extract data directly into self.data using nominal coordinates
+        for row in table:
+            x_nom = row['x_nom']
+            y_nom = row['y_nom']
+            blades = np.array([
+                [row['to_mean'], row['to_err']],
+                [row['ti_mean'], row['ti_err']],
+                [row['bi_mean'], row['bi_err']],
+                [row['bo_mean'], row['bo_err']],
+            ])
+            self.data[(x_nom, y_nom)] = blades
+
+        # Return None to skip the array-based processing
+        return None
 
     def _populate_data_from_pairs_nom(
         self, blades: np.ndarray, pairs_nom: np.ndarray, ny: int, nx: int
@@ -485,3 +558,240 @@ class DataReader:
             vv * Config.AMPSUB[un] for vv, un in blade
         ])
         return np.average(vals), np.std(vals)
+
+    def load_figures_from_hdf5(self, hdf5_path: str = None) -> dict:
+        """Load and reconstruct figures from HDF5 file.
+
+        Parameters
+        ----------
+        hdf5_path : str, optional
+            Path to HDF5 file. If None, uses self._hdf5_path.
+
+        Returns:
+            dict: Dictionary with reconstructed figures, or empty dict if
+                  no figures exist in the file.
+        """
+        path = hdf5_path or self._hdf5_path
+        if not path:
+            return {}
+
+        results = {}
+
+        # Map HDF5 figure names to result dictionary keys
+        figure_map = {
+            'blade_map': 'blade_figure',
+            'sweeps': 'sweeps_figure',
+            'blades_center': 'blades_center_figure',
+            'xbpm_raw_positions': 'xbpm_raw_pairwise_figure',
+            'xbpm_scaled_positions': 'xbpm_scaled_pairwise_figure',
+            'bpm_positions': 'bpm_figure',
+            'bpm': 'bpm_figure',
+        }
+
+        # Additional variants for position figures
+        position_variants = [
+            ('xbpm_raw_pairwise', 'xbpm_raw_pairwise_figure'),
+            ('xbpm_raw_cross', 'xbpm_raw_cross_figure'),
+            ('xbpm_scaled_pairwise', 'xbpm_scaled_pairwise_figure'),
+            ('xbpm_scaled_cross', 'xbpm_scaled_cross_figure'),
+        ]
+
+        for hdf5_name, result_key in figure_map.items():
+            try:
+                fig = reconstruct_figure_from_hdf5(path, hdf5_name)
+                if fig is not None:
+                    results[result_key] = fig
+                    logger.info("Loaded figure: %s", hdf5_name)
+            except (ValueError, KeyError) as exc:
+                logger.debug(
+                    "Figure %s not found in HDF5",
+                    hdf5_name,
+                    exc_info=exc,
+                )
+
+        # Try loading position variants
+        for hdf5_name, result_key in position_variants:
+            try:
+                fig = reconstruct_figure_from_hdf5(path, hdf5_name)
+                if fig is not None:
+                    results[result_key] = fig
+                    logger.info("Loaded figure: %s", hdf5_name)
+            except (ValueError, KeyError) as exc:
+                logger.debug(
+                    "Figure %s not found in HDF5",
+                    hdf5_name,
+                    exc_info=exc,
+                )
+
+        return results
+
+
+def reconstruct_figure_from_hdf5(h5_file, figure_name: str):
+    """Reconstruct matplotlib figure from stored HDF5 data.
+
+    Args:
+        h5_file: Open h5py.File object or path to HDF5 file.
+        figure_name: Name of figure to reconstruct. Options:
+            - 'blade_map': Blade intensity heatmaps (2x2 subplots)
+            - 'sweeps': Central horizontal/vertical sweeps
+            - 'blades_center': Blade currents at center
+            - 'xbpm_raw_pairwise': Raw XBPM pairwise position comparison
+            - 'xbpm_raw_cross': Raw XBPM cross-blade position comparison
+            - 'xbpm_scaled_pairwise': Scaled XBPM pairwise position comparison
+            - 'xbpm_scaled_cross': Scaled XBPM cross-blade position comparison
+            - 'bpm_positions': BPM position comparison
+
+            Legacy names (still supported):
+            - 'xbpm_raw_positions': Same as xbpm_raw_pairwise
+            - 'xbpm_scaled_positions': Same as xbpm_scaled_pairwise
+
+    Returns:
+        matplotlib.figure.Figure: Reconstructed figure.
+
+    Example:
+        >>> import h5py
+        >>> with h5py.File('analysis.h5', 'r') as h5:
+        ...     fig = reconstruct_figure_from_hdf5(h5, 'sweeps')
+        ...     fig.savefig('sweeps_reconstructed.png')
+    """
+    try:
+        import h5py
+    except ImportError as exc:
+        raise RuntimeError("h5py required for figure reconstruction") from exc
+
+    # Handle file path or file object
+    if isinstance(h5_file, str):
+        with h5py.File(h5_file, 'r') as h5:
+            return reconstruct_figure_from_hdf5(h5, figure_name)
+
+    if 'analysis' not in h5_file:
+        raise ValueError("No /analysis/ group found in HDF5 file")
+
+    analysis_grp = h5_file['analysis']
+
+    # Dispatch to reconstruction functions that read from /analysis/
+    if figure_name == 'blade_map':
+        return _reconstruct_blade_map(analysis_grp)
+    elif figure_name == 'sweeps':
+        return _reconstruct_sweeps(analysis_grp)
+    elif figure_name == 'blades_center':
+        return _reconstruct_blades_center(analysis_grp)
+    else:
+        # Handle all position figure types
+        # For pairwise/cross/bpm, use figure_name directly as dataset name
+        # For legacy names, map to base types
+        legacy_map = {
+            'xbpm_raw_positions': 'xbpm_raw',
+            'xbpm_scaled_positions': 'xbpm_scaled',
+            'bpm_positions': 'bpm',
+        }
+
+        # If it's a legacy name, use the mapped name, otherwise use
+        # figure_name as-is
+        dataset_name = legacy_map.get(figure_name, figure_name)
+
+        # Validate figure name
+        valid_names = ['xbpm_raw_pairwise', 'xbpm_raw_cross',
+                      'xbpm_scaled_pairwise', 'xbpm_scaled_cross',
+                      'bpm_positions', 'bpm', 'xbpm_raw', 'xbpm_scaled']
+        if dataset_name not in valid_names:
+            available = ['blade_map', 'sweeps', 'blades_center'] + valid_names
+            raise ValueError(
+                f"Unknown figure '{figure_name}'. Available: {available}"
+            )
+
+        return _reconstruct_positions(analysis_grp, dataset_name)
+
+
+def _reconstruct_blade_map(analysis_grp):
+    """Reconstruct blade intensity map from /analysis/blade_map/."""
+    from .visualizers import BladeMapVisualizer
+
+    if 'blade_map' not in analysis_grp:
+        raise ValueError("No blade_map in /analysis/ group")
+
+    return BladeMapVisualizer.plot_from_hdf5(analysis_grp['blade_map'])
+
+
+def _reconstruct_sweeps(analysis_grp):
+    """Reconstruct central sweeps from /analysis/ sweeps group.
+
+    Accepts current name "sweeps" and legacy variants if present.
+    """
+    from .visualizers import SweepVisualizer
+
+    sweeps_grp = (
+        analysis_grp.get('sweeps') or
+        analysis_grp.get('sweep') or
+        analysis_grp.get('central_sweeps')
+    )
+
+    if sweeps_grp is None:
+        raise ValueError("No sweeps in /analysis/ group")
+
+    # Accept legacy dataset names as fallbacks
+    h_data = (
+        sweeps_grp.get('blades_h') or
+        sweeps_grp.get('h_sweep') or
+        sweeps_grp.get('horizontal')
+    ) if sweeps_grp else None
+
+    v_data = (
+        sweeps_grp.get('blades_v') or
+        sweeps_grp.get('v_sweep') or
+        sweeps_grp.get('vertical')
+    ) if sweeps_grp else None
+
+    # Heuristic fallback: pick datasets by their fields if names differ
+    if sweeps_grp is not None:
+        for _, ds in sweeps_grp.items():
+            if h_data is None and 'x_index' in ds.dtype.names:
+                h_data = ds
+            if v_data is None and 'y_index' in ds.dtype.names:
+                v_data = ds
+            if h_data is not None and v_data is not None:
+                break
+
+    # If neither dataset exists, indicate missing data
+    if h_data is None and v_data is None:
+        raise ValueError("No sweeps datasets found in sweeps group")
+
+    return SweepVisualizer.plot_from_hdf5(h_data, v_data)
+
+
+def _reconstruct_blades_center(analysis_grp):
+    """Reconstruct blade currents at center from /analysis/sweeps/."""
+    from .visualizers import BladeCurrentVisualizer
+
+    if 'sweeps' not in analysis_grp:
+        raise ValueError("No sweeps in /analysis/ group")
+
+    sweeps_grp = analysis_grp['sweeps']
+    h_data = sweeps_grp.get('blades_h')
+    v_data = sweeps_grp.get('blades_v')
+
+    return BladeCurrentVisualizer.plot_from_hdf5(h_data, v_data)
+
+
+def _reconstruct_positions(analysis_grp, dataset_name):
+    """Reconstruct position comparison figure from /analysis/positions/.
+
+    Args:
+        analysis_grp: HDF5 /analysis/ group
+        dataset_name: Dataset name in /analysis/positions/
+                     (e.g., 'xbpm_raw_pairwise', 'xbpm_scaled_cross', 'bpm')
+
+    Returns:
+        matplotlib figure with 3 subplots (full grid, ROI, RMS differences)
+    """
+    from .visualizers import PositionVisualizer
+
+    if 'positions' not in analysis_grp:
+        raise ValueError("No positions in /analysis/ group")
+
+    positions_grp = analysis_grp['positions']
+
+    if dataset_name not in positions_grp:
+        raise ValueError(f"No {dataset_name} in /analysis/positions/")
+
+    return PositionVisualizer.plot_from_hdf5(positions_grp[dataset_name])

@@ -46,7 +46,8 @@ class XBPMMainWindow(QMainWindow):
         self.setup_ui()
         self.setup_worker_thread()
         self.setWindowTitle("XBPM Beam Position Analysis")
-        self.resize(1200, 800)
+        # Wider default window to give canvases more horizontal room
+        self.resize(1600, 900)
 
     def setup_ui(self):
         """Initialize the main window layout."""
@@ -67,17 +68,22 @@ class XBPMMainWindow(QMainWindow):
         right_panel = self._create_results_panel()
         splitter.addWidget(right_panel)
 
-        # Set initial splitter sizes (30% controls, 70% results)
-        splitter.setSizes([360, 840])
+        # Set initial splitter sizes (25% controls, 75% results) for
+        # wider canvases
+        splitter.setSizes([400, 1200])
 
         # Status bar
         self._create_status_bar()
 
         # Menubar: File
         file_menu = self.menuBar().addMenu("File")
-        open_action = file_menu.addAction("Open…")
-        open_action.triggered.connect(self._on_open_workdir)
+        open_dir_action = file_menu.addAction("Open Directory…")
+        open_dir_action.triggered.connect(self._on_open_directory)
 
+        open_hdf5_action = file_menu.addAction("Open HDF5 File…")
+        open_hdf5_action.triggered.connect(self._on_open_hdf5)
+
+        file_menu.addSeparator()
         export_action = file_menu.addAction("Export…")
         export_action.triggered.connect(self._on_export_clicked)
 
@@ -146,21 +152,30 @@ class XBPMMainWindow(QMainWindow):
         self.results_tabs.addTab(blade_tab, "Blade Map")
         self.canvases["blade"] = blade_canvas
 
-        sweep_tab, sweep_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(sweep_tab, "Central Sweeps")
-        self.canvases["sweeps"] = sweep_canvas
-
         blades_center_tab, blades_center_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(blades_center_tab, "Blades at Center")
+        self.results_tabs.addTab(blades_center_tab, "Blades at sweeps")
         self.canvases["blades_center"] = blades_center_canvas
 
-        xbpm_raw_tab, xbpm_raw_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(xbpm_raw_tab, "XBPM Raw")
-        self.canvases["xbpm_raw"] = xbpm_raw_canvas
+        # Move the sweeps tab after blades_center
+        sweep_tab, sweep_canvas = self._create_canvas_tab()
+        self.results_tabs.addTab(sweep_tab, "Positions along sweeps")
+        self.canvases["sweeps"] = sweep_canvas
 
-        xbpm_scaled_tab, xbpm_scaled_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(xbpm_scaled_tab, "XBPM Scaled")
-        self.canvases["xbpm_scaled"] = xbpm_scaled_canvas
+        xbpm_raw_pw_tab, xbpm_raw_pw_canvas = self._create_canvas_tab()
+        self.results_tabs.addTab(xbpm_raw_pw_tab, "XBPM Raw Pairwise")
+        self.canvases["xbpm_raw_pairwise"] = xbpm_raw_pw_canvas
+
+        xbpm_scaled_pw_tab, xbpm_scaled_pw_canvas = self._create_canvas_tab()
+        self.results_tabs.addTab(xbpm_scaled_pw_tab, "XBPM Scaled Pairwise")
+        self.canvases["xbpm_scaled_pairwise"] = xbpm_scaled_pw_canvas
+
+        xbpm_raw_cr_tab, xbpm_raw_cr_canvas = self._create_canvas_tab()
+        self.results_tabs.addTab(xbpm_raw_cr_tab, "XBPM Raw Cross")
+        self.canvases["xbpm_raw_cross"] = xbpm_raw_cr_canvas
+
+        xbpm_scaled_cr_tab, xbpm_scaled_cr_canvas = self._create_canvas_tab()
+        self.results_tabs.addTab(xbpm_scaled_cr_tab, "XBPM Scaled Cross")
+        self.canvases["xbpm_scaled_cross"] = xbpm_scaled_cr_canvas
 
         return self.results_tabs
 
@@ -359,7 +374,6 @@ class XBPMMainWindow(QMainWindow):
         self.log_message("=" * 60)
 
         self._update_canvases(results)
-        self._show_detail_figures(results)
 
         # TODO: Populate result tabs with visualization widgets
         # For now, just log what we have
@@ -477,28 +491,136 @@ class XBPMMainWindow(QMainWindow):
             self.show_error("Export to HDF5 Failed", str(exc))
 
     @pyqtSlot()
-    def _on_open_workdir(self):
-        """Open dialog to select working directory or data file."""
-        # Prefer directory; fall back to file selection
+    @pyqtSlot()
+    def _on_open_directory(self):
+        """Open dialog to select working directory with pickle files."""
         path = QFileDialog.getExistingDirectory(
             self,
             "Select Working Directory",
             os.getcwd(),
         )
 
-        if not path:
-            path, _ = QFileDialog.getOpenFileName(
-                self,
-                "Select Data File",
-                os.getcwd(),
-                "Data Files (*.dat *.txt *.h5 *.hdf5);;All Files (*)",
-            )
+        if path:
+            # Store workdir in parameter panel and update status bar
+            self.param_panel.set_workdir(path)
+            self.status_bar.showMessage(f"Opened: {path}")
+            self._on_parameters_changed()
+
+    @pyqtSlot()
+    def _on_open_hdf5(self):
+        """Open dialog to select HDF5 data file."""
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select HDF5 File",
+            os.getcwd(),
+            "HDF5 Files (*.h5 *.hdf5);;All Files (*)",
+        )
 
         if path:
             # Store workdir in parameter panel and update status bar
             self.param_panel.set_workdir(path)
             self.status_bar.showMessage(f"Opened: {path}")
             self._on_parameters_changed()
+
+            # Try to load and display figures from HDF5
+            self._on_load_hdf5_figures(path)
+
+    def _on_load_hdf5_figures(self, hdf5_path: str) -> None:
+        """Load figures from HDF5 file and display them.
+
+        Args:
+            hdf5_path: Path to the HDF5 file.
+        """
+        try:
+            from ..core.readers import DataReader
+            from ..core.parameters import Prm
+
+            prm = Prm(workdir=hdf5_path)
+            reader = DataReader(prm)
+            figures = reader.load_figures_from_hdf5(hdf5_path)
+
+            if not figures:
+                self.log_message("No figures found in HDF5 file")
+                return
+
+            self._display_hdf5_figures(figures)
+
+        except Exception as e:
+            self.log_message(f"Error loading figures from HDF5: {e}")
+
+    def _display_hdf5_figures(self, figures: dict) -> None:
+        """Display loaded HDF5 figures in canvases or separate windows.
+
+        Parameters
+        ----------
+        figures : dict
+            Dictionary of reconstructed figures from HDF5.
+        """
+        # Figures that go in main window canvases
+        inline_specs = [
+            ('blade_figure', 'blade', "Loaded blade map from HDF5"),
+            ('sweeps_figure', 'sweeps',
+             "Loaded sweeps figure from HDF5"),
+            ('blades_center_figure', 'blades_center',
+             "Loaded blades center from HDF5"),
+            ('bpm_figure', 'bpm', "Loaded BPM positions from HDF5"),
+        ]
+
+        # Figures that need separate windows or tabs (position grids)
+        popup_specs = [
+            ('xbpm_raw_pairwise_figure', 'xbpm_raw_pairwise',
+             "XBPM Raw Pairwise"),
+            ('xbpm_raw_cross_figure', 'xbpm_raw_cross', "XBPM Raw Cross"),
+            ('xbpm_scaled_pairwise_figure', 'xbpm_scaled_pairwise',
+             "XBPM Scaled Pairwise"),
+            ('xbpm_scaled_cross_figure', 'xbpm_scaled_cross',
+             "XBPM Scaled Cross"),
+        ]
+
+        # Display inline figures in main window
+        for fig_key, canvas_key, msg in inline_specs:
+            if fig_key in figures:
+                canvas = self.canvases.get(canvas_key)
+                if canvas:
+                    self._embed_figure(canvas, figures[fig_key])
+                    self.log_message(msg)
+
+        # Display position grid figures in tabs
+        for fig_key, canvas_key, title in popup_specs:
+            if fig_key in figures:
+                canvas = self.canvases.get(canvas_key)
+                if canvas:
+                    self._embed_figure(canvas, figures[fig_key])
+                    self.log_message(f"Loaded {title} in tab")
+
+    def _show_figure_window(self, fig, title: str) -> None:
+        """Display matplotlib figure in a separate window.
+
+        Parameters
+        ----------
+        fig : matplotlib.figure.Figure
+            The figure to display.
+        title : str
+            Window title.
+        """
+        try:
+            from matplotlib.backends.backend_qt5agg import (
+                FigureCanvasQTAgg as FigureCanvas
+            )
+            from PyQt5.QtWidgets import QDialog, QVBoxLayout
+
+            dialog = QDialog(self)
+            dialog.setWindowTitle(title)
+            dialog.resize(1400, 600)
+
+            layout = QVBoxLayout()
+            canvas = FigureCanvas(fig)
+            layout.addWidget(canvas)
+            dialog.setLayout(layout)
+
+            dialog.show()
+        except Exception as e:
+            self.log_message(f"Error displaying {title}: {e}")
 
     @pyqtSlot()
     def _on_help_clicked(self):
@@ -912,42 +1034,45 @@ class XBPMMainWindow(QMainWindow):
         positions = (results.get('positions', {})
                      if isinstance(results, dict) else {})
 
-        # XBPM raw positions
-        xbpm_raw_canvas = self.canvases.get("xbpm_raw")
-        xbpm_raw = positions.get('xbpm_raw')
-        if xbpm_raw_canvas is not None and xbpm_raw is not None:
-            self._plot_positions(xbpm_raw_canvas, xbpm_raw,
-                               title="XBPM Raw Positions")
+        def _render_position(canvas_key, figure_key, position_key, title):
+            canvas = self.canvases.get(canvas_key)
+            if canvas is None:
+                return
+            fig = results.get(figure_key)
+            if fig is not None:
+                self._embed_figure(canvas, fig)
+                return
+            pos_data = positions.get(position_key)
+            if pos_data is not None:
+                self._plot_positions(canvas, pos_data, title=title)
 
-        # XBPM scaled positions
-        xbpm_scaled_canvas = self.canvases.get("xbpm_scaled")
-        xbpm_scaled = positions.get('xbpm_scaled')
-        if xbpm_scaled_canvas is not None and xbpm_scaled is not None:
-            self._plot_positions(xbpm_scaled_canvas, xbpm_scaled,
-                               title="XBPM Scaled Positions")
+        def _render_figure(canvas_key, figure_key):
+            canvas = self.canvases.get(canvas_key)
+            fig = results.get(figure_key)
+            if canvas is not None and fig is not None:
+                self._embed_figure(canvas, fig)
 
-        # BPM positions
-        bpm_canvas = self.canvases.get("bpm")
-        bpm_data = positions.get('bpm')
-        if bpm_canvas is not None and bpm_data is not None:
-            self._plot_positions(
-                bpm_canvas, bpm_data, title="BPM Positions"
-            )
+        position_specs = [
+            ("xbpm_raw_pairwise", "xbpm_raw_pairwise_figure", "xbpm_raw",
+             "XBPM Raw Pairwise Positions"),
+            ("xbpm_scaled_pairwise", "xbpm_scaled_pairwise_figure",
+             "xbpm_scaled", "XBPM Scaled Pairwise Positions"),
+            ("bpm", "bpm_figure", "bpm", "BPM Positions"),
+        ]
 
-        # Blade map - embed entire figure with 2x2 subplots
-        blade_canvas = self.canvases.get("blade")
-        if blade_canvas is not None and results.get('blade_figure'):
-            self._embed_figure(blade_canvas, results['blade_figure'])
+        figure_specs = [
+            ("xbpm_raw_cross", "xbpm_raw_cross_figure"),
+            ("xbpm_scaled_cross", "xbpm_scaled_cross_figure"),
+            ("blade", "blade_figure"),
+            ("sweeps", "sweeps_figure"),
+            ("blades_center", "blades_center_figure"),
+        ]
 
-        # Central sweeps - blade current plots
-        sweep_canvas = self.canvases.get("sweeps")
-        if sweep_canvas is not None and results.get('blades_center_figure'):
-            self._embed_figure(sweep_canvas, results['blades_center_figure'])
+        for canvas_key, fig_key, pos_key, title in position_specs:
+            _render_position(canvas_key, fig_key, pos_key, title)
 
-        # Blades at center - position plots
-        blades_center_canvas = self.canvases.get("blades_center")
-        if blades_center_canvas is not None and results.get('sweeps_figure'):
-            self._embed_figure(blades_center_canvas, results['sweeps_figure'])
+        for canvas_key, fig_key in figure_specs:
+            _render_figure(canvas_key, fig_key)
 
     def _plot_positions(self, canvas: MatplotlibCanvas, data, title: str):
         """Plot x/y positions; support optional nominal overlay."""
@@ -1012,9 +1137,27 @@ class XBPMMainWindow(QMainWindow):
                         exc_info=True,
                     )
 
-            # Replace canvas figure references
+            # Recreate canvas and toolbar for the new figure to keep
+            # interactivity working
+            layout = canvas.layout()
+            if canvas.toolbar is not None:
+                layout.removeWidget(canvas.toolbar)
+                canvas.toolbar.setParent(None)
+            if canvas.canvas is not None:
+                layout.removeWidget(canvas.canvas)
+                canvas.canvas.setParent(None)
+
+            from matplotlib.backends.backend_qt5agg import (
+                FigureCanvasQTAgg,
+                NavigationToolbar2QT
+                )
+
             canvas.figure = source_fig
-            canvas.canvas.figure = source_fig
+            canvas.canvas = FigureCanvasQTAgg(canvas.figure)
+            canvas.toolbar = NavigationToolbar2QT(canvas.canvas, canvas)
+
+            layout.addWidget(canvas.toolbar)
+            layout.addWidget(canvas.canvas)
 
             # Set figure DPI to match canvas DPI for proper scaling
             dpi = canvas.canvas.figure.dpi
