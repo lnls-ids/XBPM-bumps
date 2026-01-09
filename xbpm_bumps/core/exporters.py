@@ -840,7 +840,9 @@ class Exporter:
         bpm_stats = (results.get('bpm_stats')
                      if isinstance(results, dict) else None)
 
-        analysis = h5file.create_group('analysis')
+        beamline = getattr(self.prm, 'beamline', None) or 'unknown'
+        analysis_name = f'analysis_{beamline}'
+        analysis = h5file.create_group(analysis_name)
         analysis.attrs['description'] = (
             'Analysis results including positions, matrices, and sweep data'
         )
@@ -1492,16 +1494,24 @@ class Exporter:
                 continue
 
     def _write_figures(self, h5file, results: dict, data: dict) -> None:
-        """Write blade heatmap to /analysis/blade_map/ with metadata.
+        """Write blade heatmap to /analysis_<beamline>/blade_map/ with metadata.
 
         Note: All figure metadata is now stored directly with the data in
-        /analysis/ (positions, sweeps). Only blade_map needs special handling
+        /analysis_<beamline>/ (positions, sweeps). Only blade_map needs special handling
         since it contains processed grid data (expensive to recalculate).
         """
-        # Blade heatmap: store processed grid data in /analysis/blade_map/
+        # Blade heatmap: store processed grid data in /analysis_<beamline>/blade_map/
         if results.get('blade_figure'):
-            analysis = h5file['analysis']
-            self._write_blade_map_data(analysis, data)
+            # Find the analysis group: prefer analysis_<beamline>, fall back to legacy
+            analysis = None
+            for key in h5file.keys():
+                if key.startswith('analysis_'):
+                    analysis = h5file[key]
+                    break
+            if analysis is None and 'analysis' in h5file:
+                analysis = h5file['analysis']
+            if analysis is not None:
+                self._write_blade_map_data(analysis, data)
 
     def _write_blade_map_data(self, analysis_group, data: dict) -> None:
         """Store blade heatmap data in /analysis/blade_map/.

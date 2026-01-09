@@ -1068,6 +1068,18 @@ class DataReader:
         return results
 
 
+def _find_analysis_group(h5_file):
+    """Find analysis group, preferring analysis_<beamline> over legacy /analysis."""
+    # First try to find analysis_<beamline> variants
+    for key in h5_file.keys():
+        if key.startswith('analysis_'):
+            return h5_file[key]
+    # Fall back to legacy /analysis
+    if 'analysis' in h5_file:
+        return h5_file['analysis']
+    return None
+
+
 def reconstruct_figure_from_hdf5(h5_file, figure_name: str):
     """Reconstruct matplotlib figure from stored HDF5 data.
 
@@ -1106,10 +1118,10 @@ def reconstruct_figure_from_hdf5(h5_file, figure_name: str):
         with h5py.File(h5_file, 'r') as h5:
             return reconstruct_figure_from_hdf5(h5, figure_name)
 
-    if 'analysis' not in h5_file:
-        raise ValueError("No /analysis/ group found in HDF5 file")
-
-    analysis_grp = h5_file['analysis']
+    # Try to find analysis group: prefer analysis_<beamline>, fall back to legacy
+    analysis_grp = _find_analysis_group(h5_file)
+    if analysis_grp is None:
+        raise ValueError("No /analysis* group found in HDF5 file")
 
     # Dispatch to reconstruction functions that read from /analysis/
     if figure_name == 'blade_map':
