@@ -563,6 +563,7 @@ class BPMProcessor:
         """Store raw BPM/XBPM dataset and parameters for later processing."""
         self.rawdata = rawdata
         self.prm = prm
+        self.last_stats = None
 
     def calculate_positions(self):
         """Calculate and plot XBPM positions derived from BPM data.
@@ -599,7 +600,8 @@ class BPMProcessor:
             xpos.append(val[0])
             ypos.append(val[1])
 
-        self._std_dev_estimate(xnom, ynom, xpos, ypos)
+        stats = self._std_dev_estimate(xnom, ynom, xpos, ypos)
+        self.last_stats = stats
 
         ax.plot(xpos, np.array(ypos), 'bo', label="measured")
         ax.plot(xnom, ynom, 'r+', label="nominal")
@@ -726,10 +728,14 @@ class BPMProcessor:
         diff_v_max = np.max(diff_v)
         sig2_v = np.sum(diff_v**2) / nfv
 
+        sig_h = np.sqrt(sig2_h)
+        sig_v = np.sqrt(sig2_v)
+        sig_tot = np.sqrt(sig2_h + sig2_v)
+
         print("Sigmas:\n"
-              f"   (all sites)     H = {np.sqrt(sig2_h):.4f}\n"
-              f"   (all sites)     V = {np.sqrt(sig2_v):.4f},\n"
-              f"   (all sites) total = {np.sqrt(sig2_h + sig2_v):.4f}\n"
+              f"   (all sites)     H = {sig_h:.4f}\n"
+              f"   (all sites)     V = {sig_v:.4f},\n"
+              f"   (all sites) total = {sig_tot:.4f}\n"
               "\n  Maximum difference:\n"
               f"   (all sites) H = {diff_h_max:.4f}\n"
               f"   (all sites) V = {diff_v_max:.4f},\n")
@@ -740,7 +746,14 @@ class BPMProcessor:
         if nmax > nfh or nmax > nfv:
             print("\n WARNING: sweeping looks incomplete, no ROI was defined. "
                   " (Maybe just one line swept?)")
-            return
+            return {
+                'sigma_h': sig_h,
+                'sigma_v': sig_v,
+                'sigma_total': sig_tot,
+                'diff_max_h': diff_h_max,
+                'diff_max_v': diff_v_max,
+                'roi_available': False,
+            }
 
         frh, uptoh = int(nsh_x / 2 - 2), int(nsh_x / 2 + 2)
         frv, uptov = int(nsh_y / 2 - 2), int(nsh_y / 2 + 2)
@@ -761,9 +774,31 @@ class BPMProcessor:
         sig2_h_roi = np.sum((np_x_nom_cut.ravel() -
                              np_x_pos_cut.ravel())**2) / nfh
 
+        roi_sig_h = np.sqrt(sig2_h_roi)
+        roi_sig_v = np.sqrt(sig2_v_roi)
+        roi_sig_tot = np.sqrt(sig2_h_roi + sig2_v_roi)
+
         print("  Differences in ROI\n"
               f"   (x in [{np.min(np_x_nom_cut)}, {np.max(np_x_nom_cut)}];"
               f"  y in [{np.min(np_y_nom_cut)}, {np.max(np_y_nom_cut)}])\n"
-              f"       H = {np.sqrt(sig2_h_roi):.4f}\n"
-              f"       V = {np.sqrt(sig2_v_roi):.4f},\n"
-              f"   total = {np.sqrt(sig2_h_roi + sig2_v_roi):.4f}")
+              f"       H = {roi_sig_h:.4f}\n"
+              f"       V = {roi_sig_v:.4f},\n"
+              f"   total = {roi_sig_tot:.4f}")
+
+        return {
+            'sigma_h': sig_h,
+            'sigma_v': sig_v,
+            'sigma_total': sig_tot,
+            'diff_max_h': diff_h_max,
+            'diff_max_v': diff_v_max,
+            'roi_available': True,
+            'roi_sigma_h': roi_sig_h,
+            'roi_sigma_v': roi_sig_v,
+            'roi_sigma_total': roi_sig_tot,
+            'roi_bounds': {
+                'x_min': float(np.min(np_x_nom_cut)),
+                'x_max': float(np.max(np_x_nom_cut)),
+                'y_min': float(np.min(np_y_nom_cut)),
+                'y_max': float(np.max(np_y_nom_cut)),
+            },
+        }

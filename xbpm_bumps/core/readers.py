@@ -43,6 +43,7 @@ class DataReader:
         self.data    = {}
         self.rawdata = None
         self._hdf5_path = None
+        self.analysis_meta = {}
 
     def read(self, beamline_selector=None) -> dict:
         """Read data from working directory or file.
@@ -112,6 +113,7 @@ class DataReader:
             self._load_hdf5_data(h5, grid_x, grid_y, pairs_nom=pairs_nom)
             self._infer_gridstep_from_grid(grid_x, grid_y)
             self._fallback_beamline_from_meta(h5)
+            self._load_hdf5_analysis_meta(h5)
 
         # Store HDF5 path for later figure loading
         self._hdf5_path = self.prm.workdir
@@ -161,6 +163,175 @@ class DataReader:
         self.grid_pairs = pairs
         self.grid_pairs_nom = pairs_nom
         return grid_x, grid_y, pairs, pairs_nom
+
+    def _load_hdf5_analysis_meta(self, h5file):
+        """Load analysis extras (scales, BPM stats) if present."""
+        meta = {}
+        analysis = h5file.get('analysis')
+        if analysis is None:
+            self.analysis_meta = meta
+            return
+
+        # Prefer embedded scale attrs on position datasets; fall back to legacy group
+        scales = self._read_scale_attrs(analysis)
+        if not scales:
+            scales_grp = analysis.get('scales')
+            if scales_grp is not None:
+                scales = self._read_scales_group(scales_grp)
+        if scales:
+            meta['scales'] = scales
+
+        sweeps_meta = self._read_sweeps_meta(analysis)
+        if sweeps_meta:
+            meta['sweeps'] = sweeps_meta
+
+        bpm_grp = analysis.get('bpm_stats')
+        if bpm_grp is not None:
+            stats = {k: v for k, v in bpm_grp.attrs.items()}
+            if 'roi_bounds' in bpm_grp:
+                stats['roi_bounds'] = {
+                    k: v for k, v in bpm_grp['roi_bounds'].attrs.items()
+                }
+            else:
+                # Backward-compatible: bounds as subgroup
+                rb = bpm_grp.get('roi_bounds')
+                if rb is not None:
+                    stats['roi_bounds'] = {k: v for k, v in rb.attrs.items()}
+            meta['bpm_stats'] = stats
+
+        # Fallback: ROI bounds stored as attrs on positions group
+        positions_grp = analysis.get('positions')
+        if positions_grp is not None:
+            try:
+                rb_attrs = {k: v for k, v in positions_grp.attrs.items()
+                            if k in ('x_min', 'x_max', 'y_min', 'y_max', 'roi_bounds_title')}
+                if rb_attrs:
+                    meta.setdefault('bpm_stats', {})['roi_bounds'] = rb_attrs
+            except Exception:
+                logger.debug("Failed to read roi_bounds attrs from positions", exc_info=True)
+
+        self.analysis_meta = meta
+
+    @staticmethod
+    def _read_scales_group(scales_grp):
+        result = {}
+        for scope in ('raw', 'scaled'):
+            sub = scales_grp.get(scope)
+            if sub is None:
+                continue
+            scoped = {}
+            for key in ('pair', 'cross'):
+                child = sub.get(key)
+                if child is None:
+                    continue
+                scoped[key] = {k: child.attrs[k] for k in child.attrs}
+            if scoped:
+                result[scope] = scoped
+        return result
+
+    @staticmethod
+    def _read_scale_attrs(analysis_grp):
+        """Extract scale_* attrs from position datasets, if present."""
+        positions = analysis_grp.get('positions') if analysis_grp else None
+        if positions is None:
+            return {}
+
+        def extract(dset):
+            if dset is None:
+                return None
+            attrs = {}
+            for key in ('scale_kx', 'scale_ky', 'scale_dx', 'scale_dy'):
+                if key in dset.attrs:
+                    attrs[key.replace('scale_', '')] = dset.attrs[key]
+            return attrs or None
+
+        result = {}
+        for scope, p_name, c_name in (
+            ('raw', 'xbpm_raw_pairwise', 'xbpm_raw_cross'),
+            ('scaled', 'xbpm_scaled_pairwise', 'xbpm_scaled_cross'),
+        ):
+            pair = extract(positions.get(p_name)) if p_name in positions else None
+            cross = extract(positions.get(c_name)) if c_name in positions else None
+            scoped = {}
+            if pair:
+                scoped['pair'] = pair
+            if cross:
+                scoped['cross'] = cross
+            if scoped:
+                result[scope] = scoped
+        return result
+
+    @staticmethod
+    def _read_sweeps_meta(analysis_grp):
+        sweeps = analysis_grp.get('sweeps') if analysis_grp else None
+        if sweeps is None:
+            return {}
+
+        def get_fit(ds):
+            if ds is None:
+                return None
+            out = {}
+            for key in ('k', 'delta', 's_k', 's_delta'):
+                if key in ds.attrs:
+                    out[key] = ds.attrs[key]
+            return out or None
+
+        def blade_fits(ds, axis: str):
+            if ds is None:
+                return None
+            try:
+                data = np.array(ds)
+                if data.size == 0:
+                    return None
+
+                # Identify sweep coordinate column
+                coord_col = 'x_index' if axis == 'horizontal' else 'y_index'
+                if coord_col not in data.dtype.names:
+                    return None
+                x = data[coord_col]
+
+                fits = {}
+                for blade in ('to', 'ti', 'bi', 'bo'):
+                    if blade not in data.dtype.names:
+                        continue
+                    y = data[blade]
+                    try:
+                        coef = np.polyfit(x, y, deg=1)
+                        fits[blade] = {
+                            'k': float(coef[0]),
+                            'delta': float(coef[1]),
+                        }
+                    except Exception:
+                        continue
+                return fits or None
+            except Exception:
+                return None
+
+        h_ds = sweeps.get('blades_h')
+        v_ds = sweeps.get('blades_v')
+
+        positions = {}
+        h_fit = get_fit(h_ds)
+        v_fit = get_fit(v_ds)
+        if h_fit:
+            positions['horizontal'] = h_fit
+        if v_fit:
+            positions['vertical'] = v_fit
+
+        blades = {}
+        h_blades = blade_fits(h_ds, 'horizontal')
+        v_blades = blade_fits(v_ds, 'vertical')
+        if h_blades:
+            blades['horizontal'] = h_blades
+        if v_blades:
+            blades['vertical'] = v_blades
+
+        meta = {}
+        if positions:
+            meta['positions'] = positions
+        if blades:
+            meta['blades'] = blades
+        return meta
 
     def _load_hdf5_data(self, h5file, grid_x, grid_y, pairs_nom=None):
         """Load blades dataset and reconstruct data dict.
@@ -571,17 +742,33 @@ class DataReader:
             dict: Dictionary with reconstructed figures, or empty dict if
                   no figures exist in the file.
         """
+        try:
+            import h5py  # type: ignore
+        except Exception as exc:  # pragma: no cover - env dependent
+            raise RuntimeError(
+                "h5py is required to load figures from HDF5 files. Please install it"
+            ) from exc
+
         path = hdf5_path or self._hdf5_path
         if not path:
             return {}
 
         results = {}
 
+        # Load analysis metadata up front (scales, BPM stats, sweeps fits)
+        try:
+            with h5py.File(path, 'r') as h5:
+                self._load_hdf5_analysis_meta(h5)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("Failed to load analysis metadata from HDF5")
+
         # Map HDF5 figure names to result dictionary keys
         figure_map = {
             'blade_map': 'blade_figure',
             'sweeps': 'sweeps_figure',
             'blades_center': 'blades_center_figure',
+            'blades_at_sweeps': 'blades_center_figure',
+            'blades_sweeps': 'blades_center_figure',
             'xbpm_raw_positions': 'xbpm_raw_pairwise_figure',
             'xbpm_scaled_positions': 'xbpm_scaled_pairwise_figure',
             'bpm_positions': 'bpm_figure',

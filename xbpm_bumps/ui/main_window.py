@@ -43,6 +43,8 @@ class XBPMMainWindow(QMainWindow):
         self.canvases = {}
         self._last_workdir = ""
         self._preselected_beamline = None
+        self._last_meta = {}
+        self._last_hdf5_meta = {}
         self.setup_ui()
         self.setup_worker_thread()
         self.setWindowTitle("XBPM Beam Position Analysis")
@@ -68,6 +70,9 @@ class XBPMMainWindow(QMainWindow):
         right_panel = self._create_results_panel()
         splitter.addWidget(right_panel)
 
+        # Refresh analysis info when tabs change
+        self.results_tabs.currentChanged.connect(self._on_tab_changed)
+
         # Set initial splitter sizes (25% controls, 75% results) for
         # wider canvases
         splitter.setSizes([400, 1200])
@@ -80,7 +85,7 @@ class XBPMMainWindow(QMainWindow):
         open_dir_action = file_menu.addAction("Open Directory…")
         open_dir_action.triggered.connect(self._on_open_directory)
 
-        open_hdf5_action = file_menu.addAction("Open HDF5 File…")
+        open_hdf5_action = file_menu.addAction("Import HDF5 File…")
         open_hdf5_action.triggered.connect(self._on_open_hdf5)
 
         file_menu.addSeparator()
@@ -100,7 +105,7 @@ class XBPMMainWindow(QMainWindow):
         help_action.triggered.connect(self._on_help_clicked)
 
     def _create_control_panel(self) -> QWidget:
-        """Create the left control panel with parameters and buttons."""
+        """Create the left control panel with parameters, info, and buttons."""
         panel = QWidget()
         layout = QVBoxLayout(panel)
 
@@ -110,6 +115,15 @@ class XBPMMainWindow(QMainWindow):
             self._on_parameters_changed
         )
         layout.addWidget(self.param_panel)
+
+        # Analysis info box (read-only, compact)
+        self.analysis_info = QTextEdit()
+        self.analysis_info.setReadOnly(True)
+        self.analysis_info.setMinimumHeight(220)
+        self.analysis_info.setPlaceholderText(
+            "Analysis info (scales, sweeps, BPM stats) will appear here."
+        )
+        layout.addWidget(self.analysis_info)
 
         # Control buttons
         button_layout = QHBoxLayout()
@@ -266,17 +280,12 @@ class XBPMMainWindow(QMainWindow):
                     self.log_message(line)
 
     def _update_xbpmdist_from_beamline(self, beamline: str) -> None:
-        """Update the XBPM distance field from Config.XBPMDISTS.
-
-        Args:
-            beamline: Selected beamline code (e.g., 'MNC1').
-        """
+        """Update the XBPM distance field from Config.XBPMDISTS."""
         try:
             if not beamline:
                 return
             dist = Config.XBPMDISTS.get(beamline)
             if dist is not None and hasattr(self, 'param_panel'):
-                # Update UI spinbox to reflect auto value from beamline
                 self.param_panel.xbpmdist_spin.setValue(float(dist))
                 self.log_message(
                     f"XBPM distance set from beamline {beamline}: {dist:.3f} m"
@@ -289,32 +298,22 @@ class XBPMMainWindow(QMainWindow):
         import os
 
         beamlines = []
-        if (os.path.isfile(workdir) and
-            getattr(reader, "rawdata", None)):
-            beamlines = reader._extract_beamlines_fallback(
-                reader.rawdata
-            )
+        if (os.path.isfile(workdir) and getattr(reader, "rawdata", None)):
+            beamlines = reader._extract_beamlines_fallback(reader.rawdata)
         elif data:
             beamlines = reader._extract_beamlines(reader.rawdata)
 
         if len(beamlines) == 1:
             self._preselected_beamline = beamlines[0]
-            self.log_message(
-                f"Auto-selected beamline: {beamlines[0]}"
-            )
-            # Update XBPM distance based on auto-selected beamline
+            self.log_message(f"Auto-selected beamline: {beamlines[0]}")
             self._update_xbpmdist_from_beamline(beamlines[0])
 
     def setup_worker_thread(self):
         """Initialize worker thread for analysis execution."""
-        # Create worker thread
         self.worker_thread = QThread()
-
-        # Create analyzer and move to thread
         self.analyzer = XBPMAnalyzer()
         self.analyzer.moveToThread(self.worker_thread)
 
-        # Connect signals
         self.analysisRequested.connect(self.analyzer.run_analysis)
         self.stop_btn.clicked.connect(self.analyzer.stop_analysis)
 
@@ -324,12 +323,10 @@ class XBPMMainWindow(QMainWindow):
         self.analyzer.analysisError.connect(self._on_analysis_error)
         self.analyzer.logMessage.connect(self.log_message)
 
-        # Beamline selection happens on UI thread
         self.analyzer.beamlineSelectionNeeded.connect(
             self._on_beamline_selection_request
         )
 
-        # Start thread
         self.worker_thread.start()
 
     @pyqtSlot(list)
@@ -351,22 +348,13 @@ class XBPMMainWindow(QMainWindow):
 
     @pyqtSlot(str)
     def _on_analysis_progress(self, message: str):
-        """Handle analysis progress update.
-
-        Args:
-            message: Progress message.
-        """
+        """Handle analysis progress update."""
         self.status_bar.showMessage(message)
         self.log_message(f"[PROGRESS] {message}")
 
     @pyqtSlot(dict)
     def _on_analysis_complete(self, results: dict):
-        """Handle analysis completion.
-
-        Args:
-            results: Dictionary with analysis results.
-        """
-        # Keep last results for potential export
+        """Handle analysis completion."""
         self._last_results = results
         self.set_analysis_running(False)
         self.log_message("=" * 60)
@@ -374,12 +362,8 @@ class XBPMMainWindow(QMainWindow):
         self.log_message("=" * 60)
 
         self._update_canvases(results)
-
-        # TODO: Populate result tabs with visualization widgets
-        # For now, just log what we have
-        if 'positions' in results:
-            for key in results['positions']:
-                self.log_message(f"Generated positions: {key}")
+        self._last_meta = self._collect_meta_from_results(results)
+        self._refresh_analysis_info()
 
         self.status_bar.showMessage("Analysis complete", 5000)
 
@@ -538,12 +522,16 @@ class XBPMMainWindow(QMainWindow):
             prm = Prm(workdir=hdf5_path)
             reader = DataReader(prm)
             figures = reader.load_figures_from_hdf5(hdf5_path)
+            # Preserve analysis metadata (scales, BPM stats, etc.) for reuse
+            self._last_hdf5_meta = getattr(reader, 'analysis_meta', {})
+            self._last_meta = self._last_hdf5_meta
 
             if not figures:
                 self.log_message("No figures found in HDF5 file")
                 return
 
             self._display_hdf5_figures(figures)
+            self._refresh_analysis_info()
 
         except Exception as e:
             self.log_message(f"Error loading figures from HDF5: {e}")
@@ -1073,6 +1061,308 @@ class XBPMMainWindow(QMainWindow):
 
         for canvas_key, fig_key in figure_specs:
             _render_figure(canvas_key, fig_key)
+
+    def _collect_meta_from_results(self, results: dict) -> dict:
+        """Extract analysis metadata from results for UI display."""
+        meta: dict = {}
+        if not isinstance(results, dict):
+            return meta
+
+        def _pick_scales(block):
+            if not isinstance(block, dict):
+                return None
+            return block.get('scales') or None
+
+        scales = {}
+        raw_scales = _pick_scales(results.get('positions_raw_full'))
+        scaled_scales = _pick_scales(results.get('positions_scaled_full'))
+        if raw_scales:
+            scales['raw'] = raw_scales
+        if scaled_scales:
+            scales['scaled'] = scaled_scales
+        if scales:
+            meta['scales'] = scales
+
+        bpm_stats = results.get('bpm_stats')
+        if bpm_stats:
+            meta['bpm_stats'] = bpm_stats
+
+        sweeps_meta = self._extract_sweeps_meta(results.get('sweeps_data'))
+        if sweeps_meta:
+            meta['sweeps'] = sweeps_meta
+
+        return meta
+
+    def _extract_sweeps_meta(self, sweeps_data):
+        """Extract sweep metadata: positions fits and per-blade fits."""
+        if not sweeps_data or len(sweeps_data) < 8:
+            return {}
+
+        try:
+            range_h, range_v, blades_h, blades_v, _pos_h, _pos_v, fit_h, fit_v = sweeps_data
+        except Exception:
+            return {}
+
+        def _parse_fit(fit):
+            try:
+                k_val = float(fit[0][0]) if hasattr(fit, "__len__") else float(fit[0])
+                delta_val = float(fit[1][0]) if hasattr(fit, "__len__") else float(fit[1])
+                return {'k': k_val, 'delta': delta_val}
+            except Exception:
+                return None
+
+        positions = {}
+        h_meta = _parse_fit(fit_h)
+        if h_meta:
+            positions['horizontal'] = h_meta
+        v_meta = _parse_fit(fit_v)
+        if v_meta:
+            positions['vertical'] = v_meta
+
+        def _fit_blades(blades_dict, axis_range):
+            if not isinstance(blades_dict, dict) or axis_range is None:
+                return None
+            fits = {}
+            for blade in ('to', 'ti', 'bi', 'bo'):
+                arr = blades_dict.get(blade)
+                if arr is None:
+                    continue
+                y = arr[:, 0] if hasattr(arr, 'ndim') and arr.ndim == 2 else arr
+                try:
+                    coef = np.polyfit(axis_range, y, deg=1)
+                    fits[blade] = {'k': float(coef[0]), 'delta': float(coef[1])}
+                except Exception:
+                    continue
+            return fits or None
+
+        blades = {}
+        h_blades = _fit_blades(blades_h, range_h)
+        if h_blades:
+            blades['horizontal'] = h_blades
+        v_blades = _fit_blades(blades_v, range_v)
+        if v_blades:
+            blades['vertical'] = v_blades
+
+        meta = {}
+        if positions:
+            meta['positions'] = positions
+        if blades:
+            meta['blades'] = blades
+        return meta
+
+    def _tab_to_section(self, tab_text: str) -> str:
+        text = (tab_text or "").lower()
+        if 'blade map' in text:
+            return 'none'
+        if 'blades at' in text or 'blades at sweeps' in text:
+            return 'blades_sweeps'
+        if 'positions along sweep' in text or 'positions along sweeps' in text:
+            return 'sweep_positions'
+        if 'sweep' in text:
+            return 'sweeps'
+        if 'xbpm' in text:
+            return 'positions'
+        if 'bpm' in text:
+            return 'bpm'
+        return ''
+
+    def _tab_position_filter(self, tab_text: str):
+        """Return (scope, label) filter for XBPM tabs or None."""
+        text = (tab_text or "").lower()
+        scope = None
+        label = None
+
+        if 'raw' in text:
+            scope = 'raw'
+        if 'scaled' in text:
+            scope = 'scaled'
+
+        if 'pair' in text:
+            label = 'pair'
+        if 'cross' in text:
+            label = 'cross'
+
+        if scope or label:
+            return scope, label
+        return None
+
+    def _format_analysis_info(self, meta: dict, active_tab: str) -> str:
+        if not meta:
+            return "No analysis metadata available yet."
+
+        active_section = self._tab_to_section(active_tab)
+        pos_filter = self._tab_position_filter(active_tab)
+        if active_section == 'none':
+            return ""
+
+        sections: dict[str, list[str]] = {}
+
+        # Scales (positions) with split lines
+        scale_lines: list[str] = []
+        scales = meta.get('scales', {}) if isinstance(meta, dict) else {}
+        for scope in ('scaled', 'raw'):
+            scope_block = scales.get(scope)
+            if not isinstance(scope_block, dict):
+                continue
+            for label, coeffs in scope_block.items():
+                if not isinstance(coeffs, dict):
+                    continue
+                if pos_filter:
+                    filt_scope, filt_label = pos_filter
+                    if filt_scope and scope != filt_scope:
+                        continue
+                    if filt_label and label != filt_label:
+                        continue
+                kx = coeffs.get('kx')
+                ky = coeffs.get('ky')
+                dx = coeffs.get('dx')
+                dy = coeffs.get('dy')
+                header = f"  * {scope} {label}:"
+                line1 = []
+                line2 = []
+                if kx is not None:
+                    try:
+                        line1.append(f"kx={float(kx):.4g}")
+                    except Exception:
+                        line1.append(f"kx={kx}")
+                if dx is not None:
+                    try:
+                        line1.append(f"dx={float(dx):.4g}")
+                    except Exception:
+                        line1.append(f"dx={dx}")
+                if ky is not None:
+                    try:
+                        line2.append(f"ky={float(ky):.4g}")
+                    except Exception:
+                        line2.append(f"ky={ky}")
+                if dy is not None:
+                    try:
+                        line2.append(f"dy={float(dy):.4g}")
+                    except Exception:
+                        line2.append(f"dy={dy}")
+
+                lines_to_add = []
+                if line1:
+                    lines_to_add.append("   > " + ", ".join(line1))
+                if line2:
+                    lines_to_add.append("   > " + ", ".join(line2))
+                if lines_to_add:
+                    scale_lines.append(header)
+                    scale_lines.extend(lines_to_add)
+        if scale_lines:
+            sections['positions'] = scale_lines
+
+        sweeps = meta.get('sweeps', {}) if isinstance(meta, dict) else {}
+
+        # Positions along sweeps (global fits)
+        sweeps_pos_lines: list[str] = []
+        positions_meta = sweeps.get('positions', {}) if isinstance(sweeps, dict) else {}
+        for orient, label in (('horizontal', 'H'), ('vertical', 'V')):
+            fit = positions_meta.get(orient)
+            if not isinstance(fit, dict):
+                continue
+            header = f"  * {label}:"
+            line1 = []
+            line2 = []
+            for key, bucket in (('k', line1), ('delta', line1),
+                                ('s_k', line2), ('s_delta', line2)):
+                if key in fit and fit[key] is not None:
+                    try:
+                        bucket.append(f"{key}={float(fit[key]):.4g}")
+                    except Exception:
+                        bucket.append(f"{key}={fit[key]}")
+            lines_to_add = []
+            if line1:
+                lines_to_add.append("   > " + ", ".join(line1))
+            if line2:
+                lines_to_add.append("   > " + ", ".join(line2))
+            if lines_to_add:
+                sweeps_pos_lines.append(header)
+                sweeps_pos_lines.extend(lines_to_add)
+        if sweeps_pos_lines:
+            sections['sweep_positions'] = sweeps_pos_lines
+
+        # Blades-at-sweeps per-blade fits
+        blades_lines: list[str] = []
+        blades_meta = sweeps.get('blades', {}) if isinstance(sweeps, dict) else {}
+        for orient, label in (('horizontal', 'H'), ('vertical', 'V')):
+            bfits = blades_meta.get(orient)
+            if not isinstance(bfits, dict):
+                continue
+            for blade, fit in bfits.items():
+                if not isinstance(fit, dict):
+                    continue
+                header = f"  * {label} {blade}:"
+                parts = []
+                for key in ('k', 'delta'):
+                    if key in fit and fit[key] is not None:
+                        try:
+                            parts.append(f"{key}={float(fit[key]):.4g}")
+                        except Exception:
+                            parts.append(f"{key}={fit[key]}")
+                if parts:
+                    blades_lines.append(header)
+                    blades_lines.append("   > " + ", ".join(parts))
+        if blades_lines:
+            sections['blades_sweeps'] = blades_lines
+
+        # BPM stats
+        bpm_lines: list[str] = []
+        bpm_stats = meta.get('bpm_stats', {}) if isinstance(meta, dict) else {}
+        if isinstance(bpm_stats, dict):
+            for key in ('sigma_h', 'sigma_v', 'sigma_total',
+                        'diff_max_h', 'diff_max_v'):
+                if key in bpm_stats:
+                    try:
+                        bpm_lines.append(f"  {key}={float(bpm_stats[key]):.4g}")
+                    except Exception:
+                        bpm_lines.append(f"  {key}={bpm_stats[key]}")
+        if bpm_lines:
+            sections['bpm'] = bpm_lines
+
+        # Pick only the active section; if none mapped, show all
+        ordered_sections = [active_section] if active_section else list(sections.keys())
+
+        lines: list[str] = []
+        for name in ordered_sections:
+            content = sections.get(name)
+            if not content:
+                continue
+            prefix = ">> " if name == active_section else ""
+            lines.append(f"{prefix}{name.capitalize()}:")
+            lines.extend(content)
+            lines.append("")
+
+        if lines and lines[-1] == "":
+            lines.pop()
+        if lines:
+            return "\n".join(lines)
+
+        if active_section:
+            return "No metadata for this tab."
+        return "No analysis metadata available yet."
+
+    def _refresh_analysis_info(self, tab_index=None):
+        # If UI not fully built yet, skip
+        if not hasattr(self, 'analysis_info') or self.analysis_info is None:
+            return
+
+        meta = self._last_meta or self._last_hdf5_meta or {}
+        try:
+            current_tab = (
+                self.results_tabs.tabText(tab_index)
+                if tab_index is not None else
+                self.results_tabs.tabText(self.results_tabs.currentIndex())
+            )
+        except Exception:
+            current_tab = ""
+        text = self._format_analysis_info(meta, current_tab)
+        self.analysis_info.setText(text)
+
+    @pyqtSlot(int)
+    def _on_tab_changed(self, index: int):
+        """Update analysis info when the active tab changes."""
+        self._refresh_analysis_info(index)
 
     def _plot_positions(self, canvas: MatplotlibCanvas, data, title: str):
         """Plot x/y positions; support optional nominal overlay."""

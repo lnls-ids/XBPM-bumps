@@ -363,10 +363,13 @@ class XBPMAnalyzer(QObject):
         )
         bpm_processor = BPMProcessor(raw, self.app.prm)
         measured, nominal = bpm_processor.calculate_positions()
+        stats = getattr(bpm_processor, 'last_stats', None)
         results['positions']['bpm'] = {
             'measured': measured,
             'nominal': nominal,
         }
+        if stats is not None:
+            results['bpm_stats'] = stats
 
     def _step_blade_map(self, results: dict):
         """Generate blade map."""

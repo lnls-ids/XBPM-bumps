@@ -235,7 +235,7 @@ class Exporter:
     @staticmethod
     def _write_position_table(group, name: str,
                               meas: Optional[np.ndarray],
-                              nom: Optional[np.ndarray]) -> None:
+                              nom: Optional[np.ndarray]):
         """Create position dataset with named fields.
 
         Creates a structured array per position type (xbpm_raw, xbpm_scaled,
@@ -301,11 +301,13 @@ class Exporter:
             dset.attrs['rms_mean'] = float(np.mean(diff_rms))
             dset.attrs['rms_std'] = float(np.std(diff_rms))
             dset.attrs['n_points'] = len(nom_1d)
+            return dset
         except Exception:
             logger.warning(
                 "Failed to build position table for %s", name,
                 exc_info=True,
             )
+        return None
 
     def _write_derived(self, h5file, results: dict) -> None:
         """Write analysis results to HDF5 file."""
@@ -315,6 +317,7 @@ class Exporter:
                   if isinstance(results, dict) else None)
         sweeps = (results.get('sweeps_data')
                   if isinstance(results, dict) else None)
+        bpm_stats = results.get('bpm_stats') if isinstance(results, dict) else None
 
         analysis = h5file.create_group('analysis')
         apos = analysis.create_group('positions')
@@ -326,7 +329,9 @@ class Exporter:
         self._write_bpm_positions(apos, positions)
         self._write_fallback_positions(apos, results, positions,
                                        raw_full, scaled_full)
+        self._attach_roi_bounds_attrs(apos, bpm_stats)
         self._write_supmat_dataset(analysis, supmat)
+        self._write_bpm_stats(analysis, bpm_stats)
         self._write_sweeps_group(analysis, sweeps)
 
     def _write_full_positions(self, apos, raw_full, scaled_full) -> None:
@@ -343,12 +348,15 @@ class Exporter:
                 pairwise_dict
             )
             cross_meas, cross_nom = self._dict_to_arrays(cross_dict)
-            self._write_position_table(
+            scales = raw_full.get('scales') if isinstance(raw_full, dict) else None
+            pair_dset = self._write_position_table(
                 apos, 'xbpm_raw_pairwise', pairwise_meas, pairwise_nom
             )
-            self._write_position_table(
+            cross_dset = self._write_position_table(
                 apos, 'xbpm_raw_cross', cross_meas, cross_nom
             )
+            self._attach_scale_attrs(pair_dset, scales, 'pair')
+            self._attach_scale_attrs(cross_dset, scales, 'cross')
 
     def _write_scaled_full(self, apos, scaled_full) -> None:
         if not (scaled_full and isinstance(scaled_full, dict)):
@@ -361,12 +369,15 @@ class Exporter:
                 pairwise_dict
             )
             cross_meas, cross_nom = self._dict_to_arrays(cross_dict)
-            self._write_position_table(
+            scales = scaled_full.get('scales') if isinstance(scaled_full, dict) else None
+            pair_dset = self._write_position_table(
                 apos, 'xbpm_scaled_pairwise', pairwise_meas, pairwise_nom
             )
-            self._write_position_table(
+            cross_dset = self._write_position_table(
                 apos, 'xbpm_scaled_cross', cross_meas, cross_nom
             )
+            self._attach_scale_attrs(pair_dset, scales, 'pair')
+            self._attach_scale_attrs(cross_dset, scales, 'cross')
 
     def _write_bpm_positions(self, apos, positions) -> None:
         if not (isinstance(positions, dict) and 'bpm' in positions):
@@ -391,12 +402,14 @@ class Exporter:
             cross_meas, cross_nom = self._dict_to_arrays(cross_dict)
             has_scales = 'scales' in results
             pos_type = 'xbpm_scaled' if has_scales else 'xbpm_raw'
-            self._write_position_table(
+            dset_pair = self._write_position_table(
                 apos, f'{pos_type}_pairwise', pairwise_meas, pairwise_nom
             )
-            self._write_position_table(
+            dset_cross = self._write_position_table(
                 apos, f'{pos_type}_cross', cross_meas, cross_nom
             )
+            self._attach_scale_attrs(dset_pair, results.get('scales', {}), 'pair')
+            self._attach_scale_attrs(dset_cross, results.get('scales', {}), 'cross')
             return
         # Standard dict format (old tests)
         self._write_positions(apos, positions)
@@ -408,6 +421,68 @@ class Exporter:
         analysis.create_dataset('suppression_matrix', data=supmat_arr)
         analysis.create_dataset('optimized_suppression_matrix',
                                 data=supmat_arr)
+
+    def _write_scales(self, analysis, raw_full, scaled_full) -> None:
+        """Persist scaling coefficients (pair/cross) for raw and scaled runs."""
+        scales_raw = raw_full.get('scales') if isinstance(raw_full, dict) else None
+        scales_scl = scaled_full.get('scales') if isinstance(scaled_full, dict) else None
+        if not scales_raw and not scales_scl:
+            return
+
+        grp = analysis.create_group('scales')
+        if scales_raw:
+            self._write_scale_group(grp, 'raw', scales_raw)
+        if scales_scl:
+            self._write_scale_group(grp, 'scaled', scales_scl)
+
+    @staticmethod
+    def _write_scale_group(parent, name: str, scales: dict) -> None:
+        sub = parent.create_group(name)
+        for key in ('pair', 'cross'):
+            val = scales.get(key)
+            if not isinstance(val, dict):
+                continue
+            child = sub.create_group(key)
+            for attr in ('kx', 'ky', 'dx', 'dy'):
+                if attr in val and val[attr] is not None:
+                    child.attrs[attr] = float(val[attr])
+
+    @staticmethod
+    def _attach_scale_attrs(dset, scales: dict, key: str) -> None:
+        if dset is None or not isinstance(scales, dict):
+            return
+        vals = scales.get(key)
+        if not isinstance(vals, dict):
+            return
+        for attr in ('kx', 'ky', 'dx', 'dy'):
+            if attr in vals and vals[attr] is not None:
+                dset.attrs[f'scale_{attr}'] = float(vals[attr])
+
+    @staticmethod
+    def _write_bpm_stats(analysis, stats: dict) -> None:
+        if not stats:
+            return
+        grp = analysis.create_group('bpm_stats')
+        for key, val in stats.items():
+            if isinstance(val, dict):
+                sub = grp.create_group(key)
+                for sk, sv in val.items():
+                    sub.attrs[sk] = float(sv)
+            else:
+                grp.attrs[key] = float(val)
+
+    @staticmethod
+    def _attach_roi_bounds_attrs(positions_group, bpm_stats: dict) -> None:
+        """Persist ROI bounds as attributes on /analysis/positions."""
+        if positions_group is None or not bpm_stats:
+            return
+        roi = bpm_stats.get('roi_bounds') if isinstance(bpm_stats, dict) else None
+        if not isinstance(roi, dict):
+            return
+        positions_group.attrs['roi_bounds_title'] = 'ROI bounds'
+        for key in ('x_min', 'x_max', 'y_min', 'y_max'):
+            if key in roi and roi[key] is not None:
+                positions_group.attrs[key] = float(roi[key])
 
     def _write_sweeps_group(self, analysis, sweeps) -> None:
         if not sweeps:
@@ -488,6 +563,10 @@ class Exporter:
             )
 
             dset = group.create_dataset(name, data=struct_data)
+            Exporter._attach_blade_fit_attrs(
+                dset, blade_order, blade_arrays, has_errors,
+                np.asarray(index_range) * xbpmdist
+            )
             Exporter._set_sweep_metadata(dset, name, fit_coef)
         except Exception:
             logger.warning(
@@ -685,6 +764,33 @@ class Exporter:
         elif fit_coef.ndim == 1 and len(fit_coef) == 2:
             dset.attrs['k'] = float(fit_coef[0])
             dset.attrs['delta'] = float(fit_coef[1])
+
+    @staticmethod
+    def _attach_blade_fit_attrs(dset, blade_order, blade_arrays,
+                                has_errors: bool, index_vals: np.ndarray) -> None:
+        """Store per-blade linear fit coefficients (k, delta) as attrs."""
+        if dset is None or blade_arrays is None:
+            return
+
+        for blade, arr in zip(blade_order, blade_arrays, strict=True):
+            try:
+                y = arr[:, 0] if has_errors and arr.ndim == 2 else arr
+                if y is None or len(y) != len(index_vals):
+                    continue
+                if not np.any(np.isfinite(y)) or np.nanstd(y) == 0:
+                    continue
+                weights = None
+                if has_errors and arr.ndim == 2:
+                    err = arr[:, 1]
+                    if np.any(err <= 0) or not np.all(np.isfinite(err)):
+                        err = None
+                    if err is not None:
+                        weights = 1.0 / err
+                coef = np.polyfit(index_vals, y, deg=1, w=weights)
+                dset.attrs[f'k_{blade}'] = float(coef[0])
+                dset.attrs[f'delta_{blade}'] = float(coef[1])
+            except Exception:
+                continue
 
     def _write_figures(self, h5file, results: dict, data: dict) -> None:
         """Write blade heatmap to /analysis/blade_map/ with metadata.

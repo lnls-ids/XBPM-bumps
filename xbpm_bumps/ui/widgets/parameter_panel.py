@@ -2,9 +2,10 @@
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QCheckBox, QGroupBox, QDoubleSpinBox, QSpinBox, QPushButton
+    QCheckBox, QGroupBox, QDoubleSpinBox, QSpinBox, QPushButton, QLabel,
+    QLineEdit
 )
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import pyqtSignal, Qt
 
 
 class ParameterPanel(QWidget):
@@ -29,6 +30,16 @@ class ParameterPanel(QWidget):
     def setup_ui(self):
         """Initialize the UI layout and widgets."""
         layout = QVBoxLayout(self)
+
+        # Current working directory display (read-only)
+        workdir_row = QHBoxLayout()
+        workdir_row.addWidget(QLabel("Working directory:"))
+        self.workdir_field = QLineEdit()
+        self.workdir_field.setReadOnly(True)
+        self.workdir_field.setPlaceholderText("(not set)")
+        self.workdir_field.setMinimumWidth(260)
+        workdir_row.addWidget(self.workdir_field, 1)
+        layout.addLayout(workdir_row)
 
         # Input source selection moved to File menu; no input field here.
 
@@ -148,7 +159,14 @@ class ParameterPanel(QWidget):
         path = path or ""
         if path != self._workdir:
             self._workdir = path
+            self._update_workdir_field(path)
             self.parametersChanged.emit()
+
+    def _update_workdir_field(self, path: str) -> None:
+        """Update read-only workdir display with full path and tooltip."""
+        display = path if path else ""
+        self.workdir_field.setText(display)
+        self.workdir_field.setToolTip(display)
 
     def get_parameters(self) -> dict:
         """Extract current parameter values as a dictionary.

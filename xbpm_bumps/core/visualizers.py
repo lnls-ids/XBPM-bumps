@@ -116,7 +116,8 @@ class BladeMapVisualizer:
         for row in range(2):
             for col in range(2):
                 ax = axes[row][col]
-                ax.imshow(quad[row][col], extent=extent, origin='lower')
+                # Use the same orientation as live plots
+                ax.imshow(quad[row][col], extent=extent, origin='upper')
                 ax.set_xlabel(blade_grp.attrs.get('xlabel', 'x [μrad]'))
                 ax.set_ylabel(blade_grp.attrs.get('ylabel', 'y [μrad]'))
                 ax.set_title(names[row][col])
@@ -607,70 +608,11 @@ class BladeCurrentVisualizer:
     @staticmethod
     def plot_from_dicts(blades_h, blades_v, range_h, range_v,
                         beamline="", figsize=(10, 5)):
-        """Create blade current figure from dictionaries.
-
-        Args:
-            blades_h: Dict of horizontal blade data {blade_name: array[:,2]}
-            blades_v: Dict of vertical blade data {blade_name: array[:,2]}
-            range_h: Horizontal sweep range
-            range_v: Vertical sweep range
-            beamline: Beamline name for ylabel
-            figsize: Figure size tuple
-
-        Returns:
-            matplotlib.figure.Figure
-        """
-        fig, (axh, axv) = plt.subplots(1, 2, figsize=figsize)
-
-        # Horizontal blades
-        if blades_h is not None:
-            for key, blval in blades_h.items():
-                val = blval[:, 0]
-                wval = blval[:, 1]
-                weight = (
-                    1. / wval if not np.isinf(1. / wval).any() else None
-                )
-                (acoef, bcoef) = np.polyfit(range_h, val, deg=1, w=weight)
-                axh.plot(
-                    range_h, range_h * acoef + bcoef, "o-",
-                    label=f"{key} fit"
-                )
-                axh.errorbar(range_h, val, wval, fmt='^-', label=key)
-
-        # Vertical blades
-        if blades_v is not None:
-            for key, blval in blades_v.items():
-                val = blval[:, 0]
-                wval = blval[:, 1]
-                weight = (
-                    1. / wval if not np.isinf(1. / wval).any() else None
-                )
-                (acoef, bcoef) = np.polyfit(range_v, val, deg=1, w=weight)
-                axv.plot(
-                    range_v, range_v * acoef + bcoef, "o-",
-                    label=f"{key} fit"
-                )
-                axv.errorbar(range_v, val, wval, fmt='^-', label=key)
-
-        axh.set_title("Horizontal")
-        axv.set_title("Vertical")
-        axh.legend()
-        axv.legend()
-        axh.grid()
-        axv.grid()
-        axh.set_xlabel(u"$x$ $\\mu$rad")
-        axv.set_xlabel(u"$y$ $\\mu$rad")
-
-        ylabel = (u"$I$ [# counts]" if beamline[:3] in ["MGN", "MNC"]
-                 else u"$I$ [A]")
-        axh.set_ylabel(ylabel)
-        axv.set_ylabel(ylabel)
-
-        fig.suptitle(
-            'Blade Currents at Center', fontsize=12, fontweight='bold'
+        """Create blade current figure from in-memory dicts (live analysis)."""
+        return BladeCurrentVisualizer._plot_blades_common(
+            blades_h, blades_v, range_h, range_v,
+            attrs_h=None, attrs_v=None, beamline=beamline, figsize=figsize,
         )
-        fig.tight_layout()
-        return fig
 
     @staticmethod
     def plot_from_hdf5(h_data, v_data, figsize=(10, 5)):
@@ -684,57 +626,120 @@ class BladeCurrentVisualizer:
         Returns:
             matplotlib.figure.Figure
         """
+        # Convert HDF5 datasets into blade dicts + attrs, then reuse common path
+        blades_h = None
+        blades_v = None
+        attrs_h = None
+        attrs_v = None
+
+        if h_data is not None:
+            attrs_h = dict(h_data.attrs)
+            rng = h_data['x_index'][:]
+            blades_h = {}
+            for blade_name in ['to', 'ti', 'bi', 'bo']:
+                vals = h_data[blade_name][:]
+                err_name = f's_{blade_name}'
+                errs = h_data[err_name][:] if err_name in h_data.dtype.names else None
+                if errs is not None:
+                    blades_h[blade_name] = np.column_stack([vals, errs])
+                else:
+                    blades_h[blade_name] = vals
+            range_h = rng
+        else:
+            range_h = None
+
+        if v_data is not None:
+            attrs_v = dict(v_data.attrs)
+            rng = v_data['y_index'][:]
+            blades_v = {}
+            for blade_name in ['to', 'ti', 'bi', 'bo']:
+                vals = v_data[blade_name][:]
+                err_name = f's_{blade_name}'
+                errs = v_data[err_name][:] if err_name in v_data.dtype.names else None
+                if errs is not None:
+                    blades_v[blade_name] = np.column_stack([vals, errs])
+                else:
+                    blades_v[blade_name] = vals
+            range_v = rng
+        else:
+            range_v = None
+
+        return BladeCurrentVisualizer._plot_blades_common(
+            blades_h, blades_v, range_h, range_v,
+            attrs_h=attrs_h, attrs_v=attrs_v, beamline="", figsize=figsize,
+        )
+
+    @staticmethod
+    def _plot_blades_common(blades_h, blades_v, range_h, range_v,
+                            attrs_h=None, attrs_v=None,
+                            beamline="", figsize=(10, 5)):
+        """Shared plotting path for blade currents (live and HDF5)."""
+        # Keep fit lines consistent (solid) for both live and HDF5 paths
+        fit_style = {"linestyle": "-", "linewidth": 1.4, "alpha": 0.8, "zorder": 5}
+
+        def _plot_side(ax, blades, rng, attrs, marker_map, xlab_default):
+            if blades is None or rng is None:
+                return
+            for blade_name, marker in marker_map:
+                arr = blades.get(blade_name)
+                if arr is None:
+                    continue
+                arr = np.asarray(arr)
+                if arr.ndim == 2 and arr.shape[1] >= 2:
+                    y = arr[:, 0]
+                    yerr = arr[:, 1]
+                else:
+                    y = arr
+                    yerr = None
+
+                if yerr is not None:
+                    ax.errorbar(rng, y, yerr=yerr, fmt=marker, label=blade_name)
+                else:
+                    ax.plot(rng, y, marker, label=blade_name)
+
+                # Fit only if variation exists
+                if np.any(np.isfinite(y)) and np.nanstd(y) > 0 and len(rng) > 1:
+                    try:
+                        k_attr = f'k_{blade_name}'
+                        d_attr = f'delta_{blade_name}'
+                        coef = None
+                        if attrs:
+                            k_val = attrs.get(k_attr)
+                            d_val = attrs.get(d_attr)
+                            if k_val is not None and d_val is not None:
+                                coef = (k_val, d_val)
+
+                        if coef is None:
+                            weights = None
+                            if yerr is not None and np.all(np.isfinite(yerr)) and np.all(yerr > 0):
+                                weights = 1.0 / yerr
+                            coef = np.polyfit(rng, y, deg=1, w=weights)
+
+                        style = dict(fit_style)
+                        ax.plot(rng, coef[0] * rng + coef[1], label=f"{blade_name} fit", **style)
+                    except Exception:
+                        pass
+
+            ax.set_xlabel(xlab_default)
+            ax.set_ylabel('I')
+            ax.grid()
+            ax.legend()
+
         fig, (axh, axv) = plt.subplots(1, 2, figsize=figsize)
 
-        # Horizontal blades
-        if h_data is not None:
-            range_h = h_data['x_index'][:]
-            for blade_name in ['to', 'ti', 'bi', 'bo']:
-                values = h_data[blade_name][:]
-                err_name = f's_{blade_name}'
-                errors = (
-                    h_data[err_name][:]
-                    if err_name in h_data.dtype.names else None
-                )
+        _plot_side(axh, blades_h, range_h, attrs_h,
+                   [('to', 'o-'), ('ti', 's-'), ('bi', 'd-'), ('bo', '^-')],
+                   (attrs_h or {}).get('xlabel_blades', 'x [μrad]'))
+        _plot_side(axv, blades_v, range_v, attrs_v,
+                   [('to', 'o-'), ('ti', 's-'), ('bi', 'd-'), ('bo', 'v-')],
+                   (attrs_v or {}).get('xlabel_blades', 'y [μrad]'))
 
-                if errors is not None:
-                    axh.errorbar(
-                        range_h, values, yerr=errors,
-                        fmt='o-', label=blade_name
-                    )
-                else:
-                    axh.plot(range_h, values, 'o-', label=blade_name)
-
-            axh.set_xlabel(h_data.attrs.get('xlabel_blades', 'x [μrad]'))
-            axh.set_ylabel('I')
-            axh.set_title('Horizontal')
-            axh.legend()
-            axh.grid()
-
-        # Vertical blades
-        if v_data is not None:
-            range_v = v_data['y_index'][:]
-            for blade_name in ['to', 'ti', 'bi', 'bo']:
-                values = v_data[blade_name][:]
-                err_name = f's_{blade_name}'
-                errors = (
-                    v_data[err_name][:]
-                    if err_name in v_data.dtype.names else None
-                )
-
-                if errors is not None:
-                    axv.errorbar(
-                        range_v, values, yerr=errors,
-                        fmt='^-', label=blade_name
-                    )
-                else:
-                    axv.plot(range_v, values, '^-', label=blade_name)
-
-            axv.set_xlabel(v_data.attrs.get('xlabel_blades', 'y [μrad]'))
-            axv.set_ylabel('I')
-            axv.set_title('Vertical')
-            axv.legend()
-            axv.grid()
+        ylabel = (u"$I$ [# counts]" if beamline[:3] in ["MGN", "MNC"]
+                 else u"$I$ [A]")
+        axh.set_ylabel(ylabel)
+        axv.set_ylabel(ylabel)
+        axh.set_title('Horizontal')
+        axv.set_title('Vertical')
 
         fig.suptitle(
             'Blade Currents at Center', fontsize=12, fontweight='bold'
