@@ -47,9 +47,9 @@ class XBPMAnalyzer(QObject):
     @pyqtSlot(dict)
     def load_data_only(self, params: Dict[str, Any]):
         """Load data without running analysis.
-        
+
         This allows exporting raw data to HDF5 without analysis results.
-        
+
         Args:
             params: Parameters dictionary from UI.
         """
@@ -84,7 +84,9 @@ class XBPMAnalyzer(QObject):
                 if self._preselected_beamline and not self.app.prm.beamline:
                     self._set_beamline(self._preselected_beamline)
 
-                self.logMessage.emit("Data loaded successfully (no analysis run)")
+                self.logMessage.emit(
+                    "Data loaded successfully (no analysis run)"
+                    )
 
             finally:
                 sys.stdout = old_stdout

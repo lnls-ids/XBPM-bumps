@@ -434,7 +434,7 @@ class XBPMMainWindow(QMainWindow):
         """Export data to HDF5 file (with or without analysis results)."""
         try:
             # Ensure data is loaded (analysis is optional)
-            if (not hasattr(self, 'analyzer') or not self.analyzer.app 
+            if (not hasattr(self, 'analyzer') or not self.analyzer.app
                 or not hasattr(self.analyzer.app, 'data')):
                 QMessageBox.warning(
                     self,
@@ -501,7 +501,7 @@ class XBPMMainWindow(QMainWindow):
             # Ensure path is set in parameter panel and visible in field
             self.param_panel.set_workdir(path)
             self.status_bar.showMessage(f"Working Directory: {path}")
-            
+
             # Automatically load data (without running analysis)
             self._load_data_from_directory()
 
@@ -891,7 +891,7 @@ class XBPMMainWindow(QMainWindow):
 
     def _load_data_from_directory(self):
         """Load data from the selected directory without running analysis.
-        
+
         This allows users to export raw data to HDF5 without analysis.
         """
         params = self.param_panel.get_parameters()
@@ -900,7 +900,7 @@ class XBPMMainWindow(QMainWindow):
 
         params = self._ensure_beamline(params)
         self.log_message(f"Loading data from: {params['workdir']}")
-        
+
         # Use load_data_only instead of run_analysis
         self.analyzer.load_data_only(params)
 

@@ -170,25 +170,25 @@ class Exporter:
                 "h5py is required for HDF5 export. Please install it"
             ) from exc
 
-        prm_dict = asdict(self.prm)
         grid_x, grid_y = self._build_grid_arrays(data)
         table = self._build_nominal_index_table(data, grid_x, grid_y)
 
         with h5py.File(filepath, 'w') as h5:
-            self._write_meta_and_params(h5, prm_dict)
-            raw_grp = None
+            self._write_meta_and_params(h5)
+            raw_grp = h5.create_group('raw_data')
+
+            # Write raw BPM sweeps data FIRST (organized per beamline)
+            if rawdata:
+                self._write_bpm_data(raw_grp, rawdata)
+
+            # Write blade measurements and parameters per beamline
+            # (can now compute from sweep data for non-analyzed beamlines)
             if table is not None:
-                raw_grp = self._write_data(h5, table)
-            # If no table was written, ensure raw_data group exists so sweeps
-            # have a place to live.
-            if raw_grp is None:
-                raw_grp = h5.create_group('raw_data')
+                self._write_data(raw_grp, table, rawdata)
 
             # Only write analysis if results are provided and non-empty
             if results:
                 self._write_derived(h5, results)
-            if rawdata:
-                self._write_bpm_data(raw_grp, rawdata)
             if include_figures and results:
                 self._write_figures(h5, results, data)
 
@@ -268,42 +268,462 @@ class Exporter:
         table = np.array(rows, dtype=dtype)
         return table
 
-    def _write_data(self, h5file, table: np.ndarray):
-        """Write blade measurements table indexed by nominal positions.
+    @staticmethod
+    def _extract_beamlines_from_rawdata(rawdata: list) -> set:
+        """Extract unique beamline identifiers from raw BPM data.
 
-        Stores dataset as /raw_data/measurements_<beamline> to indicate
-        which beamline the averaging belongs to.
+        Scans rawdata for machine keys (MNC1, MNC2, CAT, etc.) in both
+        metadata and bpm_dict entries.
+
+        Args:
+            rawdata: List of tuples [(metadata, grid_data, bpm_dict), ...].
+
+        Returns:
+            Set of beamline identifiers found in the data.
         """
-        raw_grp = h5file.create_group('raw_data')
-        beamline = getattr(self.prm, 'beamline', None) or 'unknown'
-        raw_grp.create_dataset(f'measurements_{beamline}', data=table)
-        return raw_grp
+        import re
+        beamlines = set()
+        machine_pattern = re.compile(r'^[A-Z]{3,4}[0-9]?$')
 
-    def _write_meta_and_params(self, h5file, prm_dict: dict) -> None:
+        if not rawdata:
+            return beamlines
+
+        for entry in rawdata:
+            if not isinstance(entry, (list, tuple)) or len(entry) < 3:
+                continue
+            metadata, grid_data, bpm_dict = entry[:3]
+
+            # Check metadata for machine keys
+            if isinstance(metadata, dict):
+                for key in metadata.keys():
+                    if machine_pattern.match(str(key)):
+                        beamlines.add(str(key))
+
+            # Check bpm_dict for machine keys
+            if isinstance(bpm_dict, dict):
+                for key in bpm_dict.keys():
+                    if machine_pattern.match(str(key)):
+                        beamlines.add(str(key))
+
+        return beamlines
+
+    @staticmethod
+    def _extract_beamlines_from_hdf5_sweeps(raw_grp) -> set:
+        """Extract beamlines by inspecting sweep_xxxx groups in HDF5."""
+        import re
+        beamlines = set()
+        machine_pattern = re.compile(r'^[A-Z]{3,4}[0-9]?$')
+
+        sweep_keys = [k for k in raw_grp.keys()
+                  if k.startswith('sweep_')]
+        for sweep_key in sweep_keys:
+            sweep_grp = raw_grp[sweep_key]
+            for key in sweep_grp.keys():
+                if machine_pattern.match(str(key)):
+                    beamlines.add(str(key))
+            if beamlines:
+                break  # one sweep is enough to discover beamlines
+        return beamlines
+
+    def _write_data(
+        self, raw_grp, table: np.ndarray, rawdata: list = None
+    ):
+        """Write blade measurements per beamline with separate parameters.
+
+        Creates beamline-specific groups under raw_data with parameters.
+        Computes measurements for all beamlines from sweep data.
+
+        Args:
+            raw_grp: HDF5 raw_data group.
+            table: Blade measurements array (for analyzed beamline only).
+            rawdata: Optional raw data to detect beamlines from.
+        """
+        analyzed_beamline = getattr(self.prm, 'beamline', None) or 'unknown'
+
+        # Detect beamlines from rawdata if available
+        if rawdata:
+            beamlines = self._extract_beamlines_from_rawdata(rawdata)
+            # Extract beamline-specific parameters from rawdata
+            beamline_params = self._extract_beamline_specific_params(rawdata)
+        else:
+            beamlines = set()
+            beamline_params = {}
+
+        # Fallback: inspect written sweep groups to discover beamlines
+        if not beamlines:
+            beamlines = self._extract_beamlines_from_hdf5_sweeps(raw_grp)
+
+        # Ultimate fallback to the analyzed beamline to avoid empty loop
+        if not beamlines:
+            beamlines = {analyzed_beamline}
+
+        # For each detected beamline, create a group with parameters
+        for beamline in sorted(beamlines):
+            beam_grp = raw_grp.create_group(beamline)
+
+            # Write beamline-specific parameters
+            specific_params = beamline_params.get(beamline, {})
+            self._write_beamline_parameters(beam_grp, beamline,
+                                            specific_params)
+
+            # Write measurements for analyzed beamline from table
+            # Or compute from sweep data for other beamlines
+            if beamline == analyzed_beamline and table is not None:
+                beam_grp.create_dataset('measurements', data=table)
+            else:
+                # Compute measurements from sweep data written to HDF5
+                measurements = self._compute_measurements_from_hdf5_sweeps(
+                    raw_grp, beamline
+                )
+                if measurements is not None:
+                    beam_grp.create_dataset('measurements', data=measurements)
+                else:
+                    print(
+                        "Warning: Could not compute measurements for "
+                        f"{beamline} from sweep data"
+                    )
+
+    def _compute_measurements_from_hdf5_sweeps(self, raw_grp, beamline: str):
+        """Compute full measurements table from sweep_xxxx/<beamline> datasets.
+
+        Rebuilds the same structured table used for the analyzed beamline by
+        mapping each sweep to its nominal position (agx/agy) and averaging the
+        blade readings within that sweep.
+        """
+        from .config import Config
+
+        blademap = Config.BLADEMAP.get(beamline)
+        if not blademap:
+            return None
+
+        fields = [
+            ('x_nom', 'f8'), ('y_nom', 'f8'),
+            ('to_mean', 'f8'), ('to_err', 'f8'),
+            ('ti_mean', 'f8'), ('ti_err', 'f8'),
+            ('bi_mean', 'f8'), ('bi_err', 'f8'),
+            ('bo_mean', 'f8'), ('bo_err', 'f8'),
+        ]
+        dtype = np.dtype(fields)
+        rows = []
+
+        sweep_keys = [k for k in raw_grp.keys() if k.startswith('sweep_')]
+        for sweep_key in sweep_keys:
+            sweep_grp = raw_grp[sweep_key]
+            if beamline not in sweep_grp:
+                continue
+
+            blade_data = sweep_grp[beamline][:]
+            to_field = f"{blademap['TO']}_val"
+            ti_field = f"{blademap['TI']}_val"
+            bi_field = f"{blademap['BI']}_val"
+            bo_field = f"{blademap['BO']}_val"
+
+            needed_fields = [to_field, ti_field, bi_field, bo_field]
+            if not all(f in blade_data.dtype.names for f in needed_fields):
+                continue
+
+            # Average within this sweep
+            to_vals = blade_data[to_field]
+            to_mean = np.mean(to_vals)
+            to_err = np.std(to_vals, ddof=1) if len(to_vals) > 1 else 0
+
+            ti_vals = blade_data[ti_field]
+            ti_mean = np.mean(ti_vals)
+            ti_err = np.std(ti_vals, ddof=1) if len(ti_vals) > 1 else 0
+
+            bi_vals = blade_data[bi_field]
+            bi_mean = np.mean(bi_vals)
+            bi_err = np.std(bi_vals, ddof=1) if len(bi_vals) > 1 else 0
+
+            bo_vals = blade_data[bo_field]
+            bo_mean = np.mean(bo_vals)
+            bo_err = np.std(bo_vals, ddof=1) if len(bo_vals) > 1 else 0
+
+            x_nom = float(sweep_grp.attrs.get('agx', np.nan))
+            y_nom = float(sweep_grp.attrs.get('agy', np.nan))
+
+            rows.append((x_nom, y_nom,
+                         to_mean, to_err,
+                         ti_mean, ti_err,
+                         bi_mean, bi_err,
+                         bo_mean, bo_err))
+
+        if not rows:
+            return None
+
+        # Sort rows to match analyzer ordering (y descending, then x ascending)
+        rows = sorted(rows, key=lambda r: (-r[1], r[0]))
+        return np.array(rows, dtype=dtype)
+
+    def _compute_measurements_from_sweeps(self, rawdata: list, beamline: str):
+        """Compute averaged measurements from sweep data for a beamline.
+
+        Handles both structured arrays (real XBPM data with A_val, B_val, etc.)
+        and simple 2D arrays (test data).
+
+        Args:
+            rawdata: List of tuples [(metadata, grid_data, bpm_dict), ...].
+            beamline: Beamline identifier (e.g., 'MNC1', 'MNC2').
+
+        Returns:
+            Structured array with averaged blade measurements, or None.
+        """
+        from .config import Config
+
+        if not rawdata:
+            print(f"  Debug: No rawdata for {beamline}")
+            return None
+
+        blademap = Config.BLADEMAP.get(beamline)
+        if not blademap:
+            print(f"  Debug: No blademap for {beamline}")
+            return None
+
+        (
+            to_vals,
+            ti_vals,
+            bi_vals,
+            bo_vals,
+        ) = self._collect_blade_values_from_rawdata(
+            rawdata, beamline, blademap
+        )
+
+        if not to_vals:
+            print(
+                "  Debug: No blade values collected for "
+                f"{beamline} from {len(rawdata)} entries"
+            )
+            return None
+
+        print(
+            "  Debug: Collected "
+            f"{len(to_vals)} blade measurements for {beamline}"
+        )
+
+        # Compute means and stds
+        to_mean = np.mean(to_vals)
+        to_err = np.std(to_vals, ddof=1) if len(to_vals) > 1 else 0
+
+        ti_mean = np.mean(ti_vals)
+        ti_err = np.std(ti_vals, ddof=1) if len(ti_vals) > 1 else 0
+
+        bi_mean = np.mean(bi_vals)
+        bi_err = np.std(bi_vals, ddof=1) if len(bi_vals) > 1 else 0
+
+        bo_mean = np.mean(bo_vals)
+        bo_err = np.std(bo_vals, ddof=1) if len(bo_vals) > 1 else 0
+
+        # Create structured array
+        fields = [
+            ('to_mean', 'f8'), ('to_err', 'f8'),
+            ('ti_mean', 'f8'), ('ti_err', 'f8'),
+            ('bi_mean', 'f8'), ('bi_err', 'f8'),
+            ('bo_mean', 'f8'), ('bo_err', 'f8'),
+        ]
+        dtype = np.dtype(fields)
+        result = np.zeros(1, dtype=dtype)
+
+        result['to_mean'] = to_mean
+        result['to_err'] = to_err
+        result['ti_mean'] = ti_mean
+        result['ti_err'] = ti_err
+        result['bi_mean'] = bi_mean
+        result['bi_err'] = bi_err
+        result['bo_mean'] = bo_mean
+        result['bo_err'] = bo_err
+
+        return result
+
+    def _collect_blade_values_from_rawdata(self, rawdata: list,
+                                           beamline: str,
+                                           blademap: dict):
+        """Collect blade values across all sweeps for a beamline."""
+        to_vals, ti_vals, bi_vals, bo_vals = [], [], [], []
+
+        for entry in rawdata or []:
+            if not isinstance(entry, (list, tuple)) or len(entry) < 3:
+                continue
+
+            bpm_dict = entry[2]
+            if not isinstance(bpm_dict, dict) or beamline not in bpm_dict:
+                continue
+
+            blade_data = bpm_dict[beamline]
+            if not isinstance(blade_data, np.ndarray) or blade_data.size == 0:
+                continue
+
+            if blade_data.dtype.names:
+                self._extend_from_structured_array(
+                    blade_data, blademap,
+                    to_vals, ti_vals, bi_vals, bo_vals
+                )
+            else:
+                self._extend_from_simple_array(
+                    blade_data,
+                    to_vals, ti_vals, bi_vals, bo_vals
+                )
+
+        return to_vals, ti_vals, bi_vals, bo_vals
+
+    @staticmethod
+    def _extend_from_structured_array(blade_data: np.ndarray,
+                                      blademap: dict,
+                                      to_vals: list,
+                                      ti_vals: list,
+                                      bi_vals: list,
+                                      bo_vals: list) -> None:
+        """Extract blade values from structured sweep data."""
+        to_field = f"{blademap['TO']}_val"
+        ti_field = f"{blademap['TI']}_val"
+        bi_field = f"{blademap['BI']}_val"
+        bo_field = f"{blademap['BO']}_val"
+
+        needed_fields = [to_field, ti_field, bi_field, bo_field]
+        if all(f in blade_data.dtype.names for f in needed_fields):
+            to_vals.extend(blade_data[to_field])
+            ti_vals.extend(blade_data[ti_field])
+            bi_vals.extend(blade_data[bi_field])
+            bo_vals.extend(blade_data[bo_field])
+
+    @staticmethod
+    def _extend_from_simple_array(blade_data: np.ndarray,
+                                  to_vals: list,
+                                  ti_vals: list,
+                                  bi_vals: list,
+                                  bo_vals: list) -> None:
+        """Extract blade values from simple 2D or 1D arrays."""
+        if blade_data.shape[0] < 4:
+            return
+
+        to_vals.append(
+            blade_data[0, 0] if blade_data.ndim > 1 else blade_data[0]
+        )
+        ti_vals.append(
+            blade_data[1, 0] if blade_data.ndim > 1 else blade_data[1]
+        )
+        bi_vals.append(
+            blade_data[2, 0] if blade_data.ndim > 1 else blade_data[2]
+        )
+        bo_vals.append(
+            blade_data[3, 0] if blade_data.ndim > 1 else blade_data[3]
+        )
+
+    def _extract_beamline_specific_params(self, rawdata: list) -> dict:
+        """Extract beamline-specific parameters from rawdata metadata.
+
+        Falls back to Config dictionaries for xbpmdist and bpmdist if not
+        found in rawdata.
+
+        Args:
+            rawdata: List of tuples [(metadata, grid_data, bpm_dict), ...].
+
+        Returns:
+            Dict mapping beamline -> {param_name: value}
+        """
+        import re
+        from .config import Config
+
+        beamline_pattern = re.compile(r'^[A-Z]{3,4}[0-9]?$')
+        param_keys = ['xbpmdist', 'bpmdist', 'current', 'phaseorgap']
+
+        beamline_params = self._collect_params_from_metadata(
+            rawdata, beamline_pattern, param_keys
+        )
+        self._apply_param_fallbacks(beamline_params, Config)
+
+        return beamline_params
+
+    def _collect_params_from_metadata(self, rawdata: list,
+                                      beamline_pattern, param_keys):
+        """Collect parameters from rawdata metadata for matching beamlines."""
+        params = {}
+
+        for entry in rawdata or []:
+            if not isinstance(entry, (list, tuple)) or len(entry) < 1:
+                continue
+
+            metadata = entry[0]
+            if not isinstance(metadata, dict):
+                continue
+
+            for beamline, values in metadata.items():
+                if not beamline_pattern.match(str(beamline)):
+                    continue
+                if not isinstance(values, dict):
+                    continue
+
+                params.setdefault(beamline, {}).update(
+                    {k: v for k, v in values.items() if k in param_keys}
+                )
+
+        return params
+
+    @staticmethod
+    def _apply_param_fallbacks(beamline_params: dict, config) -> None:
+        """Fill missing xbpmdist/bpmdist from Config defaults."""
+        for beamline, params in beamline_params.items():
+            if 'xbpmdist' not in params and beamline in config.XBPMDISTS:
+                params['xbpmdist'] = config.XBPMDISTS[beamline]
+
+            if 'bpmdist' not in params:
+                base_bl = beamline.rstrip('0123456789')
+                if base_bl in config.BPMDISTS:
+                    params['bpmdist'] = config.BPMDISTS[base_bl]
+
+    def _write_beamline_parameters(self, beam_grp, beamline: str,
+                                   specific_params: dict = None) -> None:
+        """Write parameters specific to a beamline.
+
+        Args:
+            beam_grp: HDF5 beamline group.
+            beamline: Beamline identifier (e.g., 'MNC1').
+            specific_params: Dict of beamline-specific parameter overrides.
+        """
+        prm_grp = beam_grp.create_group('parameters')
+        prm_grp.attrs['description'] = (
+            f'Analysis input parameters for beamline {beamline}'
+        )
+
+        prm_dict = asdict(self.prm)
+        specific_params = specific_params or {}
+
+        # Combine prm_dict keys with specific_params keys
+        all_keys = set(prm_dict.keys()) | set(specific_params.keys())
+
+        # Write each parameter and its description
+        for k in sorted(all_keys):
+            v = prm_dict.get(k)
+
+            # Override with beamline-specific values
+            if k == 'beamline':
+                v = beamline
+            elif k in specific_params:
+                v = specific_params[k]
+
+            # Skip if still None
+            if v is None:
+                continue
+
+            try:
+                prm_grp.attrs[k] = v
+            except TypeError:
+                prm_grp.attrs[k] = str(v)
+
+            # Add description for this parameter
+            if k in self.PARAM_DESCRIPTIONS:
+                prm_grp.attrs[f'{k}_description'] = self.PARAM_DESCRIPTIONS[k]
+
+    def _write_meta_and_params(self, h5file) -> None:
+        """Write metadata to HDF5 file.
+
+        Stores only global metadata (version, creation time).
+        Beamline-specific parameters are stored per-beamline under
+        raw_data/<beamline>/parameters.
+        """
         meta = h5file.create_group('meta')
         meta.attrs['version'] = 1
         meta.attrs['created'] = datetime.utcnow().isoformat() + 'Z'
-        meta.attrs['beamline'] = self.prm.beamline
-
-        # Create parameters group with description
-        gprm = h5file.create_group('parameters')
-        gprm.attrs['description'] = (
-            'Analysis input parameters and beamline configuration'
-        )
-
-        # Write each parameter value and its description
-        for k, v in prm_dict.items():
-            if v is None:
-                continue
-            try:
-                gprm.attrs[k] = v
-            except TypeError:
-                gprm.attrs[k] = str(v)
-
-            # Add description for this parameter
-            desc_key = f'{k}_description'
-            if k in self.PARAM_DESCRIPTIONS:
-                gprm.attrs[desc_key] = self.PARAM_DESCRIPTIONS[k]
+        meta.attrs['description'] = 'Global metadata for this HDF5 export'
 
     @staticmethod
     def _write_bpm_data(raw_grp, rawdata: list) -> None:
@@ -831,12 +1251,12 @@ class Exporter:
 
     def _write_derived(self, h5file, results: dict) -> None:
         """Write analysis results to HDF5 file.
-        
+
         Only creates analysis_<beamline> group if results contain actual data.
         """
         if not results or not isinstance(results, dict):
             return
-        
+
         positions = results.get('positions', {})
         supmat = results.get('supmat')
         supmat_standard = results.get('supmat_standard')

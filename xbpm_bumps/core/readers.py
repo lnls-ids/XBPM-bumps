@@ -623,17 +623,24 @@ class DataReader:
         """Locate the raw measurement table.
 
         Preference order:
-        1) /raw_data/measurements_<beamline>
-        2) /data (legacy fallback)
-        3) /data/blades (very old)
+        1) /raw_data/<beamline>/measurements (new hierarchical)
+        2) /raw_data/measurements_<beamline> (old flat structure)
+        3) /data (legacy fallback)
+        4) /data/blades (very old)
         """
-        # Try new standard path first: pick any dataset named measurements_*
+        import h5py  # type: ignore
+
+        # Try new hierarchical path first: raw_data/<beamline>/measurements
         if 'raw_data' in h5file:
             raw_grp = h5file['raw_data']
+
+            # First try: look for beamline-specific groups with measurements
+            for obj in raw_grp.values():
+                if isinstance(obj, h5py.Group) and 'measurements' in obj:
+                    return obj['measurements']
+
+            # Second try: look for old-style measurements_* datasets
             for name, obj in raw_grp.items():
-                if isinstance(obj, (np.ndarray,)):
-                    # h5py Datasets are array-like; direct check via attrs
-                    pass
                 if hasattr(obj, 'shape') and name.startswith('measurements_'):
                     return obj
 
@@ -720,12 +727,30 @@ class DataReader:
             )
 
     def _fallback_beamline_from_meta(self, h5file):
-        """Populate beamline from meta group if still unset."""
-        if self.prm.beamline or 'meta' not in h5file:
+        """Populate beamline from meta group or raw_data if still unset."""
+        if self.prm.beamline:
             return
-        bl = h5file['meta'].attrs.get('beamline')
-        if isinstance(bl, (str, bytes)):
-            self.prm.beamline = bl.decode() if isinstance(bl, bytes) else bl
+
+        # Try meta group first (backward compatibility)
+        if 'meta' in h5file:
+            bl = h5file['meta'].attrs.get('beamline')
+            if isinstance(bl, (str, bytes)):
+                self.prm.beamline = (bl.decode()
+                                     if isinstance(bl, bytes) else bl)
+                return
+
+        # Try extracting from raw_data/<beamline>/parameters
+        if 'raw_data' in h5file:
+            import h5py  # type: ignore
+            raw_grp = h5file['raw_data']
+            for obj in raw_grp.values():
+                if isinstance(obj, h5py.Group) and 'parameters' in obj:
+                    # Found a beamline group, check its parameters
+                    bl = obj['parameters'].attrs.get('beamline')
+                    if bl:
+                        self.prm.beamline = (bl if isinstance(bl, str)
+                                             else bl.decode())
+                        return
 
     def _handle_beamline_selection_file(self, beamline_selector) -> None:
         """Handle beamline selection logic for file-based input."""
