@@ -204,17 +204,59 @@ class DataReader:
             meta['sweeps'] = sweeps_meta
 
     def _load_supmat_meta(self, analysis, meta):
-        """Load suppression matrices for UI display."""
-        supmat = analysis.get('suppression_matrix') if analysis else None
-        opt_supmat = (analysis.get('optimized_suppression_matrix')
-                      if analysis else None)
+        """Load suppression matrices for UI display.
 
-        if supmat is not None:
-            meta['supmat_standard'] = np.array(supmat)
+        HDF5 stores:
+        - analysis/matrices/standard: standard 1/-1 (matrix #1)
+        - analysis/matrices/calculated: from slopes (matrix #2)
+        - analysis/matrices/optimized: optimized (matrix #3, or placeholder)
+        - (legacy) 'suppression_matrix': calculated (#2)
+        - (legacy) 'optimized_suppression_matrix': optimized (#3 or placeholder)
+
+        UI needs:
+        - 'supmat_standard': standard 1/-1 pattern (matrix #1)
+        - 'supmat': calculated from slopes (matrix #2)
+        - 'supmat_optimized': optimized (matrix #3) when available
+        """
+        # Prefer new matrices group
+        mats = analysis.get('matrices') if analysis else None
+        loaded_any = False
+        if mats is not None:
+            std = mats.get('standard')
+            calc = mats.get('calculated')
+            opt = mats.get('optimized')
+            if std is not None:
+                meta['supmat_standard'] = np.array(std)
+                loaded_any = True
+            if calc is not None:
+                meta['supmat'] = np.array(calc)
+                loaded_any = True
+            if opt is not None:
+                meta['supmat_optimized'] = np.array(opt)
+                loaded_any = True
+
+        if loaded_any:
+            return
+
+        # Fallback to legacy datasets
+        if analysis is None:
+            return
+        supmat_calc = analysis.get('suppression_matrix')
+        if supmat_calc is not None:
+            meta['supmat'] = np.array(supmat_calc)
+
+        opt_supmat = analysis.get('optimized_suppression_matrix')
         if opt_supmat is not None:
-            meta['supmat'] = np.array(opt_supmat)
-        elif supmat is not None and 'supmat' not in meta:
-            meta['supmat'] = np.array(supmat)
+            meta['supmat_optimized'] = np.array(opt_supmat)
+
+        # Ensure standard always available as fixed pattern
+        if 'supmat_standard' not in meta:
+            meta['supmat_standard'] = np.array([
+                [ 1, -1, -1,  1],
+                [ 1,  1,  1,  1],
+                [ 1,  1, -1, -1],
+                [ 1,  1,  1,  1],
+            ], dtype=float)
 
     def _load_hdf5_bpm_data(self, h5file):
         """Rebuild raw acquisition sweeps from /raw_data when present."""
@@ -338,16 +380,26 @@ class DataReader:
         return result
 
     def _load_bpm_stats_meta(self, analysis, meta):
-        """Load BPM statistics including ROI bounds."""
-        bpm_grp = analysis.get('bpm_stats')
-        if bpm_grp is None:
+        """Load BPM statistics including ROI bounds from positions/bpm metadata."""
+        positions_grp = analysis.get('positions')
+        if positions_grp is None:
             return
-
-        stats = {k: v for k, v in bpm_grp.attrs.items()}
-        roi_bounds = self._load_roi_bounds_from_group(bpm_grp)
-        if roi_bounds:
-            stats['roi_bounds'] = roi_bounds
-        meta['bpm_stats'] = stats
+        bpm_ds = positions_grp.get('bpm')
+        if bpm_ds is None:
+            return
+        stats = {}
+        for key in ('sigma_h', 'sigma_v', 'sigma_total',
+                    'diff_max_h', 'diff_max_v'):
+            if key in bpm_ds.attrs:
+                stats[key] = float(bpm_ds.attrs[key])
+        # ROI bounds may be attached to positions group
+        roi_bounds = meta.get('bpm_stats', {}).get('roi_bounds')
+        if not roi_bounds:
+            roi_bounds = self._load_roi_bounds_fallback_attrs(positions_grp)
+            if roi_bounds:
+                stats['roi_bounds'] = roi_bounds
+        if stats:
+            meta['bpm_stats'] = stats
 
     @staticmethod
     def _load_roi_bounds_from_group(bpm_grp):
@@ -380,6 +432,18 @@ class DataReader:
                 "Failed to read roi_bounds attrs from positions",
                 exc_info=True
             )
+
+    def _load_roi_bounds_fallback_attrs(self, positions_grp):
+        """Helper: Read ROI bounds attrs from positions group into dict."""
+        try:
+            rb_attrs = {
+                k: v for k, v in positions_grp.attrs.items()
+                if k in ('x_min', 'x_max', 'y_min', 'y_max',
+                        'roi_bounds_title')
+            }
+            return rb_attrs if rb_attrs else None
+        except Exception:
+            return None
 
     @staticmethod
     def _read_scales_group(scales_grp):

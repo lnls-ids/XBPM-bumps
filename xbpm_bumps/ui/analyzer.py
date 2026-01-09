@@ -397,7 +397,8 @@ class XBPMAnalyzer(QObject):
                 pos_h, pos_v, fit_h, fit_v
             )
 
-        # Also store supmat for potential other uses
+        # Store calculated suppression matrix (not used in UI display)
+        # UI gets matrices from raw/scaled results instead
         supmat = self.app.processor.suppression_matrix()
         results['supmat'] = supmat
 
@@ -498,6 +499,7 @@ class XBPMAnalyzer(QObject):
             'measured': measured,
             'nominal': nominal,
         }
+        # Capture standard matrix (1/-1 pattern) from raw calculation
         supmat_std = (result_data.get('supmat')
                       if isinstance(result_data, dict) else None)
         if supmat_std is not None:
@@ -540,6 +542,7 @@ class XBPMAnalyzer(QObject):
             'measured': measured,
             'nominal': nominal,
         }
+        # Capture calculated matrix (from slopes) from scaled calculation
         supmat_calc = (result_data.get('supmat')
                        if isinstance(result_data, dict) else None)
         if supmat_calc is not None:

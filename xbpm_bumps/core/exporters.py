@@ -724,12 +724,11 @@ class Exporter:
         scaled_full = results.get('positions_scaled_full')
 
         self._write_full_positions(apos, raw_full, scaled_full)
-        self._write_bpm_positions(apos, positions)
+        self._write_bpm_positions(apos, positions, bpm_stats)
         self._write_fallback_positions(apos, results, positions,
                                        raw_full, scaled_full)
         self._attach_roi_bounds_attrs(apos, bpm_stats)
         self._write_supmat_dataset(analysis, supmat, supmat_standard)
-        self._write_bpm_stats(analysis, bpm_stats)
         self._write_sweeps_group(analysis, sweeps)
 
     def _write_full_positions(self, apos, raw_full, scaled_full) -> None:
@@ -779,7 +778,7 @@ class Exporter:
             self._attach_scale_attrs(pair_dset, scales, 'pair')
             self._attach_scale_attrs(cross_dset, scales, 'cross')
 
-    def _write_bpm_positions(self, apos, positions) -> None:
+    def _write_bpm_positions(self, apos, positions, bpm_stats: dict = None) -> None:
         if not (isinstance(positions, dict) and 'bpm' in positions):
             return
         bpm_data = positions['bpm']
@@ -788,7 +787,15 @@ class Exporter:
                     if 'measured' in bpm_data else None)
             nom = (np.asarray(bpm_data.get('nominal'))
                    if 'nominal' in bpm_data else None)
-            self._write_position_table(apos, 'bpm', meas, nom)
+            dset = self._write_position_table(apos, 'bpm', meas, nom)
+            if dset is not None and isinstance(bpm_stats, dict):
+                for key in ('sigma_h', 'sigma_v', 'sigma_total',
+                            'diff_max_h', 'diff_max_v'):
+                    if key in bpm_stats and bpm_stats[key] is not None:
+                        try:
+                            dset.attrs[key] = float(bpm_stats[key])
+                        except Exception:
+                            dset.attrs[key] = bpm_stats[key]
 
     def _write_fallback_positions(self, apos, results, positions,
                                   raw_full, scaled_full) -> None:
@@ -818,26 +825,40 @@ class Exporter:
 
     def _write_supmat_dataset(self, analysis, supmat,
                              supmat_standard=None) -> None:
-        """Write suppression matrices to HDF5.
-        
-        Args:
-            analysis: HDF5 analysis group
-            supmat: Calculated/optimized suppression matrix (from scaled)
-            supmat_standard: Standard suppression matrix (from raw, 1/-1 pattern)
+        """Write suppression matrices to HDF5 under analysis/matrices.
+
+        Structure:
+            analysis/
+              matrices/
+                standard    (#1)
+                calculated  (#2)
+                optimized   (#3 - placeholder for now)
         """
-        # Write calculated/optimized matrix
+        # Ensure matrices group exists
+        matrices = analysis.create_group('matrices')
+        try:
+            matrices.attrs['description'] = (
+                'Suppression matrices: standard (#1, 1/-1 pattern), '
+                'calculated (#2, from fitted slopes), optimized (#3).'
+            )
+        except Exception:
+            pass
+
+        # Write standard matrix (#1) if provided
+        if supmat_standard is not None:
+            matrices.create_dataset('standard', data=np.asarray(supmat_standard))
+
+        # Write calculated matrix (#2)
         if supmat is not None:
             supmat_arr = np.asarray(supmat)
-            analysis.create_dataset('optimized_suppression_matrix',
-                                    data=supmat_arr)
-        
-        # Write standard matrix (or fall back to calculated if not available)
-        if supmat_standard is not None:
-            supmat_std_arr = np.asarray(supmat_standard)
-            analysis.create_dataset('suppression_matrix', data=supmat_std_arr)
-        elif supmat is not None:
-            # Fallback: use calculated matrix for both if standard not available
-            analysis.create_dataset('suppression_matrix', data=supmat_arr)
+            matrices.create_dataset('calculated', data=supmat_arr)
+
+            # Optimized placeholder (#3)
+            opt_ds = matrices.create_dataset('optimized', data=supmat_arr)
+            try:
+                opt_ds.attrs['is_placeholder'] = True
+            except Exception:
+                pass
 
     def _write_scales(self, analysis, raw_full, scaled_full) -> None:
         """Persist scaling coefficients for raw and scaled runs."""
