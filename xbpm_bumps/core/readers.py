@@ -115,6 +115,10 @@ class DataReader:
             self._fallback_beamline_from_meta(h5)
             self._load_hdf5_analysis_meta(h5)
 
+            bpm_rawdata = self._load_hdf5_bpm_data(h5)
+            if bpm_rawdata:
+                self.rawdata = bpm_rawdata
+
         # Store HDF5 path for later figure loading
         self._hdf5_path = self.prm.workdir
 
@@ -165,14 +169,25 @@ class DataReader:
         return grid_x, grid_y, pairs, pairs_nom
 
     def _load_hdf5_analysis_meta(self, h5file):
-        """Load analysis extras (scales, BPM stats) if present."""
+        """Load analysis extras (scales, BPM stats) if present.
+
+        Coordinates loading of scales, sweeps metadata, and BPM statistics.
+        """
         meta = {}
         analysis = h5file.get('analysis')
         if analysis is None:
             self.analysis_meta = meta
             return
 
-        # Prefer embedded scale attrs on position datasets; fall back to legacy group
+        self._load_scales_meta(analysis, meta)
+        self._load_sweeps_meta(analysis, meta)
+        self._load_bpm_stats_meta(analysis, meta)
+        self._load_roi_bounds_fallback(analysis, meta)
+
+        self.analysis_meta = meta
+
+    def _load_scales_meta(self, analysis, meta):
+        """Load scale information from position datasets or legacy group."""
         scales = self._read_scale_attrs(analysis)
         if not scales:
             scales_grp = analysis.get('scales')
@@ -181,36 +196,176 @@ class DataReader:
         if scales:
             meta['scales'] = scales
 
+    def _load_sweeps_meta(self, analysis, meta):
+        """Load sweeps metadata (positions and blade fits)."""
         sweeps_meta = self._read_sweeps_meta(analysis)
         if sweeps_meta:
             meta['sweeps'] = sweeps_meta
 
-        bpm_grp = analysis.get('bpm_stats')
-        if bpm_grp is not None:
-            stats = {k: v for k, v in bpm_grp.attrs.items()}
-            if 'roi_bounds' in bpm_grp:
-                stats['roi_bounds'] = {
-                    k: v for k, v in bpm_grp['roi_bounds'].attrs.items()
-                }
+    def _load_hdf5_bpm_data(self, h5file):
+        """Rebuild raw acquisition sweeps from /raw_data when present."""
+        raw_grp = h5file.get('raw_data') if h5file else None
+        if raw_grp is None:
+            logger.info(
+                "No raw_data group found in HDF5; BPM/XBPM re-run limited"
+            )
+            return None
+
+        raw_entries = []
+        for name in sorted(raw_grp.keys()):
+            if not name.startswith('sweep_'):
+                continue
+            sweep_grp = raw_grp[name]
+            header = self._read_bpm_header(sweep_grp)
+            gap_info = self._read_bpm_gap_info()
+            bpm_dict = self._read_bpm_dict(sweep_grp)
+            raw_entries.append((header, gap_info, bpm_dict))
+        return raw_entries
+
+    def _read_bpm_header(self, sweep_grp):
+        import h5py
+
+        header = {}
+        meta_attrs = {
+            str(k).replace('meta_', ''): v
+            for k, v in sweep_grp.attrs.items()
+            if str(k).startswith('meta_')
+        }
+        header.update(meta_attrs)
+
+        for key, obj in sweep_grp.items():
+            if (self._looks_like_machine_key(key) and
+                not isinstance(obj, h5py.Group)):
+                header[key] = self._read_machine_dataset(obj)
+
+        if not header and self.prm.beamline:
+            header[self.prm.beamline] = {}
+        return header
+
+    def _read_bpm_gap_info(self):
+        code = (self.prm.beamline or '')[:3].lower()
+        if code and self.prm.phaseorgap is not None:
+            return {code: self.prm.phaseorgap}
+        return {}
+
+    def _read_bpm_dict(self, sweep_grp):
+        import h5py
+
+        bpm = {
+            str(k): v for k, v in sweep_grp.attrs.items()
+            if not str(k).startswith('meta_')
+        }
+
+        if 'orb' in sweep_grp:
+            orb = np.array(sweep_grp['orb'])
+            if hasattr(orb, 'dtype') and orb.dtype.names:
+                if 'orbx_val' in orb.dtype.names:
+                    bpm['orbx'] = orb['orbx_val']
+                if 'orby_val' in orb.dtype.names:
+                    bpm['orby'] = orb['orby_val']
+
+        for key, obj in sweep_grp.items():
+            if key == 'orb':
+                continue
+            if (self._looks_like_machine_key(key) and
+                not isinstance(obj, h5py.Group)):
+                bpm[key] = self._read_machine_dataset(obj)
             else:
-                # Backward-compatible: bounds as subgroup
-                rb = bpm_grp.get('roi_bounds')
-                if rb is not None:
-                    stats['roi_bounds'] = {k: v for k, v in rb.attrs.items()}
-            meta['bpm_stats'] = stats
+                bpm[key] = np.array(obj)
 
-        # Fallback: ROI bounds stored as attrs on positions group
+        return bpm
+
+    @staticmethod
+    def _looks_like_machine_key(key: str) -> bool:
+        return bool(re.match(r'^[A-Z]{3,4}[0-9]?$', str(key)))
+
+    @staticmethod
+    def _read_machine_dataset(ds):
+        """Read machine compound dataset with value and unit columns.
+
+        Dataset has N rows with columns like:
+        val_A, val_A_unit, val_B, val_B_unit, A_range, B_range, etc.
+
+        Returns dict with arrays:
+        {'val_A': (array, unit),
+        'val_B': (array, unit),
+        'A_range': array, ...}
+        """
+        arr = np.array(ds)
+        result = {}
+
+        if hasattr(arr, 'dtype') and arr.dtype.names:
+            processed_names = set()
+            for name in arr.dtype.names:
+                # Skip unit columns (they're processed with their value column)
+                if name.endswith('_unit') or name in processed_names:
+                    continue
+
+                # Extract value array
+                value = arr[name]
+
+                # Check if there's a corresponding unit column
+                unit_col = f'{name}_unit'
+                if unit_col in arr.dtype.names:
+                    # Extract unit (should be same for all rows)
+                    unit = arr[unit_col][0]
+                    result[name] = (value, unit)
+                    processed_names.add(unit_col)
+                else:
+                    result[name] = value
+
+                processed_names.add(name)
+        else:
+            result['value'] = arr
+
+        prefix = ds.attrs.get('prefix') if hasattr(ds, 'attrs') else None
+        if prefix is not None:
+            result['prefix'] = prefix
+        return result
+
+    def _load_bpm_stats_meta(self, analysis, meta):
+        """Load BPM statistics including ROI bounds."""
+        bpm_grp = analysis.get('bpm_stats')
+        if bpm_grp is None:
+            return
+
+        stats = {k: v for k, v in bpm_grp.attrs.items()}
+        roi_bounds = self._load_roi_bounds_from_group(bpm_grp)
+        if roi_bounds:
+            stats['roi_bounds'] = roi_bounds
+        meta['bpm_stats'] = stats
+
+    @staticmethod
+    def _load_roi_bounds_from_group(bpm_grp):
+        """Extract ROI bounds from bpm_stats group."""
+        if 'roi_bounds' in bpm_grp:
+            return {k: v for k, v in bpm_grp['roi_bounds'].attrs.items()}
+
+        # Backward-compatible: bounds as subgroup
+        rb = bpm_grp.get('roi_bounds')
+        if rb is not None:
+            return {k: v for k, v in rb.attrs.items()}
+        return None
+
+    def _load_roi_bounds_fallback(self, analysis, meta):
+        """Fallback: ROI bounds stored as attrs on positions group."""
         positions_grp = analysis.get('positions')
-        if positions_grp is not None:
-            try:
-                rb_attrs = {k: v for k, v in positions_grp.attrs.items()
-                            if k in ('x_min', 'x_max', 'y_min', 'y_max', 'roi_bounds_title')}
-                if rb_attrs:
-                    meta.setdefault('bpm_stats', {})['roi_bounds'] = rb_attrs
-            except Exception:
-                logger.debug("Failed to read roi_bounds attrs from positions", exc_info=True)
+        if positions_grp is None:
+            return
 
-        self.analysis_meta = meta
+        try:
+            rb_attrs = {
+                k: v for k, v in positions_grp.attrs.items()
+                if k in ('x_min', 'x_max', 'y_min', 'y_max',
+                        'roi_bounds_title')
+            }
+            if rb_attrs:
+                meta.setdefault('bpm_stats', {})['roi_bounds'] = rb_attrs
+        except Exception:
+            logger.debug(
+                "Failed to read roi_bounds attrs from positions",
+                exc_info=True
+            )
 
     @staticmethod
     def _read_scales_group(scales_grp):
@@ -250,8 +405,10 @@ class DataReader:
             ('raw', 'xbpm_raw_pairwise', 'xbpm_raw_cross'),
             ('scaled', 'xbpm_scaled_pairwise', 'xbpm_scaled_cross'),
         ):
-            pair = extract(positions.get(p_name)) if p_name in positions else None
-            cross = extract(positions.get(c_name)) if c_name in positions else None
+            pair  = (extract(positions.get(p_name))
+                     if p_name in positions else None)
+            cross = (extract(positions.get(c_name))
+                     if c_name in positions else None)
             scoped = {}
             if pair:
                 scoped['pair'] = pair
@@ -267,64 +424,11 @@ class DataReader:
         if sweeps is None:
             return {}
 
-        def get_fit(ds):
-            if ds is None:
-                return None
-            out = {}
-            for key in ('k', 'delta', 's_k', 's_delta'):
-                if key in ds.attrs:
-                    out[key] = ds.attrs[key]
-            return out or None
-
-        def blade_fits(ds, axis: str):
-            if ds is None:
-                return None
-            try:
-                data = np.array(ds)
-                if data.size == 0:
-                    return None
-
-                # Identify sweep coordinate column
-                coord_col = 'x_index' if axis == 'horizontal' else 'y_index'
-                if coord_col not in data.dtype.names:
-                    return None
-                x = data[coord_col]
-
-                fits = {}
-                for blade in ('to', 'ti', 'bi', 'bo'):
-                    if blade not in data.dtype.names:
-                        continue
-                    y = data[blade]
-                    try:
-                        coef = np.polyfit(x, y, deg=1)
-                        fits[blade] = {
-                            'k': float(coef[0]),
-                            'delta': float(coef[1]),
-                        }
-                    except Exception:
-                        continue
-                return fits or None
-            except Exception:
-                return None
-
         h_ds = sweeps.get('blades_h')
         v_ds = sweeps.get('blades_v')
 
-        positions = {}
-        h_fit = get_fit(h_ds)
-        v_fit = get_fit(v_ds)
-        if h_fit:
-            positions['horizontal'] = h_fit
-        if v_fit:
-            positions['vertical'] = v_fit
-
-        blades = {}
-        h_blades = blade_fits(h_ds, 'horizontal')
-        v_blades = blade_fits(v_ds, 'vertical')
-        if h_blades:
-            blades['horizontal'] = h_blades
-        if v_blades:
-            blades['vertical'] = v_blades
+        positions = DataReader._collect_sweep_positions(h_ds, v_ds)
+        blades = DataReader._collect_sweep_blade_trends(h_ds, v_ds)
 
         meta = {}
         if positions:
@@ -332,6 +436,74 @@ class DataReader:
         if blades:
             meta['blades'] = blades
         return meta
+
+    @staticmethod
+    def _collect_sweep_positions(h_ds, v_ds):
+        positions = {}
+        for axis, dataset in (('horizontal', h_ds), ('vertical', v_ds)):
+            fit = DataReader._read_sweep_fit_attrs(dataset)
+            if fit:
+                positions[axis] = fit
+        return positions
+
+    @staticmethod
+    def _collect_sweep_blade_trends(h_ds, v_ds):
+        blades = {}
+        axis_map = (
+            ('horizontal', h_ds, 'x_index'),
+            ('vertical', v_ds, 'y_index'),
+        )
+        for axis, dataset, coord_field in axis_map:
+            fits = DataReader._fit_blade_trends(dataset, coord_field)
+            if fits:
+                blades[axis] = fits
+        return blades
+
+    @staticmethod
+    def _read_sweep_fit_attrs(ds):
+        if ds is None:
+            return None
+        attrs = {
+            key: ds.attrs[key]
+            for key in ('k', 'delta', 's_k', 's_delta')
+            if key in ds.attrs
+        }
+        return attrs or None
+
+    @staticmethod
+    def _fit_blade_trends(ds, coord_field):
+        if ds is None:
+            return None
+        try:
+            data = np.array(ds)
+            if data.size == 0 or coord_field not in data.dtype.names:
+                return None
+
+            x = data[coord_field]
+            fits = {}
+            for blade in ('to', 'ti', 'bi', 'bo'):
+                if blade not in data.dtype.names:
+                    continue
+                y = data[blade]
+                try:
+                    coef = np.polyfit(x, y, deg=1)
+                    fits[blade] = {
+                        'k': float(coef[0]),
+                        'delta': float(coef[1]),
+                    }
+                except Exception:
+                    logger.debug(
+                        "Failed to fit blade trend",
+                        exc_info=True,
+                        extra={
+                            'blade': blade,
+                            'coord_field': coord_field,
+                        },
+                    )
+                    continue
+            return fits or None
+        except Exception:
+            return None
 
     def _load_hdf5_data(self, h5file, grid_x, grid_y, pairs_nom=None):
         """Load blades dataset and reconstruct data dict.
@@ -374,17 +546,22 @@ class DataReader:
         """Locate the raw measurement table.
 
         Preference order:
-        1) /raw_data/measurements (standard)
+        1) /raw_data/measurements_<beamline>
         2) /data (legacy fallback)
         3) /data/blades (very old)
         """
-        # Try new standard path first
-        if 'raw_data' in h5file and 'measurements' in h5file['raw_data']:
-            return h5file['raw_data']['measurements']
+        # Try new standard path first: pick any dataset named measurements_*
+        if 'raw_data' in h5file:
+            raw_grp = h5file['raw_data']
+            for name, obj in raw_grp.items():
+                if isinstance(obj, (np.ndarray,)):
+                    # h5py Datasets are array-like; direct check via attrs
+                    pass
+                if hasattr(obj, 'shape') and name.startswith('measurements_'):
+                    return obj
 
         # Legacy fallbacks
         if 'data' in h5file:
-            # If group with blades subdataset
             if hasattr(h5file['data'], 'keys') and 'blades' in h5file['data']:
                 return h5file['data']['blades']
             return h5file['data']
@@ -746,7 +923,8 @@ class DataReader:
             import h5py  # type: ignore
         except Exception as exc:  # pragma: no cover - env dependent
             raise RuntimeError(
-                "h5py is required to load figures from HDF5 files. Please install it"
+                "h5py is required to load figures from HDF5 files."
+                "Please install it"
             ) from exc
 
         path = hdf5_path or self._hdf5_path

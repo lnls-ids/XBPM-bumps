@@ -462,8 +462,11 @@ class XBPMMainWindow(QMainWindow):
             # Export using current data and last results
             from ..core.exporters import Exporter
             exporter = Exporter(self.analyzer.app.prm)
+
+            # Include rawdata for complete re-analysis capability
+            rawdata = getattr(self.analyzer.app.reader, 'rawdata', None)
             exporter.write_hdf5(path, self.analyzer.app.data, results,
-                                include_figures=True)
+                                include_figures=True, rawdata=rawdata)
 
             self.log_message(f"HDF5 export written: {path}")
             QMessageBox.information(

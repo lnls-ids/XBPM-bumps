@@ -73,8 +73,18 @@ class Exporter:
         print("done.\n")
 
     def write_hdf5(self, filepath: str, data: dict, results: dict,
-                   include_figures: bool = True) -> None:
-        """Write full analysis package to an HDF5 file."""
+                   include_figures: bool = True, rawdata: list = None) -> None:
+        """Write full analysis package to an HDF5 file.
+
+        Args:
+            filepath: Path to output HDF5 file.
+            data: Blade measurement data dictionary.
+            results: Analysis results dictionary.
+            include_figures: Whether to include figure objects.
+            rawdata: Raw data tuples list [(meta, grid, bpm_dict), ...].
+                     If provided, BPM monitoring data will be stored for
+                     complete re-analysis capability.
+        """
         try:
             import h5py  # type: ignore
         except Exception as exc:  # pragma: no cover - env dependent
@@ -88,9 +98,17 @@ class Exporter:
 
         with h5py.File(filepath, 'w') as h5:
             self._write_meta_and_params(h5, prm_dict)
+            raw_grp = None
             if table is not None:
-                self._write_data(h5, table)
+                raw_grp = self._write_data(h5, table)
+            # If no table was written, ensure raw_data group exists so sweeps
+            # have a place to live.
+            if raw_grp is None:
+                raw_grp = h5.create_group('raw_data')
+
             self._write_derived(h5, results)
+            if rawdata:
+                self._write_bpm_data(raw_grp, rawdata)
             if include_figures:
                 self._write_figures(h5, results, data)
 
@@ -170,14 +188,16 @@ class Exporter:
         table = np.array(rows, dtype=dtype)
         return table
 
-    @staticmethod
-    def _write_data(h5file, table: np.ndarray) -> None:
+    def _write_data(self, h5file, table: np.ndarray):
         """Write blade measurements table indexed by nominal positions.
 
-        Single storage: /raw_data/measurements
+        Stores dataset as /raw_data/measurements_<beamline> to indicate
+        which beamline the averaging belongs to.
         """
         raw_grp = h5file.create_group('raw_data')
-        raw_grp.create_dataset('measurements', data=table)
+        beamline = getattr(self.prm, 'beamline', None) or 'unknown'
+        raw_grp.create_dataset(f'measurements_{beamline}', data=table)
+        return raw_grp
 
     def _write_meta_and_params(self, h5file, prm_dict: dict) -> None:
         meta = h5file.create_group('meta')
@@ -193,6 +213,381 @@ class Exporter:
                 gprm.attrs[k] = v
             except TypeError:
                 gprm.attrs[k] = str(v)
+
+    @staticmethod
+    def _write_bpm_data(raw_grp, rawdata: list) -> None:
+        """Write raw acquisition sweeps to HDF5 under /raw_data.
+
+        Stores the third element of each rawdata tuple (BPM/XBPM dict)
+        in /raw_data/sweep_XXXX/ groups for complete re-analysis capability.
+
+        Args:
+            raw_grp: HDF5 group to store sweeps in (raw_data group).
+            rawdata: List of tuples [(metadata, grid_data, bpm_dict), ...].
+        """
+        if not rawdata or raw_grp is None:
+            return
+
+        import logging
+        import re
+        logger = logging.getLogger(__name__)
+
+        machine_pattern = re.compile(r'^[A-Z]{3,4}[0-9]?$')
+
+        for i, entry in enumerate(rawdata):
+            if not Exporter._validate_rawdata_entry(entry, i, logger):
+                continue
+
+            metadata, grid_data, bpm_dict = entry[:3]
+            sweep_grp = raw_grp.create_group(f'sweep_{i:04d}')
+
+            # Store non-machine metadata as attributes
+            Exporter._store_metadata_attrs(sweep_grp, metadata)
+
+            # Store machine data from metadata (MNC1, MNC2, etc.) as datasets
+            if isinstance(metadata, dict):
+                for key, val in metadata.items():
+                    is_machine = machine_pattern.match(str(key))
+                    if is_machine and isinstance(val, dict):
+                        try:
+                            Exporter._store_machine_group(sweep_grp, key, val)
+                        except Exception as exc:
+                            logger.debug(
+                                "Could not store metadata['%s'] for "
+                                "sweep %d: %s", key, i, exc
+                            )
+
+            # Store BPM dict data
+            Exporter._store_bpm_dict(sweep_grp, bpm_dict, i, logger)
+
+    @staticmethod
+    def _validate_rawdata_entry(entry, index: int, logger) -> bool:
+        """Validate a rawdata entry has the expected structure.
+
+        Args:
+            entry: Rawdata entry to validate.
+            index: Entry index for logging.
+            logger: Logger instance.
+
+        Returns:
+            True if valid, False otherwise.
+        """
+        if not isinstance(entry, (list, tuple)) or len(entry) < 3:
+            logger.warning(
+                "Skipping rawdata[%d]: expected 3-tuple, got %s",
+                index, type(entry)
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _store_metadata_attrs(group, metadata) -> None:
+        """Store metadata dictionary as HDF5 attributes.
+
+        Machine data (keys like MNC1, MNC2, CAT, etc.) are excluded
+        and should be handled separately by _store_bpm_dict.
+
+        Args:
+            group: HDF5 group to store attributes in.
+            metadata: Metadata dictionary.
+        """
+        if not isinstance(metadata, dict):
+            return
+
+        # Keys that look like machine names (uppercase, 3-4 chars)
+        # should not be stored as metadata attributes
+        import re
+        machine_pattern = re.compile(r'^[A-Z]{3,4}[0-9]?$')
+
+        for key, val in metadata.items():
+            if val is None:
+                continue
+            # Skip machine data keys - they'll be stored as datasets
+            if machine_pattern.match(str(key)):
+                continue
+            try:
+                group.attrs[f'meta_{key}'] = val
+            except (TypeError, ValueError):
+                group.attrs[f'meta_{key}'] = str(val)
+
+    @staticmethod
+    def _store_bpm_dict(group, bpm_dict, sweep_index: int, logger) -> None:
+        """Store BPM dictionary with proper hierarchy.
+
+        Coordinates three-pass storage: metadata, orbit, machine data.
+        """
+        if not isinstance(bpm_dict, dict):
+            logger.warning(
+                "Skipping BPM data for sweep %d: expected dict, got %s",
+                sweep_index, type(bpm_dict)
+            )
+            return
+
+        metadata_keys = {'agx', 'agy', 'posx', 'posy', 'current'}
+        orbit_keys = {'orbx', 'orby'}
+
+        Exporter._store_bpm_metadata_attrs(group, bpm_dict, metadata_keys,
+                                          sweep_index, logger)
+        Exporter._store_bpm_orbit_data(group, bpm_dict, orbit_keys,
+                                      sweep_index, logger)
+        Exporter._store_bpm_machine_data(group, bpm_dict, metadata_keys,
+                                        orbit_keys, sweep_index, logger)
+
+    @staticmethod
+    def _store_bpm_metadata_attrs(group, bpm_dict, metadata_keys,
+                                 sweep_index: int, logger) -> None:
+        """Store BPM metadata fields as HDF5 attributes."""
+        for key in metadata_keys:
+            if key in bpm_dict and bpm_dict[key] is not None:
+                try:
+                    Exporter._store_scalar_attr(group, key, bpm_dict[key])
+                except Exception as exc:
+                    logger.debug(
+                        "Could not store bpm_dict['%s'] for sweep %d: %s",
+                        key, sweep_index, exc
+                    )
+
+    @staticmethod
+    def _store_bpm_orbit_data(group, bpm_dict, orbit_keys,
+                             sweep_index: int, logger) -> None:
+        """Extract and store orbit data as compound dataset."""
+        orbit_data = {k: v for k, v in bpm_dict.items()
+                     if k in orbit_keys and v is not None}
+        if orbit_data:
+            try:
+                Exporter._store_orbit_dataset(group, orbit_data)
+            except Exception as exc:
+                logger.debug(
+                    "Could not store orbit data for sweep %d: %s",
+                    sweep_index, exc
+                )
+
+    @staticmethod
+    def _store_bpm_machine_data(group, bpm_dict, metadata_keys,
+                               orbit_keys, sweep_index: int, logger) -> None:
+        """Store machine data (MNC1, MNC2, etc.) as compound datasets."""
+        import numpy as np
+
+        for key, val in bpm_dict.items():
+            if val is None or key in metadata_keys or key in orbit_keys:
+                continue
+
+            try:
+                if isinstance(val, dict):
+                    Exporter._store_machine_group(group, key, val)
+                else:
+                    group.create_dataset(key, data=np.asarray(val))
+            except Exception as exc:
+                logger.debug(
+                    "Could not store bpm_dict['%s'] for sweep %d: %s",
+                    key, sweep_index, exc
+                )
+
+    @staticmethod
+    def _store_scalar_attr(group, key: str, val) -> None:
+        """Store scalar value as attribute."""
+        try:
+            group.attrs[key] = val
+        except (TypeError, ValueError):
+            group.attrs[key] = str(val)
+
+    @staticmethod
+    def _store_orbit_dataset(group, orbit_data: dict) -> None:
+        """Store orbit data (orbx, orby) as single compound dataset.
+
+        Creates compound dataset with orbx_val and orby_val columns only.
+        Orbit values do not have explicit units.
+
+        Args:
+            group: HDF5 group to store data in.
+            orbit_data: Dictionary with 'orbx' and/or 'orby' keys.
+        """
+        import numpy as np
+
+        if not orbit_data:
+            return
+
+        # Determine array length from first orbit data
+        first_key = next(iter(orbit_data))
+        first_val = np.asarray(orbit_data[first_key])
+
+        # Determine length (extract just values, ignore units)
+        if (isinstance(first_val, tuple) or
+            (first_val.ndim == 2 and first_val.shape[1] == 2)):
+            arr_len = len(first_val)
+        else:
+            arr_len = len(first_val)
+
+        # Build dtype: orbx_val, orby_val (values only, no units)
+        dtype_fields = []
+        for key in ['orbx', 'orby']:
+            if key in orbit_data:
+                dtype_fields.append((f'{key}_val', 'f8'))
+
+        if not dtype_fields:
+            return
+
+        dtype = np.dtype(dtype_fields)
+        data = np.empty(arr_len, dtype=dtype)
+
+        # Fill in data (extract values, ignore units)
+        for key in ['orbx', 'orby']:
+            if key not in orbit_data:
+                continue
+
+            arr = np.asarray(orbit_data[key])
+
+            if arr.ndim == 2 and arr.shape[1] == 2:
+                # (value, unit) tuple structure - extract only values
+                data[f'{key}_val'] = arr[:, 0]
+            else:
+                # Just values
+                data[f'{key}_val'] = arr
+
+        group.create_dataset('orb', data=data)
+
+    @staticmethod
+    def _store_machine_group(group, key: str, val) -> None:
+        """Store machine data (MNC1, MNC2, etc.) as a compound dataset.
+
+        Requirements:
+        - The machine (e.g., MNC1) is a dataset directly under the sweep group.
+        - Each parameter (A_val, A_range, B_val, ...) becomes a column.
+        - Units are stored as attributes per column ("<param>_unit").
+        - "prefix" is stored as a dataset attribute (metadata), not a column.
+        """
+        if not isinstance(val, dict):
+            Exporter._create_simple_machine_dataset(group, key, val)
+            return
+
+        fields, values, prefix, n_rows = Exporter._prepare_machine_fields(val)
+        if not fields:
+            return
+
+        data = Exporter._build_machine_array(fields, values, n_rows)
+        ds = group.create_dataset(key, data=data)
+        Exporter._write_prefix_attr(ds, prefix)
+
+    @staticmethod
+    def _split_value_and_unit(value):
+        """Extract values and units from parameter data.
+
+        Handles two formats:
+        1. List of (value, unit) tuples: [(v1, u1), (v2, u2), ...]
+           Returns: array([v1, v2, ...]), u1 (assumes units are same)
+        2. List of scalars: [v1, v2, ...]
+           Returns: array([v1, v2, ...]), None
+        3. Single tuple: (value, unit)
+           Returns: value, unit
+        4. Scalar: value
+           Returns: value, None
+        """
+        import numpy as np
+
+        # Check if it's a list of tuples (e.g., [(49702, 0), (49997, 0), ...])
+        if (isinstance(value, list) and len(value) > 0 and
+            isinstance(value[0], (list, tuple))):
+            # Extract values and units separately
+            values = [item[0] for item in value]
+            units = [item[1] for item in value]
+            # Assume all units are the same, take first
+            unit = units[0] if units else None
+            return np.array(values), unit
+
+        # Single tuple (value, unit)
+        if (isinstance(value, (tuple)) and len(value) == 2 and not
+            isinstance(value[0], (list, tuple))):
+            return value[0], value[1]
+
+        # List of scalars or single scalar
+        return value, None
+
+    @staticmethod
+    def _create_simple_machine_dataset(group, key: str, val) -> None:
+        import numpy as np
+        group.create_dataset(key, data=np.asarray(val))
+
+    @staticmethod
+    def _prepare_machine_fields(val: dict):
+        import numpy as np
+
+        fields = []
+        values = {}
+        prefix = val.get('prefix')
+        n_rows = None
+
+        for name, raw in val.items():
+            if name == 'prefix':
+                continue
+            value, unit = Exporter._split_value_and_unit(raw)
+            arr = np.asarray(value, dtype='f8')
+
+            # Detect number of rows from first array parameter
+            if n_rows is None and arr.ndim > 0:
+                n_rows = arr.size
+
+            # Add value column
+            fields.append((name, 'f8'))
+
+            # Add unit column for val_* parameters
+            if unit is not None:
+                fields.append((f'{name}_unit', 'f8'))
+
+            values[name] = (arr, unit)
+
+        if n_rows is None:
+            n_rows = 1
+
+        return fields, values, prefix, n_rows
+
+    @staticmethod
+    def _build_machine_array(fields, values, n_rows):
+        import numpy as np
+
+        dtype = np.dtype(fields)
+        data = np.empty(n_rows, dtype=dtype)
+
+        for name, (value, unit) in values.items():
+            arr = np.asarray(value, dtype='f8')
+
+            # Fill value column
+            if arr.ndim == 0:
+                # Scalar: replicate to all rows
+                data[name][:] = float(arr)
+            else:
+                # Array: use values for each row
+                data[name][:] = arr.flatten()[:n_rows]
+
+            # Fill unit column if present
+            if unit is not None and f'{name}_unit' in dtype.names:
+                try:
+                    data[f'{name}_unit'][:] = float(unit)
+                except (ValueError, TypeError):
+                    data[f'{name}_unit'][:] = np.nan
+
+        return data
+
+    @staticmethod
+    def _write_prefix_attr(dataset, prefix):
+        if prefix is None:
+            return
+        try:
+            dataset.attrs['prefix'] = prefix
+        except Exception:
+            dataset.attrs['prefix'] = str(prefix)
+
+    @staticmethod
+    def _write_unit_attrs(dataset, values: dict) -> None:
+        for name, (_value, unit) in values.items():
+            # Only write units for parameters that have them
+            # (e.g., val_A, val_B).
+            # Skip parameters without units (e.g., A_range, B_range)
+            if unit is None:
+                continue
+            try:
+                dataset.attrs[f'{name}_unit'] = float(unit)
+            except (ValueError, TypeError):
+                dataset.attrs[f'{name}_unit'] = str(unit)
 
     @staticmethod
     def _write_positions(group, positions: dict) -> None:
@@ -317,7 +712,8 @@ class Exporter:
                   if isinstance(results, dict) else None)
         sweeps = (results.get('sweeps_data')
                   if isinstance(results, dict) else None)
-        bpm_stats = results.get('bpm_stats') if isinstance(results, dict) else None
+        bpm_stats = (results.get('bpm_stats')
+                     if isinstance(results, dict) else None)
 
         analysis = h5file.create_group('analysis')
         apos = analysis.create_group('positions')
@@ -348,7 +744,8 @@ class Exporter:
                 pairwise_dict
             )
             cross_meas, cross_nom = self._dict_to_arrays(cross_dict)
-            scales = raw_full.get('scales') if isinstance(raw_full, dict) else None
+            scales = (raw_full.get('scales')
+                      if isinstance(raw_full, dict) else None)
             pair_dset = self._write_position_table(
                 apos, 'xbpm_raw_pairwise', pairwise_meas, pairwise_nom
             )
@@ -369,7 +766,8 @@ class Exporter:
                 pairwise_dict
             )
             cross_meas, cross_nom = self._dict_to_arrays(cross_dict)
-            scales = scaled_full.get('scales') if isinstance(scaled_full, dict) else None
+            scales = (scaled_full.get('scales')
+                      if isinstance(scaled_full, dict) else None)
             pair_dset = self._write_position_table(
                 apos, 'xbpm_scaled_pairwise', pairwise_meas, pairwise_nom
             )
@@ -408,8 +806,10 @@ class Exporter:
             dset_cross = self._write_position_table(
                 apos, f'{pos_type}_cross', cross_meas, cross_nom
             )
-            self._attach_scale_attrs(dset_pair, results.get('scales', {}), 'pair')
-            self._attach_scale_attrs(dset_cross, results.get('scales', {}), 'cross')
+            self._attach_scale_attrs(dset_pair,
+                                     results.get('scales', {}), 'pair')
+            self._attach_scale_attrs(dset_cross,
+                                     results.get('scales', {}), 'cross')
             return
         # Standard dict format (old tests)
         self._write_positions(apos, positions)
@@ -423,9 +823,11 @@ class Exporter:
                                 data=supmat_arr)
 
     def _write_scales(self, analysis, raw_full, scaled_full) -> None:
-        """Persist scaling coefficients (pair/cross) for raw and scaled runs."""
-        scales_raw = raw_full.get('scales') if isinstance(raw_full, dict) else None
-        scales_scl = scaled_full.get('scales') if isinstance(scaled_full, dict) else None
+        """Persist scaling coefficients for raw and scaled runs."""
+        scales_raw = (raw_full.get('scales')
+                      if isinstance(raw_full, dict) else None)
+        scales_scl = (scaled_full.get('scales')
+                      if isinstance(scaled_full, dict) else None)
         if not scales_raw and not scales_scl:
             return
 
@@ -476,7 +878,8 @@ class Exporter:
         """Persist ROI bounds as attributes on /analysis/positions."""
         if positions_group is None or not bpm_stats:
             return
-        roi = bpm_stats.get('roi_bounds') if isinstance(bpm_stats, dict) else None
+        roi = (bpm_stats.get('roi_bounds')
+               if isinstance(bpm_stats, dict) else None)
         if not isinstance(roi, dict):
             return
         positions_group.attrs['roi_bounds_title'] = 'ROI bounds'
@@ -767,7 +1170,8 @@ class Exporter:
 
     @staticmethod
     def _attach_blade_fit_attrs(dset, blade_order, blade_arrays,
-                                has_errors: bool, index_vals: np.ndarray) -> None:
+                                has_errors: bool,
+                                index_vals: np.ndarray) -> None:
         """Store per-blade linear fit coefficients (k, delta) as attrs."""
         if dset is None or blade_arrays is None:
             return
@@ -789,7 +1193,8 @@ class Exporter:
                 coef = np.polyfit(index_vals, y, deg=1, w=weights)
                 dset.attrs[f'k_{blade}'] = float(coef[0])
                 dset.attrs[f'delta_{blade}'] = float(coef[1])
-            except Exception:
+            except Exception as exc:
+                logger.debug("Failed to fit blade %s: %s", blade, exc)
                 continue
 
     def _write_figures(self, h5file, results: dict, data: dict) -> None:
