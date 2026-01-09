@@ -325,3 +325,26 @@ XBPM_*
 beam_*
 tests*
 notebooks*
+
+# Generated output files
+*.png
+*.pdf
+*.jpg
+*.jpeg
+
+# Generated data
+*_results/
+*_output/
+*.pickle
+*.cache
+
+# IDE cache
+.ruff_cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+*.swp
+*~
