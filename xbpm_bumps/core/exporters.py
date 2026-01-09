@@ -92,6 +92,15 @@ class Exporter:
             ),
         }
 
+        # Descriptions for BPM statistics saved on positions/bpm
+        self.BPM_STATS_DESCRIPTIONS = {
+            'sigma_h': 'Horizontal BPM position std deviation',
+            'sigma_v': 'Vertical BPM position std deviation',
+            'sigma_total': 'Combined BPM position std deviation',
+            'diff_max_h': 'Max horizontal |x_meas - x_nom| [μm]',
+            'diff_max_v': 'Max vertical |y_meas - y_nom| [μm]',
+        }
+
     def write_supmat(self, supmat: np.ndarray,
                      write_file: bool = False) -> None:
         """Write suppression matrix to disk.
@@ -653,8 +662,14 @@ class Exporter:
             return
         try:
             dataset.attrs['prefix'] = prefix
+            dataset.attrs['prefix_description'] = (
+                'Common field prefix used in this dataset'
+            )
         except Exception:
             dataset.attrs['prefix'] = str(prefix)
+            dataset.attrs['prefix_description'] = (
+                'Common field prefix used in this dataset'
+            )
 
     @staticmethod
     def _write_unit_attrs(dataset, values: dict) -> None:
@@ -668,9 +683,11 @@ class Exporter:
                 dataset.attrs[f'{name}_unit'] = float(unit)
             except (ValueError, TypeError):
                 dataset.attrs[f'{name}_unit'] = str(unit)
+            dataset.attrs[f'{name}_unit_description'] = (
+                f"Unit for field '{name}'"
+            )
 
-    @staticmethod
-    def _write_positions(group, positions: dict) -> None:
+    def _write_positions(self, group, positions: dict) -> None:
         """Write position datasets to HDF5.
 
         Handles two formats:
@@ -694,7 +711,7 @@ class Exporter:
             nom = (np.asarray(val.get('nominal'))
                    if isinstance(val, dict) else None)
             # Create single dataset with nominal and measured positions
-            Exporter._write_position_table(group, name, meas, nom)
+            self._write_position_table(group, name, meas, nom)
 
     @staticmethod
     def _dict_to_arrays(pos_dict: dict):
@@ -772,16 +789,36 @@ class Exporter:
 
             # Add figure metadata directly to dataset
             dset.attrs['xlabel'] = 'x [μm]'
+            dset.attrs['xlabel_description'] = (
+                'X axis label for plotting positions'
+            )
             dset.attrs['ylabel'] = 'y [μm]'
-            dset.attrs['title'] = f"{name.replace('_', ' ').title()} Positions"
+            dset.attrs['ylabel_description'] = (
+                'Y axis label for plotting positions'
+            )
+            dset.attrs['title'] = (
+                f"{name.replace('_', ' ').title()} Positions"
+            )
+            dset.attrs['title_description'] = (
+                'Plot title for this position dataset'
+            )
 
             # Calculate and store statistics
             diff_x = meas_1d[:, 0] - nom_1d[:, 0]
             diff_y = meas_1d[:, 1] - nom_1d[:, 1]
             diff_rms = np.sqrt(diff_x**2 + diff_y**2)
             dset.attrs['rms_mean'] = float(np.mean(diff_rms))
+            dset.attrs['rms_mean_description'] = (
+                'Mean RMS of deviation sqrt(dx^2 + dy^2)'
+            )
             dset.attrs['rms_std'] = float(np.std(diff_rms))
+            dset.attrs['rms_std_description'] = (
+                'Standard deviation of RMS deviation'
+            )
             dset.attrs['n_points'] = len(nom_1d)
+            dset.attrs['n_points_description'] = (
+                'Number of position points'
+            )
             return dset
         except Exception:
             logger.warning(
@@ -874,20 +911,30 @@ class Exporter:
         if not (isinstance(positions, dict) and 'bpm' in positions):
             return
         bpm_data = positions['bpm']
-        if isinstance(bpm_data, dict):
-            meas = (np.asarray(bpm_data.get('measured'))
-                    if 'measured' in bpm_data else None)
-            nom = (np.asarray(bpm_data.get('nominal'))
-                   if 'nominal' in bpm_data else None)
-            dset = self._write_position_table(apos, 'bpm', meas, nom)
-            if dset is not None and isinstance(bpm_stats, dict):
-                for key in ('sigma_h', 'sigma_v', 'sigma_total',
-                            'diff_max_h', 'diff_max_v'):
-                    if key in bpm_stats and bpm_stats[key] is not None:
-                        try:
-                            dset.attrs[key] = float(bpm_stats[key])
-                        except Exception:
-                            dset.attrs[key] = bpm_stats[key]
+        if not isinstance(bpm_data, dict):
+            return
+
+        meas = (np.asarray(bpm_data.get('measured'))
+                if 'measured' in bpm_data else None)
+        nom = (np.asarray(bpm_data.get('nominal'))
+               if 'nominal' in bpm_data else None)
+
+        dset = self._write_position_table(apos, 'bpm', meas, nom)
+        self._attach_bpm_stats_attrs(dset, bpm_stats)
+
+    def _attach_bpm_stats_attrs(self, dset, bpm_stats: dict) -> None:
+        """Attach BPM statistics attributes and descriptions to dataset."""
+        if dset is None or not isinstance(bpm_stats, dict):
+            return
+        for key, desc in self.BPM_STATS_DESCRIPTIONS.items():
+            val = bpm_stats.get(key)
+            if val is None:
+                continue
+            try:
+                dset.attrs[key] = float(val)
+            except Exception:
+                dset.attrs[key] = val
+            dset.attrs[f'{key}_description'] = desc
 
     def _write_fallback_positions(self, apos, results, positions,
                                   raw_full, scaled_full) -> None:
@@ -979,6 +1026,21 @@ class Exporter:
                     exc_info=True
                 )
 
+        # Backward-compatible dataset at /analysis/suppression_matrix
+        # Prefer calculated if available, otherwise standard
+        try:
+            if supmat is not None:
+                analysis.create_dataset('suppression_matrix',
+                                        data=np.asarray(supmat))
+            elif supmat_standard is not None:
+                analysis.create_dataset('suppression_matrix',
+                                        data=np.asarray(supmat_standard))
+        except Exception:
+            logger.warning(
+                "Failed to write backward-compatible suppression_matrix",
+                exc_info=True,
+            )
+
     def _write_scales(self, analysis, raw_full, scaled_full) -> None:
         """Persist scaling coefficients for raw and scaled runs."""
         scales_raw = (raw_full.get('scales')
@@ -1035,6 +1097,9 @@ class Exporter:
         for attr in ('kx', 'ky', 'dx', 'dy'):
             if attr in vals and vals[attr] is not None:
                 dset.attrs[f'scale_{attr}'] = float(vals[attr])
+                dset.attrs[f'scale_{attr}_description'] = (
+                    f"Scale parameter '{attr}' for {key} positions"
+                )
 
     @staticmethod
     def _write_bpm_stats(analysis, stats: dict) -> None:
@@ -1059,9 +1124,15 @@ class Exporter:
         if not isinstance(roi, dict):
             return
         positions_group.attrs['roi_bounds_title'] = 'ROI bounds'
+        positions_group.attrs['roi_bounds_title_description'] = (
+            'Label for region-of-interest bounds metadata'
+        )
         for key in ('x_min', 'x_max', 'y_min', 'y_max'):
             if key in roi and roi[key] is not None:
                 positions_group.attrs[key] = float(roi[key])
+                positions_group.attrs[f'{key}_description'] = (
+                    f"ROI bound for '{key.split('_')[0]}' [μm]"
+                )
 
     def _write_sweeps_group(self, analysis, sweeps) -> None:
         if not sweeps:
@@ -1343,6 +1414,20 @@ class Exporter:
             dset.attrs['title'] = 'Central Vertical Sweeps'
             dset.attrs['xlabel_blades'] = 'y [μrad]'
 
+        # Axis and title attribute descriptions
+        dset.attrs['xlabel_description'] = (
+            'Label for calculated position axis'
+        )
+        dset.attrs['ylabel_description'] = (
+            'Label for calculated position axis'
+        )
+        dset.attrs['title_description'] = (
+            'Plot title for central sweep data'
+        )
+        dset.attrs['xlabel_blades_description'] = (
+            'Label for blade angle axis'
+        )
+
         if fit_coef is None:
             return
 
@@ -1354,6 +1439,22 @@ class Exporter:
         elif fit_coef.ndim == 1 and len(fit_coef) == 2:
             dset.attrs['k'] = float(fit_coef[0])
             dset.attrs['delta'] = float(fit_coef[1])
+
+        # Fit attributes descriptions
+        dset.attrs['k_description'] = (
+            'Slope of fitted line from central sweep'
+        )
+        dset.attrs['delta_description'] = (
+            'Intercept of fitted line from central sweep'
+        )
+        if 's_k' in dset.attrs:
+            dset.attrs['s_k_description'] = (
+                'Uncertainty of slope (standard error)'
+            )
+        if 's_delta' in dset.attrs:
+            dset.attrs['s_delta_description'] = (
+                'Uncertainty of intercept (standard error)'
+            )
 
     @staticmethod
     def _attach_blade_fit_attrs(dset, blade_order, blade_arrays,
@@ -1380,6 +1481,12 @@ class Exporter:
                 coef = np.polyfit(index_vals, y, deg=1, w=weights)
                 dset.attrs[f'k_{blade}'] = float(coef[0])
                 dset.attrs[f'delta_{blade}'] = float(coef[1])
+                dset.attrs[f'k_{blade}_description'] = (
+                    f"Slope of fitted line for blade '{blade}'"
+                )
+                dset.attrs[f'delta_{blade}_description'] = (
+                    f"Intercept of fitted line for blade '{blade}'"
+                )
             except Exception as exc:
                 logger.debug("Failed to fit blade %s: %s", blade, exc)
                 continue
