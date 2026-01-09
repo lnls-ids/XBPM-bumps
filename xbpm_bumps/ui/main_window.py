@@ -1099,56 +1099,78 @@ class XBPMMainWindow(QMainWindow):
             return {}
 
         try:
-            range_h, range_v, blades_h, blades_v, _pos_h, _pos_v, fit_h, fit_v = sweeps_data
+            (range_h, range_v, blades_h, blades_v, fit_h,
+             fit_v) = sweeps_data[0:2] + sweeps_data[2:4] + sweeps_data[6:8]
         except Exception:
             return {}
 
-        def _parse_fit(fit):
-            try:
-                k_val = float(fit[0][0]) if hasattr(fit, "__len__") else float(fit[0])
-                delta_val = float(fit[1][0]) if hasattr(fit, "__len__") else float(fit[1])
-                return {'k': k_val, 'delta': delta_val}
-            except Exception:
-                return None
-
-        positions = {}
-        h_meta = _parse_fit(fit_h)
-        if h_meta:
-            positions['horizontal'] = h_meta
-        v_meta = _parse_fit(fit_v)
-        if v_meta:
-            positions['vertical'] = v_meta
-
-        def _fit_blades(blades_dict, axis_range):
-            if not isinstance(blades_dict, dict) or axis_range is None:
-                return None
-            fits = {}
-            for blade in ('to', 'ti', 'bi', 'bo'):
-                arr = blades_dict.get(blade)
-                if arr is None:
-                    continue
-                y = arr[:, 0] if hasattr(arr, 'ndim') and arr.ndim == 2 else arr
-                try:
-                    coef = np.polyfit(axis_range, y, deg=1)
-                    fits[blade] = {'k': float(coef[0]), 'delta': float(coef[1])}
-                except Exception:
-                    continue
-            return fits or None
-
-        blades = {}
-        h_blades = _fit_blades(blades_h, range_h)
-        if h_blades:
-            blades['horizontal'] = h_blades
-        v_blades = _fit_blades(blades_v, range_v)
-        if v_blades:
-            blades['vertical'] = v_blades
-
         meta = {}
+
+        positions = self._extract_sweeps_positions(fit_h, fit_v)
         if positions:
             meta['positions'] = positions
+
+        blades = self._extract_sweeps_blades(blades_h, blades_v,
+                                             range_h, range_v)
         if blades:
             meta['blades'] = blades
+
         return meta
+
+    def _extract_sweeps_positions(self, fit_h, fit_v) -> dict:
+        """Extract global fit positions from horizontal and vertical fits."""
+        positions = {}
+        h_meta = self._parse_fit(fit_h)
+        if h_meta:
+            positions['horizontal'] = h_meta
+        v_meta = self._parse_fit(fit_v)
+        if v_meta:
+            positions['vertical'] = v_meta
+        return positions
+
+    def _parse_fit(self, fit):
+        """Parse fit parameters into k and delta values."""
+        try:
+            k_val = (float(fit[0][0])
+                     if hasattr(fit, "__len__") else float(fit[0]))
+            delta_val = (float(fit[1][0])
+                         if hasattr(fit, "__len__") else float(fit[1]))
+            return {'k': k_val, 'delta': delta_val}
+        except Exception:
+            return None
+
+    def _extract_sweeps_blades(self, blades_h, blades_v, range_h,
+                              range_v) -> dict:
+        """Extract per-blade fits from blade data."""
+        blades = {}
+        h_blades = self._fit_blades(blades_h, range_h)
+        if h_blades:
+            blades['horizontal'] = h_blades
+        v_blades = self._fit_blades(blades_v, range_v)
+        if v_blades:
+            blades['vertical'] = v_blades
+        return blades
+
+    def _fit_blades(self, blades_dict, axis_range):
+        """Fit blade data to extract k and delta for each blade."""
+        if not isinstance(blades_dict, dict) or axis_range is None:
+            return None
+        fits = {}
+        for blade in ('to', 'ti', 'bi', 'bo'):
+            arr = blades_dict.get(blade)
+            if arr is None:
+                continue
+            y = arr[:, 0] if hasattr(arr, 'ndim') and arr.ndim == 2 else arr
+            try:
+                coef = np.polyfit(axis_range, y, deg=1)
+                fits[blade] = {
+                    'k': float(coef[0]),
+                    'delta': float(coef[1])
+                    }
+            except Exception as exc:
+                logger.debug("Failed to fit blade %s: %s", blade, exc)
+                continue
+        return fits or None
 
     def _tab_to_section(self, tab_text: str) -> str:
         text = (tab_text or "").lower()
@@ -1156,7 +1178,8 @@ class XBPMMainWindow(QMainWindow):
             return 'none'
         if 'blades at' in text or 'blades at sweeps' in text:
             return 'blades_sweeps'
-        if 'positions along sweep' in text or 'positions along sweeps' in text:
+        if ('positions along sweep' in text or
+            'positions along sweeps' in text):
             return 'sweep_positions'
         if 'sweep' in text:
             return 'sweeps'
@@ -1187,6 +1210,10 @@ class XBPMMainWindow(QMainWindow):
         return None
 
     def _format_analysis_info(self, meta: dict, active_tab: str) -> str:
+        """Format analysis metadata for UI display.
+
+        Delegates to helper methods to reduce complexity.
+        """
         if not meta:
             return "No analysis metadata available yet."
 
@@ -1196,10 +1223,19 @@ class XBPMMainWindow(QMainWindow):
             return ""
 
         sections: dict[str, list[str]] = {}
+        sections.update(self._format_scales_section(meta, pos_filter))
+        sections.update(self._format_sweeps_positions_section(meta))
+        sections.update(self._format_blades_section(meta))
+        sections.update(self._format_bpm_stats_section(meta))
 
-        # Scales (positions) with split lines
+        return self._format_sections_output(sections, active_section)
+
+    def _format_scales_section(self, meta: dict,
+                               pos_filter=None) -> dict[str, list[str]]:
+        """Format scales (positions) metadata section."""
         scale_lines: list[str] = []
         scales = meta.get('scales', {}) if isinstance(meta, dict) else {}
+
         for scope in ('scaled', 'raw'):
             scope_block = scales.get(scope)
             if not isinstance(scope_block, dict):
@@ -1213,128 +1249,157 @@ class XBPMMainWindow(QMainWindow):
                         continue
                     if filt_label and label != filt_label:
                         continue
-                kx = coeffs.get('kx')
-                ky = coeffs.get('ky')
-                dx = coeffs.get('dx')
-                dy = coeffs.get('dy')
-                header = f"  * {scope} {label}:"
-                line1 = []
-                line2 = []
-                if kx is not None:
-                    try:
-                        line1.append(f"kx={float(kx):.4g}")
-                    except Exception:
-                        line1.append(f"kx={kx}")
-                if dx is not None:
-                    try:
-                        line1.append(f"dx={float(dx):.4g}")
-                    except Exception:
-                        line1.append(f"dx={dx}")
-                if ky is not None:
-                    try:
-                        line2.append(f"ky={float(ky):.4g}")
-                    except Exception:
-                        line2.append(f"ky={ky}")
-                if dy is not None:
-                    try:
-                        line2.append(f"dy={float(dy):.4g}")
-                    except Exception:
-                        line2.append(f"dy={dy}")
 
-                lines_to_add = []
-                if line1:
-                    lines_to_add.append("   > " + ", ".join(line1))
-                if line2:
-                    lines_to_add.append("   > " + ", ".join(line2))
+                lines_to_add = self._format_scale_entry(coeffs)
                 if lines_to_add:
-                    scale_lines.append(header)
+                    scale_lines.append(f"  * {scope} {label}:")
                     scale_lines.extend(lines_to_add)
-        if scale_lines:
-            sections['positions'] = scale_lines
 
-        sweeps = meta.get('sweeps', {}) if isinstance(meta, dict) else {}
+        return {'positions': scale_lines} if scale_lines else {}
 
-        # Positions along sweeps (global fits)
+    def _format_scale_entry(self, coeffs: dict) -> list[str]:
+        """Format individual scale coefficient entry."""
+        lines_to_add: list[str] = []
+        line1 = []
+        line2 = []
+
+        for key in ('kx', 'dx'):
+            val = coeffs.get(key)
+            if val is not None:
+                try:
+                    line1.append(f"{key:>10} = {float(val):.4g}")
+                except Exception:
+                    line1.append(f"{key:>10} = {val}")
+
+        for key in ('ky', 'dy'):
+            val = coeffs.get(key)
+            if val is not None:
+                try:
+                    line2.append(f"{key:>10} = {float(val):.4g}")
+                except Exception:
+                    line2.append(f"{key:>10} = {val}")
+
+        if line1:
+            lines_to_add.append("   " + ", ".join(line1))
+        if line2:
+            lines_to_add.append("   " + ", ".join(line2))
+
+        return lines_to_add
+
+    def _format_sweeps_positions_section(
+            self, meta: dict) -> dict[str, list[str]]:
+        """Format sweeps positions (global fits) metadata section."""
         sweeps_pos_lines: list[str] = []
-        positions_meta = sweeps.get('positions', {}) if isinstance(sweeps, dict) else {}
-        for orient, label in (('horizontal', 'H'), ('vertical', 'V')):
+        sweeps = meta.get('sweeps', {}) if isinstance(meta, dict) else {}
+        positions_meta = (sweeps.get('positions', {})
+                         if isinstance(sweeps, dict) else {})
+
+        for orient, label in (('horizontal', ' H '), ('vertical', ' V ')):
             fit = positions_meta.get(orient)
             if not isinstance(fit, dict):
                 continue
-            header = f"  * {label}:"
-            line1 = []
-            line2 = []
-            for key, bucket in (('k', line1), ('delta', line1),
-                                ('s_k', line2), ('s_delta', line2)):
-                if key in fit and fit[key] is not None:
-                    try:
-                        bucket.append(f"{key}={float(fit[key]):.4g}")
-                    except Exception:
-                        bucket.append(f"{key}={fit[key]}")
-            lines_to_add = []
-            if line1:
-                lines_to_add.append("   > " + ", ".join(line1))
-            if line2:
-                lines_to_add.append("   > " + ", ".join(line2))
-            if lines_to_add:
-                sweeps_pos_lines.append(header)
-                sweeps_pos_lines.extend(lines_to_add)
-        if sweeps_pos_lines:
-            sections['sweep_positions'] = sweeps_pos_lines
 
-        # Blades-at-sweeps per-blade fits
+            lines_to_add = self._format_sweeps_fit_entry(fit)
+            if lines_to_add:
+                sweeps_pos_lines.append(f"\n  * {label}:")
+                sweeps_pos_lines.extend(lines_to_add)
+
+        return ({'sweep_positions': sweeps_pos_lines}
+                if sweeps_pos_lines else {})
+
+    def _format_sweeps_fit_entry(self, fit: dict) -> list[str]:
+        """Format sweeps fit entry for a single orientation."""
+        lines_to_add: list[str] = []
+        line1 = []
+        line2 = []
+
+        for key, bucket in (('k', line1), ('delta', line1),
+                           ('s_k', line2), ('s_delta', line2)):
+            if key in fit and fit[key] is not None:
+                try:
+                    bucket.append(f"{key:>10} = {float(fit[key]):.4g}")
+                except Exception:
+                    bucket.append(f"{key:>10} = {fit[key]}")
+
+        if line1:
+            lines_to_add.append("  " + ",  ".join(line1))
+        if line2:
+            lines_to_add.append("  " + ",  ".join(line2))
+
+        return lines_to_add
+
+    def _format_blades_section(self, meta: dict) -> dict[str, list[str]]:
+        """Format blades-at-sweeps per-blade fits metadata section."""
         blades_lines: list[str] = []
-        blades_meta = sweeps.get('blades', {}) if isinstance(sweeps, dict) else {}
+        sweeps = meta.get('sweeps', {}) if isinstance(meta, dict) else {}
+        blades_meta = (sweeps.get('blades', {})
+                       if isinstance(sweeps, dict) else {})
+
         for orient, label in (('horizontal', 'H'), ('vertical', 'V')):
             bfits = blades_meta.get(orient)
             if not isinstance(bfits, dict):
                 continue
+
             for blade, fit in bfits.items():
                 if not isinstance(fit, dict):
                     continue
-                header = f"  * {label} {blade}:"
-                parts = []
-                for key in ('k', 'delta'):
-                    if key in fit and fit[key] is not None:
-                        try:
-                            parts.append(f"{key}={float(fit[key]):.4g}")
-                        except Exception:
-                            parts.append(f"{key}={fit[key]}")
-                if parts:
-                    blades_lines.append(header)
-                    blades_lines.append("   > " + ", ".join(parts))
-        if blades_lines:
-            sections['blades_sweeps'] = blades_lines
 
-        # BPM stats
+                parts = self._format_blade_fit_entry(fit)
+                if parts:
+                    blades_lines.append(f"\n  * {label} {blade}:")
+                    blades_lines.append("   " + ", ".join(parts))
+
+        return {'blades_sweeps': blades_lines} if blades_lines else {}
+
+    def _format_blade_fit_entry(self, fit: dict) -> list[str]:
+        """Format blade fit entry for a single blade."""
+        parts = []
+        for key in ('k', 'delta'):
+            if key in fit and fit[key] is not None:
+                try:
+                    parts.append(f"{key}={float(fit[key]):.4g}")
+                except Exception:
+                    parts.append(f"{key}={fit[key]}")
+        return parts
+
+    def _format_bpm_stats_section(self, meta: dict) -> dict[str, list[str]]:
+        """Format BPM statistics metadata section."""
         bpm_lines: list[str] = []
         bpm_stats = meta.get('bpm_stats', {}) if isinstance(meta, dict) else {}
+
         if isinstance(bpm_stats, dict):
             for key in ('sigma_h', 'sigma_v', 'sigma_total',
-                        'diff_max_h', 'diff_max_v'):
+                       'diff_max_h', 'diff_max_v'):
                 if key in bpm_stats:
                     try:
-                        bpm_lines.append(f"  {key}={float(bpm_stats[key]):.4g}")
+                        bpm_lines.append(
+                            f"  {key:>17}  =  {float(bpm_stats[key]):.4g}"
+                        )
                     except Exception:
-                        bpm_lines.append(f"  {key}={bpm_stats[key]}")
-        if bpm_lines:
-            sections['bpm'] = bpm_lines
+                        bpm_lines.append(f"  {key:>17}  =  {bpm_stats[key]}")
 
-        # Pick only the active section; if none mapped, show all
-        ordered_sections = [active_section] if active_section else list(sections.keys())
+        return {'bpm': bpm_lines} if bpm_lines else {}
+
+    def _format_sections_output(self, sections: dict[str, list[str]],
+                                active_section: str) -> str:
+        """Format all sections into final output string."""
+        ordered_sections = (
+            [active_section] if active_section else list(sections.keys())
+        )
 
         lines: list[str] = []
         for name in ordered_sections:
             content = sections.get(name)
             if not content:
                 continue
-            prefix = ">> " if name == active_section else ""
+            prefix = "** " if name == active_section else ""
             lines.append(f"{prefix}{name.capitalize()}:")
             lines.extend(content)
             lines.append("")
 
         if lines and lines[-1] == "":
             lines.pop()
+
         if lines:
             return "\n".join(lines)
 
