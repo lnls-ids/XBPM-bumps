@@ -431,16 +431,17 @@ class XBPMMainWindow(QMainWindow):
 
     @pyqtSlot()
     def _on_export_hdf5_clicked(self):
-        """Export full analysis package to an HDF5 file."""
+        """Export data to HDF5 file (with or without analysis results)."""
         try:
-            # Ensure app is initialized and we have results
-            if not hasattr(self, 'analyzer') or not self.analyzer.app:
+            # Ensure data is loaded (analysis is optional)
+            if (not hasattr(self, 'analyzer') or not self.analyzer.app 
+                or not hasattr(self.analyzer.app, 'data')):
                 QMessageBox.warning(
                     self,
-                    "Unavailable",
+                    "No Data Loaded",
                     (
-                        "Run analysis at least once "
-                        "before exporting to HDF5."
+                        "Please load data first.\n"
+                        "Use 'Open Directory' to load blade measurement data."
                     ),
                 )
                 return
@@ -500,6 +501,9 @@ class XBPMMainWindow(QMainWindow):
             # Ensure path is set in parameter panel and visible in field
             self.param_panel.set_workdir(path)
             self.status_bar.showMessage(f"Working Directory: {path}")
+            
+            # Automatically load data (without running analysis)
+            self._load_data_from_directory()
 
     @pyqtSlot()
     def _on_open_hdf5(self):
@@ -884,6 +888,21 @@ class XBPMMainWindow(QMainWindow):
         """
         self.set_analysis_running(False)
         self.show_error(title, message)
+
+    def _load_data_from_directory(self):
+        """Load data from the selected directory without running analysis.
+        
+        This allows users to export raw data to HDF5 without analysis.
+        """
+        params = self.param_panel.get_parameters()
+        if not self._validate_workdir(params):
+            return
+
+        params = self._ensure_beamline(params)
+        self.log_message(f"Loading data from: {params['workdir']}")
+        
+        # Use load_data_only instead of run_analysis
+        self.analyzer.load_data_only(params)
 
     @pyqtSlot()
     def _on_run_clicked(self):

@@ -44,6 +44,63 @@ class XBPMAnalyzer(QObject):
         self._should_stop = False
         self._preselected_beamline: Optional[str] = None
 
+    @pyqtSlot(dict)
+    def load_data_only(self, params: Dict[str, Any]):
+        """Load data without running analysis.
+        
+        This allows exporting raw data to HDF5 without analysis results.
+        
+        Args:
+            params: Parameters dictionary from UI.
+        """
+        try:
+            # Convert params dict to command-line style arguments
+            argv = self._params_to_argv(params)
+            self.logMessage.emit(f"Loading data with args: {' '.join(argv)}")
+
+            # Create and configure app
+            self.app = XBPMApp()
+            self._preselected_beamline = params.get('beamline')
+
+            # Capture stdout/stderr for logging
+            log_capture = StringIO()
+            old_stdout = sys.stdout
+            old_stderr = sys.stderr
+
+            try:
+                sys.stdout = log_capture
+                sys.stderr = log_capture
+
+                self._setup_app_and_read_data(
+                    argv, old_stdout, old_stderr, log_capture
+                )
+
+                # After reading, enforce UI beamline selection if multiple
+                self._maybe_select_beamline(
+                    old_stdout, old_stderr, log_capture
+                )
+
+                # Set pre-selected beamline after reading if still unset
+                if self._preselected_beamline and not self.app.prm.beamline:
+                    self._set_beamline(self._preselected_beamline)
+
+                self.logMessage.emit("Data loaded successfully (no analysis run)")
+
+            finally:
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+
+                # Emit any remaining captured output
+                output = log_capture.getvalue()
+                if output:
+                    for line in output.split('\n'):
+                        if line.strip():
+                            self.logMessage.emit(line)
+
+        except Exception as e:
+            error_msg = f"{str(e)}\n\n{traceback.format_exc()}"
+            self.analysisError.emit("Data Load Failed", error_msg)
+
     def _setup_app_and_read_data(self, argv: list,
                                   old_stdout, old_stderr, log_capture):
         """Setup app, build params, and read data.

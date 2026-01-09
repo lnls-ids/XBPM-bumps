@@ -184,10 +184,12 @@ class Exporter:
             if raw_grp is None:
                 raw_grp = h5.create_group('raw_data')
 
-            self._write_derived(h5, results)
+            # Only write analysis if results are provided and non-empty
+            if results:
+                self._write_derived(h5, results)
             if rawdata:
                 self._write_bpm_data(raw_grp, rawdata)
-            if include_figures:
+            if include_figures and results:
                 self._write_figures(h5, results, data)
 
         print(f"HDF5 export written to {filepath}")
@@ -828,17 +830,24 @@ class Exporter:
         return None
 
     def _write_derived(self, h5file, results: dict) -> None:
-        """Write analysis results to HDF5 file."""
-        positions = (results.get('positions', {})
-                     if isinstance(results, dict) else {})
-        supmat = (results.get('supmat')
-                  if isinstance(results, dict) else None)
-        supmat_standard = (results.get('supmat_standard')
-                          if isinstance(results, dict) else None)
-        sweeps = (results.get('sweeps_data')
-                  if isinstance(results, dict) else None)
-        bpm_stats = (results.get('bpm_stats')
-                     if isinstance(results, dict) else None)
+        """Write analysis results to HDF5 file.
+        
+        Only creates analysis_<beamline> group if results contain actual data.
+        """
+        if not results or not isinstance(results, dict):
+            return
+        
+        positions = results.get('positions', {})
+        supmat = results.get('supmat')
+        supmat_standard = results.get('supmat_standard')
+        sweeps = results.get('sweeps_data')
+        bpm_stats = results.get('bpm_stats')
+
+        # Only create analysis group if at least one result is present
+        if not any([positions, supmat, supmat_standard, sweeps, bpm_stats,
+                    results.get('positions_raw_full'),
+                    results.get('positions_scaled_full')]):
+            return
 
         beamline = getattr(self.prm, 'beamline', None) or 'unknown'
         analysis_name = f'analysis_{beamline}'
