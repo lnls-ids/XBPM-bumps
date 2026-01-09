@@ -1494,15 +1494,18 @@ class Exporter:
                 continue
 
     def _write_figures(self, h5file, results: dict, data: dict) -> None:
-        """Write blade heatmap to /analysis_<beamline>/blade_map/ with metadata.
+        """Write blade heatmap to analysis_<beamline>/blade_map/ with metadata.
 
         Note: All figure metadata is now stored directly with the data in
-        /analysis_<beamline>/ (positions, sweeps). Only blade_map needs special handling
-        since it contains processed grid data (expensive to recalculate).
+        /analysis_<beamline>/ (positions, sweeps). Only blade_map needs
+        special handling since it contains processed grid data
+        (expensive to recalculate).
         """
-        # Blade heatmap: store processed grid data in /analysis_<beamline>/blade_map/
+        # Blade heatmap: store processed grid data in
+        # /analysis_<beamline>/blade_map/
         if results.get('blade_figure'):
-            # Find the analysis group: prefer analysis_<beamline>, fall back to legacy
+            # Find the analysis group: prefer analysis_<beamline>,
+            # fall back to legacy
             analysis = None
             for key in h5file.keys():
                 if key.startswith('analysis_'):

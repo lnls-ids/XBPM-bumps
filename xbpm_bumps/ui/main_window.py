@@ -478,20 +478,28 @@ class XBPMMainWindow(QMainWindow):
             self.show_error("Export to HDF5 Failed", str(exc))
 
     @pyqtSlot()
-    @pyqtSlot()
     def _on_open_directory(self):
         """Open dialog to select working directory with pickle files."""
-        path = QFileDialog.getExistingDirectory(
-            self,
-            "Select Working Directory",
-            os.getcwd(),
+        dialog = QFileDialog(self)
+        dialog.setWindowTitle("Select Working Directory")
+        dialog.setDirectory(os.getcwd())
+        dialog.setFileMode(QFileDialog.Directory)
+        dialog.setOption(QFileDialog.DontUseNativeDialog, False)
+        # Show all file types since we're just selecting a directory container
+        dialog.setNameFilter("All Files (*)")
+
+        # Connect to directory change to show current path
+        dialog.directoryEntered.connect(
+            lambda path: dialog.setWindowTitle(
+                f"Select Working Directory - Current: {path}"
+            )
         )
 
-        if path:
-            # Store workdir in parameter panel and update status bar
+        if dialog.exec() == QFileDialog.Accepted:
+            path = dialog.directory().absolutePath()
+            # Ensure path is set in parameter panel and visible in field
             self.param_panel.set_workdir(path)
-            self.status_bar.showMessage(f"Opened: {path}")
-            self._on_parameters_changed()
+            self.status_bar.showMessage(f"Working Directory: {path}")
 
     @pyqtSlot()
     def _on_open_hdf5(self):
