@@ -12,6 +12,7 @@ import pickle  # noqa: S403
 
 from .config import Config
 from .parameters import Prm, ParameterBuilder
+from .processors import XBPMProcessor
 
 
 logger = logging.getLogger(__name__)
@@ -211,7 +212,8 @@ class DataReader:
         - analysis/matrices/calculated: from slopes (matrix #2)
         - analysis/matrices/optimized: optimized (matrix #3, or placeholder)
         - (legacy) 'suppression_matrix': calculated (#2)
-        - (legacy) 'optimized_suppression_matrix': optimized (#3 or placeholder)
+        - (legacy) 'optimized_suppression_matrix': optimized
+            (#3 or placeholder)
 
         UI needs:
         - 'supmat_standard': standard 1/-1 pattern (matrix #1)
@@ -251,12 +253,9 @@ class DataReader:
 
         # Ensure standard always available as fixed pattern
         if 'supmat_standard' not in meta:
-            meta['supmat_standard'] = np.array([
-                [ 1, -1, -1,  1],
-                [ 1,  1,  1,  1],
-                [ 1,  1, -1, -1],
-                [ 1,  1,  1,  1],
-            ], dtype=float)
+            meta['supmat_standard'] = (
+                XBPMProcessor.standard_suppression_matrix()
+                )
 
     def _load_hdf5_bpm_data(self, h5file):
         """Rebuild raw acquisition sweeps from /raw_data when present."""
@@ -380,7 +379,7 @@ class DataReader:
         return result
 
     def _load_bpm_stats_meta(self, analysis, meta):
-        """Load BPM statistics including ROI bounds from positions/bpm metadata."""
+        """Load BPM statistics including ROI bounds from pos./bpm metadata."""
         positions_grp = analysis.get('positions')
         if positions_grp is None:
             return

@@ -23,6 +23,75 @@ class Exporter:
         """Store parameters used during export."""
         self.prm = prm
 
+        # Comprehensive parameter descriptions for HDF5 metadata
+        self.PARAM_DESCRIPTIONS = {
+            # Command-line/runtime flags
+            'showblademap': 'Display blade map visualization',
+            'centralsweep': 'Process only central sweep data',
+            'showbladescenter': 'Display blade center positions',
+            'xbpmpositions': 'Calculate XBPM positions from BPM data',
+            'xbpmfrombpm': 'Derive XBPM positions using BPM measurements',
+            'xbpmpositionsraw': 'Calculate raw (unsuppressed) XBPM positions',
+            'outputfile': 'Path to output HDF5 file',
+            'workdir': 'Working directory for analysis',
+            'skip': 'Number of initial sweeps to skip in processing',
+            'gridstep': 'Grid step size for scan range',
+            'maxradangle': 'Maximum radiation angle for analysis (mrad)',
+
+            # Beamline configuration
+            'beamline': 'Beamline identifier (e.g., MANACA, CATERETE)',
+            'section': 'Beamline section/location',
+            'current': 'Storage ring current during measurement (mA)',
+            'phaseorgap': 'Undulator phase or gap value during measurement',
+
+            # Distance parameters
+            'bpmdist': 'Distance between BPM detectors (m)',
+            'xbpmdist': 'Distance from radiation source to XBPM detector (m)',
+
+            # Blade configuration
+            'blademap': 'XBPM blade configuration mapping',
+            'nroi': 'Number of regions of interest per blade',
+        }
+
+        # Analysis group and dataset descriptions
+        self.ANALYSIS_DESCRIPTIONS = {
+            'positions': 'Calculated beam positions from various methods',
+            'positions/bpm': 'BPM-measured beam positions (x, y coordinates)',
+            'positions/xbpm_raw_pairwise': (
+                'Raw XBPM positions using pairwise blade analysis'
+            ),
+            'positions/xbpm_scaled_pairwise': (
+                'Scaled XBPM positions with suppression correction'
+            ),
+            'positions/xbpm_raw_cross': (
+                'Raw XBPM positions using cross-blade analysis'
+            ),
+            'positions/xbpm_scaled_cross': (
+                'Scaled XBPM positions with cross-blade correction'
+            ),
+
+            'matrices': 'Suppression matrices for XBPM position correction',
+            'matrices/standard': 'Standard suppression matrix (1/-1 pattern)',
+            'matrices/calculated': (
+                'Calculated suppression matrix from fitted blade slopes'
+            ),
+            'matrices/optimized': (
+                'Optimized suppression matrix from beam orbit analysis'
+            ),
+
+            'scales': 'Scaling coefficients for position transformations',
+            'scales/raw': 'Scaling factors for raw XBPM positions',
+            'scales/scaled': 'Scaling factors for corrected XBPM positions',
+
+            'sweeps': 'Blade sweep measurement data',
+            'sweeps/blades_h': (
+                'Horizontal blade sweep positions and currents'
+            ),
+            'sweeps/blades_v': (
+                'Vertical blade sweep positions and currents'
+            ),
+        }
+
     def write_supmat(self, supmat: np.ndarray,
                      write_file: bool = False) -> None:
         """Write suppression matrix to disk.
@@ -205,7 +274,13 @@ class Exporter:
         meta.attrs['created'] = datetime.utcnow().isoformat() + 'Z'
         meta.attrs['beamline'] = self.prm.beamline
 
+        # Create parameters group with description
         gprm = h5file.create_group('parameters')
+        gprm.attrs['description'] = (
+            'Analysis input parameters and beamline configuration'
+        )
+
+        # Write each parameter value and its description
         for k, v in prm_dict.items():
             if v is None:
                 continue
@@ -213,6 +288,11 @@ class Exporter:
                 gprm.attrs[k] = v
             except TypeError:
                 gprm.attrs[k] = str(v)
+
+            # Add description for this parameter
+            desc_key = f'{k}_description'
+            if k in self.PARAM_DESCRIPTIONS:
+                gprm.attrs[desc_key] = self.PARAM_DESCRIPTIONS[k]
 
     @staticmethod
     def _write_bpm_data(raw_grp, rawdata: list) -> None:
@@ -627,8 +707,7 @@ class Exporter:
         meas = np.array([pos_dict[k] for k in keys])  # Shape (N, 2)
         return meas, nom
 
-    @staticmethod
-    def _write_position_table(group, name: str,
+    def _write_position_table(self, group, name: str,
                               meas: Optional[np.ndarray],
                               nom: Optional[np.ndarray]):
         """Create position dataset with named fields.
@@ -684,6 +763,13 @@ class Exporter:
             # Write structured dataset
             dset = group.create_dataset(name, data=struct_data)
 
+            # Add dataset description
+            desc_key = f'positions/{name}'
+            if desc_key in self.ANALYSIS_DESCRIPTIONS:
+                dset.attrs['description'] = (
+                    self.ANALYSIS_DESCRIPTIONS[desc_key]
+                )
+
             # Add figure metadata directly to dataset
             dset.attrs['xlabel'] = 'x [μm]'
             dset.attrs['ylabel'] = 'y [μm]'
@@ -718,7 +804,12 @@ class Exporter:
                      if isinstance(results, dict) else None)
 
         analysis = h5file.create_group('analysis')
+        analysis.attrs['description'] = (
+            'Analysis results including positions, matrices, and sweep data'
+        )
+
         apos = analysis.create_group('positions')
+        apos.attrs['description'] = self.ANALYSIS_DESCRIPTIONS['positions']
 
         raw_full = results.get('positions_raw_full')
         scaled_full = results.get('positions_scaled_full')
@@ -778,7 +869,8 @@ class Exporter:
             self._attach_scale_attrs(pair_dset, scales, 'pair')
             self._attach_scale_attrs(cross_dset, scales, 'cross')
 
-    def _write_bpm_positions(self, apos, positions, bpm_stats: dict = None) -> None:
+    def _write_bpm_positions(self, apos, positions,
+                             bpm_stats: dict = None) -> None:
         if not (isinstance(positions, dict) and 'bpm' in positions):
             return
         bpm_data = positions['bpm']
@@ -838,27 +930,54 @@ class Exporter:
         matrices = analysis.create_group('matrices')
         try:
             matrices.attrs['description'] = (
-                'Suppression matrices: standard (#1, 1/-1 pattern), '
-                'calculated (#2, from fitted slopes), optimized (#3).'
+                self.ANALYSIS_DESCRIPTIONS['matrices']
             )
         except Exception:
-            pass
+            logger.warning(
+                "Failed to write matrices description attribute",
+                exc_info=True
+            )
 
         # Write standard matrix (#1) if provided
         if supmat_standard is not None:
-            matrices.create_dataset('standard', data=np.asarray(supmat_standard))
+            ds_std = matrices.create_dataset('standard',
+                                             data=np.asarray(supmat_standard))
+            try:
+                ds_std.attrs['description'] = (
+                    self.ANALYSIS_DESCRIPTIONS['matrices/standard']
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to set standard matrix description",
+                    exc_info=True,
+                )
 
         # Write calculated matrix (#2)
         if supmat is not None:
             supmat_arr = np.asarray(supmat)
-            matrices.create_dataset('calculated', data=supmat_arr)
+            ds_calc = matrices.create_dataset('calculated', data=supmat_arr)
+            try:
+                ds_calc.attrs['description'] = (
+                    self.ANALYSIS_DESCRIPTIONS['matrices/calculated']
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to set calculated matrix description",
+                    exc_info=True,
+                )
 
             # Optimized placeholder (#3)
             opt_ds = matrices.create_dataset('optimized', data=supmat_arr)
             try:
+                opt_ds.attrs['description'] = (
+                    self.ANALYSIS_DESCRIPTIONS['matrices/optimized']
+                )
                 opt_ds.attrs['is_placeholder'] = True
             except Exception:
-                pass
+                logger.warning(
+                    "Failed to set is_placeholder on optimized matrix",
+                    exc_info=True
+                )
 
     def _write_scales(self, analysis, raw_full, scaled_full) -> None:
         """Persist scaling coefficients for raw and scaled runs."""
@@ -870,10 +989,29 @@ class Exporter:
             return
 
         grp = analysis.create_group('scales')
+        grp.attrs['description'] = self.ANALYSIS_DESCRIPTIONS['scales']
         if scales_raw:
             self._write_scale_group(grp, 'raw', scales_raw)
+            try:
+                grp['raw'].attrs['description'] = (
+                    self.ANALYSIS_DESCRIPTIONS['scales/raw']
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to set description on scales/raw",
+                    exc_info=True,
+                )
         if scales_scl:
             self._write_scale_group(grp, 'scaled', scales_scl)
+            try:
+                grp['scaled'].attrs['description'] = (
+                    self.ANALYSIS_DESCRIPTIONS['scales/scaled']
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to set description on scales/scaled",
+                    exc_info=True,
+                )
 
     @staticmethod
     def _write_scale_group(parent, name: str, scales: dict) -> None:
@@ -929,6 +1067,9 @@ class Exporter:
         if not sweeps:
             return
         sweeps_new = analysis.create_group('sweeps')
+        sweeps_new.attrs['description'] = (
+            self.ANALYSIS_DESCRIPTIONS['sweeps']
+        )
         self._write_sweeps_dual(None, sweeps_new, sweeps)
 
     def _write_sweeps_dual(self, root_group, analysis_group, sweeps) -> None:
@@ -1008,7 +1149,7 @@ class Exporter:
                 dset, blade_order, blade_arrays, has_errors,
                 np.asarray(index_range) * xbpmdist
             )
-            Exporter._set_sweep_metadata(dset, name, fit_coef)
+            self._set_sweep_metadata(dset, name, fit_coef)
         except Exception:
             logger.warning(
                 "Failed to write sweep table %s", name,
@@ -1180,9 +1321,17 @@ class Exporter:
             struct_data[col_name] = values
         return struct_data
 
-    @staticmethod
-    def _set_sweep_metadata(dset, name: str, fit_coef: np.ndarray) -> None:
+    def _set_sweep_metadata(
+        self, dset, name: str, fit_coef: np.ndarray
+    ) -> None:
         """Attach sweep plot metadata and fit attributes."""
+        # Add dataset description
+        desc_key = f'sweeps/{name}'
+        if desc_key in self.ANALYSIS_DESCRIPTIONS:
+            dset.attrs['description'] = (
+                self.ANALYSIS_DESCRIPTIONS[desc_key]
+            )
+
         if name == 'blades_h':
             dset.attrs['xlabel'] = 'x [μm]'
             dset.attrs['ylabel'] = 'y [μm]'

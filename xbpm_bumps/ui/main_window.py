@@ -1067,10 +1067,18 @@ class XBPMMainWindow(QMainWindow):
 
     def _collect_meta_from_results(self, results: dict) -> dict:
         """Extract analysis metadata from results for UI display."""
-        meta: dict = {}
         if not isinstance(results, dict):
-            return meta
+            return {}
 
+        meta: dict = {}
+        self._collect_scales_meta(results, meta)
+        self._collect_bpm_stats_meta(results, meta)
+        self._collect_sweeps_meta_from_results(results, meta)
+        self._collect_supmat_meta(results, meta)
+        return meta
+
+    def _collect_scales_meta(self, results: dict, meta: dict) -> None:
+        """Extract scaling coefficients from results."""
         def _pick_scales(block):
             if not isinstance(block, dict):
                 return None
@@ -1086,20 +1094,25 @@ class XBPMMainWindow(QMainWindow):
         if scales:
             meta['scales'] = scales
 
+    def _collect_bpm_stats_meta(self, results: dict, meta: dict) -> None:
+        """Extract BPM statistics from results."""
         bpm_stats = results.get('bpm_stats')
         if bpm_stats:
             meta['bpm_stats'] = bpm_stats
 
+    def _collect_sweeps_meta_from_results(self, results: dict,
+                                          meta: dict) -> None:
+        """Extract sweeps metadata from results."""
         sweeps_meta = self._extract_sweeps_meta(results.get('sweeps_data'))
         if sweeps_meta:
             meta['sweeps'] = sweeps_meta
 
+    def _collect_supmat_meta(self, results: dict, meta: dict) -> None:
+        """Extract suppression matrices from results."""
         if 'supmat_standard' in results:
             meta['supmat_standard'] = results.get('supmat_standard')
         if 'supmat' in results:
             meta['supmat'] = results.get('supmat')
-
-        return meta
 
     def _extract_sweeps_meta(self, sweeps_data):
         """Extract sweep metadata: positions fits and per-blade fits."""

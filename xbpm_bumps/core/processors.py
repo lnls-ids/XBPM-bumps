@@ -373,30 +373,30 @@ class XBPMProcessor:
     @staticmethod
     def standard_suppression_matrix():
         """Return the standard suppression matrix with 1/-1 pattern.
-        
+
         This is the fixed pattern used for raw position calculations,
         independent of blade behavior or data fitting.
-        
+
         Returns:
             np.ndarray: 4x4 standard suppression matrix
         """
         return np.array([
-            [ 1, -1, -1,  1],
-            [ 1,  1,  1,  1],
-            [ 1,  1, -1, -1],
-            [ 1,  1,  1,  1],
+            [1, -1, -1,  1],
+            [1,  1,  1,  1],
+            [1,  1, -1, -1],
+            [1,  1,  1,  1],
         ], dtype=float)
 
     def suppression_matrix(self, showmatrix=False, nosuppress=False):
         """Calculate the suppression matrix from blade behavior.
-        
+
         When nosuppress=True (raw), returns the standard 1/-1 matrix.
         When nosuppress=False (scaled), calculates from fitted slopes.
         """
         if nosuppress:
             # Return standard matrix for raw calculations
             return self.standard_suppression_matrix()
-        
+
         # Calculate from blade slopes for scaled calculations
         pch = XBPMProcessor.central_line_fit(self.blades_h,
                                              self.range_h, 'h')
