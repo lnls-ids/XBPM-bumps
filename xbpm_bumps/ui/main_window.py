@@ -1094,6 +1094,11 @@ class XBPMMainWindow(QMainWindow):
         if sweeps_meta:
             meta['sweeps'] = sweeps_meta
 
+        if 'supmat_standard' in results:
+            meta['supmat_standard'] = results.get('supmat_standard')
+        if 'supmat' in results:
+            meta['supmat'] = results.get('supmat')
+
         return meta
 
     def _extract_sweeps_meta(self, sweeps_data):
@@ -1230,6 +1235,10 @@ class XBPMMainWindow(QMainWindow):
         sections.update(self._format_sweeps_positions_section(meta))
         sections.update(self._format_blades_section(meta))
         sections.update(self._format_bpm_stats_section(meta))
+
+        supmat_lines = self._format_supmat_lines(meta, active_tab)
+        if supmat_lines:
+            sections.setdefault('positions', []).extend(supmat_lines)
 
         return self._format_sections_output(sections, active_section)
 
@@ -1382,6 +1391,42 @@ class XBPMMainWindow(QMainWindow):
                         bpm_lines.append(f"  {key:>17}  =  {bpm_stats[key]}")
 
         return {'bpm': bpm_lines} if bpm_lines else {}
+
+    def _format_supmat_lines(self, meta: dict, active_tab: str) -> list[str]:
+        """Format suppression matrix lines for the active tab."""
+        lines: list[str] = []
+        text = (active_tab or "").lower()
+
+        # Raw pairwise tab: show standard suppression matrix
+        if 'raw' in text and 'pair' in text:
+            supmat = meta.get('supmat_standard')
+            if supmat is not None:
+                lines.append("\n  ** Standard Suppression Matrix:")
+                lines.extend(self._format_matrix(supmat))
+
+        # Scaled pairwise tab: show calculated suppression matrix
+        elif 'scaled' in text and 'pair' in text:
+            supmat = meta.get('supmat')
+            if supmat is not None:
+                lines.append("\n  ** Calculated Suppression Matrix:")
+                lines.extend(self._format_matrix(supmat))
+
+        return lines
+
+    def _format_matrix(self, supmat) -> list[str]:
+        """Pretty-print suppression matrix rows."""
+        try:
+            arr = np.asarray(supmat, dtype=float)
+        except Exception:
+            return [f"  {supmat}"]
+
+        if arr.ndim != 2 or arr.size == 0:
+            return [f"  {arr}"]
+
+        return [
+            "  " + " ".join(f"{val:8.4f}" for val in row)
+            for row in arr
+        ]
 
     def _format_sections_output(self, sections: dict[str, list[str]],
                                 active_section: str) -> str:

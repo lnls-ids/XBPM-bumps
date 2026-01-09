@@ -710,6 +710,8 @@ class Exporter:
                      if isinstance(results, dict) else {})
         supmat = (results.get('supmat')
                   if isinstance(results, dict) else None)
+        supmat_standard = (results.get('supmat_standard')
+                          if isinstance(results, dict) else None)
         sweeps = (results.get('sweeps_data')
                   if isinstance(results, dict) else None)
         bpm_stats = (results.get('bpm_stats')
@@ -726,7 +728,7 @@ class Exporter:
         self._write_fallback_positions(apos, results, positions,
                                        raw_full, scaled_full)
         self._attach_roi_bounds_attrs(apos, bpm_stats)
-        self._write_supmat_dataset(analysis, supmat)
+        self._write_supmat_dataset(analysis, supmat, supmat_standard)
         self._write_bpm_stats(analysis, bpm_stats)
         self._write_sweeps_group(analysis, sweeps)
 
@@ -814,13 +816,28 @@ class Exporter:
         # Standard dict format (old tests)
         self._write_positions(apos, positions)
 
-    def _write_supmat_dataset(self, analysis, supmat) -> None:
-        if supmat is None:
-            return
-        supmat_arr = np.asarray(supmat)
-        analysis.create_dataset('suppression_matrix', data=supmat_arr)
-        analysis.create_dataset('optimized_suppression_matrix',
-                                data=supmat_arr)
+    def _write_supmat_dataset(self, analysis, supmat,
+                             supmat_standard=None) -> None:
+        """Write suppression matrices to HDF5.
+        
+        Args:
+            analysis: HDF5 analysis group
+            supmat: Calculated/optimized suppression matrix (from scaled)
+            supmat_standard: Standard suppression matrix (from raw, 1/-1 pattern)
+        """
+        # Write calculated/optimized matrix
+        if supmat is not None:
+            supmat_arr = np.asarray(supmat)
+            analysis.create_dataset('optimized_suppression_matrix',
+                                    data=supmat_arr)
+        
+        # Write standard matrix (or fall back to calculated if not available)
+        if supmat_standard is not None:
+            supmat_std_arr = np.asarray(supmat_standard)
+            analysis.create_dataset('suppression_matrix', data=supmat_std_arr)
+        elif supmat is not None:
+            # Fallback: use calculated matrix for both if standard not available
+            analysis.create_dataset('suppression_matrix', data=supmat_arr)
 
     def _write_scales(self, analysis, raw_full, scaled_full) -> None:
         """Persist scaling coefficients for raw and scaled runs."""

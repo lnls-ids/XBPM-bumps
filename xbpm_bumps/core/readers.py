@@ -183,6 +183,7 @@ class DataReader:
         self._load_sweeps_meta(analysis, meta)
         self._load_bpm_stats_meta(analysis, meta)
         self._load_roi_bounds_fallback(analysis, meta)
+        self._load_supmat_meta(analysis, meta)
 
         self.analysis_meta = meta
 
@@ -201,6 +202,19 @@ class DataReader:
         sweeps_meta = self._read_sweeps_meta(analysis)
         if sweeps_meta:
             meta['sweeps'] = sweeps_meta
+
+    def _load_supmat_meta(self, analysis, meta):
+        """Load suppression matrices for UI display."""
+        supmat = analysis.get('suppression_matrix') if analysis else None
+        opt_supmat = (analysis.get('optimized_suppression_matrix')
+                      if analysis else None)
+
+        if supmat is not None:
+            meta['supmat_standard'] = np.array(supmat)
+        if opt_supmat is not None:
+            meta['supmat'] = np.array(opt_supmat)
+        elif supmat is not None and 'supmat' not in meta:
+            meta['supmat'] = np.array(supmat)
 
     def _load_hdf5_bpm_data(self, h5file):
         """Rebuild raw acquisition sweeps from /raw_data when present."""

@@ -367,6 +367,7 @@ class XBPMProcessor:
                     'dy': deltayc,
                 },
             },
+            'supmat': supmat,
         }
 
     def suppression_matrix(self, showmatrix=False, nosuppress=False):
