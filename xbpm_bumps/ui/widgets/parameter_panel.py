@@ -14,8 +14,6 @@ class ParameterPanel(QWidget):
     Emits parametersChanged signal when any parameter is modified.
     """
 
-    parametersChanged = pyqtSignal()  # noqa: N815
-
     def __init__(self, parent=None):
         """Initialize the parameter panel.
 
@@ -26,6 +24,17 @@ class ParameterPanel(QWidget):
         self._all_checked = False  # Track toggle state
         self._workdir: str = ""
         self.setup_ui()
+
+    parametersChanged = pyqtSignal()  # noqa: N815
+
+    def set_beamline(self, beamline: str):
+        """Set the beamline value for persistence in the panel."""
+        self._beamline = beamline
+        self.parametersChanged.emit()
+
+    def get_beamline(self) -> str:
+        """Get the currently set beamline, if any."""
+        return getattr(self, '_beamline', None)
 
     def setup_ui(self):
         """Initialize the UI layout and widgets."""
@@ -195,6 +204,10 @@ class ParameterPanel(QWidget):
             'centralsweep': self.central_check.isChecked(),
             'showbladescenter': self.center_check.isChecked(),
         }
+        # Include beamline if set
+        beamline = getattr(self, '_beamline', None)
+        if beamline:
+            params['beamline'] = beamline
         return params
 
     def set_parameters(self, params: dict):

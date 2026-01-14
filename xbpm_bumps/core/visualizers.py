@@ -606,6 +606,32 @@ class BladeCurrentVisualizer:
     """
 
     @staticmethod
+    def _plot_blade(ax, rng, y, yerr, marker, blade_name):
+        if yerr is not None:
+            ax.errorbar(rng, y, yerr=yerr, fmt=marker, label=blade_name)
+        else:
+            ax.plot(rng, y, marker, label=blade_name)
+
+    @staticmethod
+    def _fit_blade(rng, y, yerr, attrs, blade_name):
+        k_attr = f'k_{blade_name}'
+        d_attr = f'delta_{blade_name}'
+        coef = None
+        if attrs:
+            k_val = attrs.get(k_attr)
+            d_val = attrs.get(d_attr)
+            if k_val is not None and d_val is not None:
+                coef = (k_val, d_val)
+        if coef is None:
+            weights = None
+            if ((yerr is not None and
+                    np.all(np.isfinite(yerr)) and
+                    np.all(yerr > 0))):
+                weights = 1.0 / yerr
+            coef = np.polyfit(rng, y, deg=1, w=weights)
+        return coef
+
+    @staticmethod
     def plot_from_dicts(blades_h, blades_v, range_h, range_v,
                         beamline="", figsize=(10, 5)):
         """Create blade current figure from in-memory dicts (live analysis)."""
@@ -626,7 +652,8 @@ class BladeCurrentVisualizer:
         Returns:
             matplotlib.figure.Figure
         """
-        # Convert HDF5 datasets into blade dicts + attrs, then reuse common path
+        # Convert HDF5 datasets into blade dicts + attrs,
+        # then reuse common path
         blades_h = None
         blades_v = None
         attrs_h = None
@@ -639,7 +666,8 @@ class BladeCurrentVisualizer:
             for blade_name in ['to', 'ti', 'bi', 'bo']:
                 vals = h_data[blade_name][:]
                 err_name = f's_{blade_name}'
-                errs = h_data[err_name][:] if err_name in h_data.dtype.names else None
+                errs = (h_data[err_name][:]
+                        if err_name in h_data.dtype.names else None)
                 if errs is not None:
                     blades_h[blade_name] = np.column_stack([vals, errs])
                 else:
@@ -655,7 +683,8 @@ class BladeCurrentVisualizer:
             for blade_name in ['to', 'ti', 'bi', 'bo']:
                 vals = v_data[blade_name][:]
                 err_name = f's_{blade_name}'
-                errs = v_data[err_name][:] if err_name in v_data.dtype.names else None
+                errs = (v_data[err_name][:]
+                        if err_name in v_data.dtype.names else None)
                 if errs is not None:
                     blades_v[blade_name] = np.column_stack([vals, errs])
                 else:
@@ -670,69 +699,75 @@ class BladeCurrentVisualizer:
         )
 
     @staticmethod
+    def _plot_side(ax, blades, rng, attrs, marker_map,
+                   xlab_default, fit_style, side_label):
+        if blades is None or rng is None:
+            return
+        for blade_name, marker in marker_map:
+            arr = blades.get(blade_name)
+            if arr is None:
+                continue
+            arr = np.asarray(arr)
+            if arr.ndim == 2 and arr.shape[1] >= 2:
+                y = arr[:, 0]
+                yerr = arr[:, 1]
+            else:
+                y = arr
+                yerr = None
+
+            BladeCurrentVisualizer._plot_blade(ax, rng, y, yerr,
+                                                marker, blade_name)
+
+            # Fit only if variation exists
+            if (np.any(np.isfinite(y)) and
+                np.nanstd(y) > 0 and
+                len(rng) > 1):
+                try:
+                    coef = (
+                        BladeCurrentVisualizer._fit_blade(rng, y, yerr,
+                                                        attrs, blade_name)
+                    )
+                    style = dict(fit_style)
+                    ax.plot(rng, coef[0] * rng + coef[1],
+                            label=f"{blade_name} fit", **style)
+                except Exception:
+                    logger = logging.getLogger(__name__)
+                    logger.warning(
+                        "Blade fit failed for %s side, blade %s",
+                        side_label,
+                        blade_name,
+                        exc_info=True,
+                    )
+                    pass
+
+        ax.set_xlabel(xlab_default)
+        ax.set_ylabel('I')
+        ax.grid()
+        ax.legend()
+
+    @staticmethod
     def _plot_blades_common(blades_h, blades_v, range_h, range_v,
                             attrs_h=None, attrs_v=None,
                             beamline="", figsize=(10, 5)):
         """Shared plotting path for blade currents (live and HDF5)."""
         # Keep fit lines consistent (solid) for both live and HDF5 paths
-        fit_style = {"linestyle": "-", "linewidth": 1.4, "alpha": 0.8, "zorder": 5}
-
-        def _plot_side(ax, blades, rng, attrs, marker_map, xlab_default):
-            if blades is None or rng is None:
-                return
-            for blade_name, marker in marker_map:
-                arr = blades.get(blade_name)
-                if arr is None:
-                    continue
-                arr = np.asarray(arr)
-                if arr.ndim == 2 and arr.shape[1] >= 2:
-                    y = arr[:, 0]
-                    yerr = arr[:, 1]
-                else:
-                    y = arr
-                    yerr = None
-
-                if yerr is not None:
-                    ax.errorbar(rng, y, yerr=yerr, fmt=marker, label=blade_name)
-                else:
-                    ax.plot(rng, y, marker, label=blade_name)
-
-                # Fit only if variation exists
-                if np.any(np.isfinite(y)) and np.nanstd(y) > 0 and len(rng) > 1:
-                    try:
-                        k_attr = f'k_{blade_name}'
-                        d_attr = f'delta_{blade_name}'
-                        coef = None
-                        if attrs:
-                            k_val = attrs.get(k_attr)
-                            d_val = attrs.get(d_attr)
-                            if k_val is not None and d_val is not None:
-                                coef = (k_val, d_val)
-
-                        if coef is None:
-                            weights = None
-                            if yerr is not None and np.all(np.isfinite(yerr)) and np.all(yerr > 0):
-                                weights = 1.0 / yerr
-                            coef = np.polyfit(rng, y, deg=1, w=weights)
-
-                        style = dict(fit_style)
-                        ax.plot(rng, coef[0] * rng + coef[1], label=f"{blade_name} fit", **style)
-                    except Exception:
-                        pass
-
-            ax.set_xlabel(xlab_default)
-            ax.set_ylabel('I')
-            ax.grid()
-            ax.legend()
+        fit_style = {"linestyle": "-",
+                     "linewidth": 1.4,
+                     "alpha": 0.8,
+                     "zorder": 5}
 
         fig, (axh, axv) = plt.subplots(1, 2, figsize=figsize)
 
-        _plot_side(axh, blades_h, range_h, attrs_h,
-                   [('to', 'o-'), ('ti', 's-'), ('bi', 'd-'), ('bo', '^-')],
-                   (attrs_h or {}).get('xlabel_blades', 'x [μrad]'))
-        _plot_side(axv, blades_v, range_v, attrs_v,
-                   [('to', 'o-'), ('ti', 's-'), ('bi', 'd-'), ('bo', 'v-')],
-                   (attrs_v or {}).get('xlabel_blades', 'y [μrad]'))
+        BladeCurrentVisualizer._plot_side(
+            axh, blades_h, range_h, attrs_h,
+            [('to', 'o-'), ('ti', 's-'), ('bi', 'd-'), ('bo', '^-')],
+            (attrs_h or {}).get('xlabel_blades', 'x [μrad]'),
+            fit_style, 'horizontal')
+        BladeCurrentVisualizer._plot_side(
+            axv, blades_v, range_v, attrs_v,
+            [('to', 'o-'), ('ti', 's-'), ('bi', 'd-'), ('bo', 'v-')],
+            (attrs_v or {}).get('xlabel_blades', 'y [μrad]'),
+            fit_style, 'vertical')
 
         ylabel = (u"$I$ [# counts]" if beamline[:3] in ["MGN", "MNC"]
                  else u"$I$ [A]")

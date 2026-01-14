@@ -40,6 +40,8 @@ class XBPMMainWindow(QMainWindow):
     def __init__(self):
         """Initialize the main window."""
         super().__init__()
+        from ..core.parameters import Prm
+        self.prm = Prm()  # Persistent Prm instance for the whole session
         self.canvases = {}
         self._last_workdir = ""
         self._preselected_beamline = None
@@ -311,7 +313,7 @@ class XBPMMainWindow(QMainWindow):
     def setup_worker_thread(self):
         """Initialize worker thread for analysis execution."""
         self.worker_thread = QThread()
-        self.analyzer = XBPMAnalyzer()
+        self.analyzer = XBPMAnalyzer(self.prm)
         self.analyzer.moveToThread(self.worker_thread)
 
         self.analysisRequested.connect(self.analyzer.run_analysis)
@@ -507,7 +509,10 @@ class XBPMMainWindow(QMainWindow):
 
     @pyqtSlot()
     def _on_open_hdf5(self):
-        """Open dialog to select HDF5 data file."""
+        """Open dialog to select HDF5 data file.
+
+        (Routes through Analyzer for beamline selection.)
+        """
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Select HDF5 File",
@@ -519,10 +524,16 @@ class XBPMMainWindow(QMainWindow):
             # Store workdir in parameter panel and update status bar
             self.param_panel.set_workdir(path)
             self.status_bar.showMessage(f"Opened: {path}")
-            self._on_parameters_changed()
 
-            # Try to load and display figures from HDF5
-            self._on_load_hdf5_figures(path)
+            # Use Analyzer workflow for loading HDF5.
+            # (Ensures beamline selection.)
+            params = self.param_panel.get_parameters()
+            if not self._validate_workdir(params):
+                return
+
+            params = self._ensure_beamline(params)
+            self.log_message(f"Loading data from: {params['workdir']}")
+            self.analyzer.load_data_only(params)
 
     def _on_load_hdf5_figures(self, hdf5_path: str) -> None:
         """Load figures from HDF5 file and display them.
@@ -895,6 +906,12 @@ class XBPMMainWindow(QMainWindow):
         This allows users to export raw data to HDF5 without analysis.
         """
         params = self.param_panel.get_parameters()
+
+        # DEBUG
+        print("[DEBUG] _load_data_from_directory called. params "
+              f"before _ensure_beamline: {params}")
+        # DEBUG
+
         if not self._validate_workdir(params):
             return
 
@@ -908,6 +925,12 @@ class XBPMMainWindow(QMainWindow):
     def _on_run_clicked(self):
         """Handle Run Analysis button click."""
         params = self.param_panel.get_parameters()
+
+        # DEBUG
+        # If this function calls _ensure_beamline, add debug here as well
+        print("[DEBUG] _on_run_clicked called. "
+              f"params before _ensure_beamline: {params}")
+
         if not self._validate_workdir(params):
             return
 
@@ -931,27 +954,37 @@ class XBPMMainWindow(QMainWindow):
 
     def _ensure_beamline(self, params: dict) -> dict:
         """Apply preselected beamline or prompt selection if needed."""
+        # DEBUG
+        print("[DEBUG] _ensure_beamline called."
+              f" params['beamline']={params.get('beamline')},"
+              " self._preselected_beamline="
+              f"{getattr(self, '_preselected_beamline', None)}")
+        # DEBUG
+
         try:
             from ..core.readers import DataReader
-            from ..core.parameters import Prm
             import os
 
-            reader = DataReader(Prm(workdir=params['workdir']))
-
-            # Use any preselected beamline from workdir change
+            # Always use preselected beamline if available
             if self._preselected_beamline:
                 params['beamline'] = self._preselected_beamline
+                self.prm.beamline = self._preselected_beamline
 
+            # If beamline is already set, never prompt again
             if params.get('beamline'):
+                self.prm.beamline = params['beamline']
                 return params
 
+            self.prm.workdir = params['workdir']
+            reader = DataReader(self.prm)
             beamlines = []
             if os.path.isfile(params['workdir']):
                 # For files, skip heavy parsing here;
                 # defer to analyzer if needed
                 beamlines = reader._extract_beamlines_from_header()
             else:
-                rawdata = reader._get_pickle_data()
+                from xbpm_bumps.core.reader_pickle import read_pickle_dir
+                rawdata = read_pickle_dir(params['workdir'])
                 beamlines = reader._extract_beamlines(rawdata)
                 if not beamlines:
                     beamlines = reader._extract_beamlines_fallback(rawdata)
@@ -959,15 +992,35 @@ class XBPMMainWindow(QMainWindow):
             if len(beamlines) == 1:
                 params['beamline'] = beamlines[0]
                 self._preselected_beamline = beamlines[0]
+                self.prm.beamline = beamlines[0]
                 self.log_message(f"Auto-selected beamline: {beamlines[0]}")
                 # Update XBPM distance based on auto-selected beamline
                 self._update_xbpmdist_from_beamline(beamlines[0])
+
+                # DEBUG
+                # Persist in parameter panel for future get_parameters() calls
+                if hasattr(self, 'param_panel'):
+                    self.param_panel.set_beamline(beamlines[0])
             elif len(beamlines) > 1:
                 if not self._prompt_beamline_dialog(beamlines, params):
                     return params
+                # After dialog, persist the choice
+                if params.get('beamline'):
+                    self._preselected_beamline = params['beamline']
+                    self.prm.beamline = params['beamline']
+
+                    # DEBUG
+                    print("\n[DEBUG] After dialog: params['beamline'] = "
+                          f"{params.get('beamline')},"
+                          " self._preselected_beamline = "
+                          f"{self._preselected_beamline}")
+                    # Persist in parameter panel for future get_parameters() calls
+                    if hasattr(self, 'param_panel'):
+                        self.param_panel.set_beamline(params['beamline'])
+                    # DEBUG
+
         except Exception as exc:  # pragma: no cover - defensive
-            self.log_message("Warning: Could not pre-extract beamlines:"
-                             f" {exc}")
+            self.log_message(f"Beamline selection failed: {exc}")
 
         return params
 
