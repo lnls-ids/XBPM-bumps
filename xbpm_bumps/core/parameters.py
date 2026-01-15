@@ -65,7 +65,7 @@ class ParameterBuilder:
 
     def __init__(self, prm: Optional[Prm] = None):
         """Initialize builder with optional pre-existing parameters."""
-        self.prm:     Optional[Prm]  = prm
+        self.prm:     Prm = prm if prm is not None else Prm()
         self.rawdata: Optional[list] = None
 
     def from_cli(self, argv=None) -> Prm:
@@ -90,51 +90,6 @@ class ParameterBuilder:
             maxradangle      = 20.0,
             beamline         = "",
         )
-        return self.prm
-
-    def enrich_from_data(
-        self,
-        rawdata: list,
-        selected_beamline: Optional[str] = None,
-        beamline_selector=None,
-    ) -> Prm:
-        """Enrich Prm with other data-derived values.
-
-        Adds beamline-specific parameters and infers grid step if needed.
-
-        Args:
-                rawdata: Raw data list from measurements.
-                selected_beamline: Optional pre-selected beamline to skip
-                    selection dialog.
-                beamline_selector: Optional callback to choose a beamline when
-                    multiple are found (UI dialog in GUI mode).
-
-        Returns:
-            prm: Enriched Prm instance.
-        """
-        # DEBUG
-        print("[DEBUG] enrich_from_data called with selected_beamline:",
-              selected_beamline)
-        # DEBUG
-
-        self.rawdata = rawdata
-
-        if self.prm is None:
-            self.prm = Prm()
-
-        print(f"[DEBUG] enrich_from_data: initial self.prm.beamline={self.prm.beamline}, selected_beamline={selected_beamline}")
-
-        # Only set beamline if not already set
-        if not self.prm.beamline:
-            if selected_beamline:
-                print(f"[DEBUG] Setting self.prm.beamline from selected_beamline: {selected_beamline}")
-                self.prm.beamline = selected_beamline
-            else:
-                print("[DEBUG] No beamline set, identifying via _identify_beamline...")
-                self.prm.beamline = self._identify_beamline(beamline_selector)
-                print(f"[DEBUG] Beamline set to: {self.prm.beamline}")
-
-        self._add_beamline_parameters()
         return self.prm
 
     def _parse_args(self, argv=None):
@@ -208,44 +163,22 @@ class ParameterBuilder:
         Avoids terminal prompts by using an optional selector callback
         when multiple beamlines are found.
         """
-        # DEBUG
-        print("[DEBUG] _identify_beamline called")
-        # DEBUG
-
         # Import here to avoid circular import
         from xbpm_bumps.core.readers import DataReader
         beamlines = DataReader._extract_beamlines(self.rawdata)
-        print("[DEBUG] Extracted beamlines:", beamlines)
         if not beamlines:
             raise ValueError("No beamlines detected in data.")
 
         if len(beamlines) == 1:
-            print("[DEBUG] Only one beamline found, selecting:", beamlines[0])
             beamline = beamlines[0]
         else:
-
-            # DEBUG
-            print("[DEBUG] Multiple beamlines found, calling selector with:",
-                  beamlines)
-            # DEBUG
-
             choice = (beamline_selector(beamlines)
                       if beamline_selector
                       else None)
-
-            # DEBUG
-            print("[DEBUG] Selector returned:", choice)
-            # DEBUG
-
             if not choice:
                 print("WARNING: multiple beamlines found;"
                       " defaulting to first.")
             beamline = choice or beamlines[0]
-
-        # DEBUG
-        print("[DEBUG] Final beamline selected:", beamline)
-        # DEBUG
-
         if beamline not in Config.BLADEMAP.keys():
             print(f" ERROR: beamline {beamline} not defined in blade maps.")
             print(" Defined blade maps are:"

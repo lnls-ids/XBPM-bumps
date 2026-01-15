@@ -1,6 +1,6 @@
 """Qt-friendly wrapper for XBPM analysis core."""
 
-from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QEventLoop
+from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 from typing import Optional, Dict, Any
 import sys
 from io import StringIO
@@ -8,8 +8,7 @@ import traceback
 import numpy as np
 
 from ..core.app import XBPMApp
-from ..core.parameters import Prm, ParameterBuilder
-from ..core.readers import DataReader
+from ..core.parameters import Prm
 from ..core.processors import XBPMProcessor
 from ..core.exporters import Exporter
 
@@ -28,43 +27,43 @@ class XBPMAnalyzer(QObject):
     analysisError = pyqtSignal(str, str)  # noqa: N815
     logMessage = pyqtSignal(str)          # noqa: N815
 
-    # UI-thread beamline selection
-    beamlineSelectionNeeded = pyqtSignal(list)  # noqa: N815
-    beamlineSelected = pyqtSignal(str)          # noqa: N815
+    # (No longer needed: beamline selection is centralized)
 
-    def __init__(self, prm, parent=None):
+    def __init__(self, prm, builder, reader, rawdata, parent=None):
         """Initialize the analyzer.
 
         Args:
-            prm: Required persistent Prm instance to use.
-            parent: Optional parent QObject.
+            prm:     persistent Prm instance to use.
+            builder: ParameterBuilder instance (enriched, canonical).
+            reader:  Canonical DataReader instance.
+            rawdata: Canonical rawdata.
+            parent:  Optional parent QObject.
         """
         super().__init__(parent)
         self.app: Optional[XBPMApp] = None
         self.prm: Prm = prm
+        self.builder = builder
+        self.reader = reader
+        self.rawdata = rawdata
         self._should_stop = False
-        self._preselected_beamline: Optional[str] = None
+        # self._preselected_beamline: Optional[str] = None
 
     @pyqtSlot(dict)
-    def load_data_only(self, params: Dict[str, Any]):
+    def load_data_only(self):
         """Load data without running analysis.
 
         This allows exporting raw data to HDF5 without analysis results.
-
-        Args:
-            params: Parameters dictionary from UI.
         """
         try:
-            # Convert params dict to command-line style arguments
-            argv = self._params_to_argv(params)
-            self.logMessage.emit(f"Loading data with args: {' '.join(argv)}")
-
-            # Create and configure app
+            # The main window/controller must have already set up Prm and
+            # builder
             self.app = XBPMApp()
-            self._preselected_beamline = params.get('beamline')
-            # Use persistent Prm if provided
-            if self.prm is not None:
-                self.app.prm = self.prm
+            self.app.prm = self.prm
+            self.app.builder = self.builder
+            self.app.reader = self.reader
+            self.app.data = (self.reader._blades_fetch()
+                             if self.reader else None)
+            # Beamline is now always set in canonical Prm
 
             # Capture stdout/stderr for logging
             log_capture = StringIO()
@@ -75,22 +74,12 @@ class XBPMAnalyzer(QObject):
                 sys.stdout = log_capture
                 sys.stderr = log_capture
 
-                self._setup_app_and_read_data(
-                    argv, old_stdout, old_stderr, log_capture
-                )
-
-                # After reading, enforce UI beamline selection if multiple
-                self._maybe_select_beamline(
-                    old_stdout, old_stderr, log_capture
-                )
-
-                # Set pre-selected beamline after reading if still unset
-                if self._preselected_beamline and not self.app.prm.beamline:
-                    self._set_beamline(self._preselected_beamline)
+                # Data loading logic (if needed) can go here
+                # (No CLI parsing or builder instantiation)
 
                 self.logMessage.emit(
                     "Data loaded successfully (no analysis run)"
-                    )
+                )
 
             finally:
                 sys.stdout = old_stdout
@@ -107,61 +96,6 @@ class XBPMAnalyzer(QObject):
             error_msg = f"{str(e)}\n\n{traceback.format_exc()}"
             self.analysisError.emit("Data Load Failed", error_msg)
 
-    def _setup_app_and_read_data(self, argv: list,
-                                  old_stdout, old_stderr, log_capture):
-        """Setup app, build params, asks beamline to DataReader, and read data.
-
-        Args:
-            argv: Command-line arguments.
-            old_stdout: Original stdout before capture.
-            old_stderr: Original stderr before capture.
-            log_capture: StringIO for logging.
-        """
-        self.analysisProgress.emit("Building parameters...")
-        self.app.builder = ParameterBuilder()
-        self.app.prm = self.prm
-        self.app.builder.from_cli(argv)
-
-        # Ask DataReader for available beamlines
-        temp_reader = DataReader(self.prm, self.app.builder)
-        beamlines = temp_reader.get_available_beamlines()
-        beamlines = [str(b) for b in beamlines]
-
-        # If multiple beamlines and none selected, prompt user for
-        # string selection
-        if not self.prm.beamline and beamlines and len(beamlines) > 1:
-            selected = self._select_beamline_on_ui(
-                beamlines, old_stdout, old_stderr, log_capture
-            )
-            chosen = selected or beamlines[0]
-            self.prm.beamline = chosen
-
-        # Now, with beamline set, read the data (DataReader will validate)
-        self.analysisProgress.emit("Reading data...")
-        self.app.reader = DataReader(self.prm, self.app.builder)
-
-        def beamline_selector_ui(beamlines):
-            beamlines = [str(b) for b in beamlines]
-            return self._select_beamline_on_ui(
-                beamlines, old_stdout, old_stderr, log_capture
-            )
-
-        # DEBUG
-        print("[DEBUG] Calling DataReader.read with beamline_selector_ui"
-              f"{beamlines}")
-        # DEBUG
-
-        self.app.data = self.app.reader.read(
-            beamline_selector=beamline_selector_ui
-            )
-
-        # Emit captured output
-        output = log_capture.getvalue()
-        if output:
-            for line in output.split('\n'):
-                if line.strip():
-                    self.logMessage.emit(line)
-
     def _initialize_and_run_analysis(self):
         """Initialize processor/exporter and run analysis steps."""
         # Initialize processor and exporter
@@ -172,19 +106,11 @@ class XBPMAnalyzer(QObject):
         # Run analysis steps
         results = self._run_analysis_steps()
 
-        # DEBUG: Print results and Prm state before emitting
-        import pprint
-        print("[DEBUG] Analysis results:")
-        pprint.pprint(results)
-        print("[DEBUG] Prm state:")
-        pprint.pprint(vars(self.app.prm)
-                      if hasattr(self.app, 'prm') else self.app.prm)
-
         # Emit completion with results
         self.analysisComplete.emit(results)
 
     @pyqtSlot(dict)
-    def run_analysis(self, params: Dict[str, Any]):
+    def run_analysis(self):
         """Execute XBPM analysis with given parameters.
 
         This method is designed to be called from a worker thread.
@@ -192,23 +118,17 @@ class XBPMAnalyzer(QObject):
         Args:
             params: Dictionary of analysis parameters from ParameterPanel.
         """
-        self._should_stop = False
-        self.analysisStarted.emit()
-
         try:
-            # Convert params dict to command-line style arguments
-            argv = self._params_to_argv(params)
-            self.logMessage.emit(f"Running with args: {' '.join(argv)}")
-
-            # Create and configure app
+            # The main window/controller must have already set up Prm and
+            # builder
             self.app = XBPMApp()
-            self._preselected_beamline = params.get('beamline')
+            self.app.prm = self.prm
+            self.app.builder = self.builder
+            self.app.reader = self.reader
+            self.app.data = (self.reader._blades_fetch()
+                             if self.reader else None)
+            # Beamline is now always set in canonical Prm
 
-            # Always build a fresh Prm from current UI parameters
-            self.app.builder = ParameterBuilder()
-            new_prm = self.app.builder.from_cli(argv)
-            self.app.prm = new_prm
-            self.prm = new_prm  # Update persistent reference as well
             # Capture stdout/stderr for logging
             old_stdout = sys.stdout
             old_stderr = sys.stderr
@@ -217,35 +137,6 @@ class XBPMAnalyzer(QObject):
             try:
                 sys.stdout = log_capture
                 sys.stderr = log_capture
-
-                # If beamline was pre-selected in params (main thread),
-                # remember it to apply after from_cli
-                if self._preselected_beamline:
-                    if self.app.prm is None:
-                        if self.prm is not None:
-                            self.app.prm = self.prm
-                        # else: do not create a new Prm, rely on
-                        # main window to provide
-                    self.app.prm.beamline = self._preselected_beamline
-
-                self._setup_app_and_read_data(
-                    argv, old_stdout, old_stderr, log_capture
-                )
-
-                # After reading, enforce UI beamline selection if multiple
-                self._maybe_select_beamline(
-                    old_stdout, old_stderr, log_capture
-                )
-
-                if self._should_stop:
-                    return
-
-                # Set pre-selected beamline after reading if still unset
-                if self._preselected_beamline and not self.app.prm.beamline:
-                    self._set_beamline(self._preselected_beamline)
-
-                if self._should_stop:
-                    return
 
                 self._initialize_and_run_analysis()
 
@@ -263,62 +154,6 @@ class XBPMAnalyzer(QObject):
         except Exception as e:
             error_msg = f"{str(e)}\n\n{traceback.format_exc()}"
             self.analysisError.emit("Analysis Failed", error_msg)
-
-    # No longer needed: all beamline state is in self.prm
-
-    def _select_beamline_on_ui(self, beamlines, old_stdout,
-                               old_stderr, log_capture):
-        """Request beamline choice on UI thread and wait for result."""
-        loop = QEventLoop()
-        choice_holder = {"choice": None}
-
-        def on_selected(choice: str):
-            choice_holder["choice"] = choice
-            loop.quit()
-
-        self.beamlineSelected.connect(on_selected)
-        try:
-            # Temporarily restore stdout/stderr so UI prints (if any) go there
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
-            self.beamlineSelectionNeeded.emit(sorted(beamlines))
-            loop.exec_()
-        finally:
-            sys.stdout = log_capture
-            sys.stderr = log_capture
-            self.beamlineSelected.disconnect(on_selected)
-
-        return choice_holder["choice"]
-
-    def _maybe_select_beamline(
-        self, old_stdout, old_stderr, log_capture
-    ) -> None:
-        """Handle beamline selection if multiple are detected.
-
-        Args:
-            old_stdout: Original stdout before capture.
-            old_stderr: Original stderr before capture.
-            log_capture: StringIO capturing stdout/stderr.
-        """
-        # If beamline already determined, skip selection
-        if self.prm.beamline:
-            return
-
-        beamlines = self.app.reader.get_available_beamlines()
-        if len(beamlines) <= 1:
-            return
-
-        selected = self._select_beamline_on_ui(
-            beamlines, old_stdout, old_stderr, log_capture
-        )
-
-        # If user cancels, default to first to avoid terminal prompt
-        chosen = selected or beamlines[0]
-        self.prm.beamline = chosen
-        rawdata = getattr(self.app.reader, "rawdata", None) or self.app.data
-        self.app.builder.enrich_from_data(
-            rawdata, selected_beamline=chosen
-        )
 
     def _params_to_argv(self, params: Dict[str, Any]) -> list:
         """Convert parameter dictionary to command-line argument list.
@@ -452,9 +287,8 @@ class XBPMAnalyzer(QObject):
             # Enrich Prm with data-derived fields (section, bpmdist, etc.)
             rawdata = (getattr(self.app.reader, "rawdata", None) or
                        self.app.data)
-            self.app.builder.enrich_from_data(
-                rawdata, selected_beamline=self.prm.beamline
-            )
+            self.app.builder.rawdata = rawdata
+            self.app.builder._add_beamline_parameters()
 
     def _extract_position_coordinates(self, pos_list):
         """Extract coordinates from position result dictionary.

@@ -3,7 +3,6 @@
 import os
 import logging
 import numpy as np
-from typing import Optional
 
 # Reading trusted local experiment data; HDF5 path will replace this
 
@@ -26,40 +25,19 @@ class DataReader:
             and runtime data.
         data (dict): Dictionary containing parsed measurement data.
     """
-    def __init__(self, prm: Prm, builder: Optional[ParameterBuilder] = None):
+    def __init__(self, prm: Prm, builder: ParameterBuilder):
         """Initialize DataReader with parameters.
 
         Args:
             prm (Prm): Parameters dataclass instance.
-            builder: Optional ParameterBuilder instance to share state.
+            builder: Canonical ParameterBuilder instance to share state.
         """
         self.prm     = prm
-        self.builder = builder or ParameterBuilder(prm)
-        self.data    = {}
+        self.builder = builder
+        # self.data is deprecated; use self.rawdata for canonical data
         self.rawdata = None
         self._hdf5_path = None
         self.analysis_meta = {}
-
-    def get_available_beamlines(self):
-        """Extract available beamlines from rawdata or file header."""
-        if hasattr(self, 'rawdata') and self.rawdata is not None:
-            return self._extract_beamlines(self.rawdata)
-        # Otherwise, try to peek into the file (HDF5 or text)
-        # For HDF5, open file and list /raw_data keys
-        if hasattr(self.prm, 'inputfile') and self.prm.inputfile:
-            import h5py
-            fname = self.prm.inputfile
-            if os.path.isfile(fname) and fname.endswith(('.h5', '.hdf5')):
-                try:
-                    with h5py.File(fname, 'r') as h5f:
-                        if 'raw_data' in h5f:
-                            return list(h5f['raw_data'].keys())
-                except Exception as exc:
-                    logger.exception(
-                        "Exception occurred while reading available beamlines"
-                        " from HDF5: %s", exc)
-        # Fallback: return empty list
-        return []
 
     def _extract_beamlines(self, rawdata):
         """Extract unique beamlines from raw data headers."""
@@ -83,11 +61,12 @@ class DataReader:
         except Exception:
             return []
 
-    def read(self, beamline_selector=None) -> dict:
+    def read(self, beamline_selector=None):
         """Read data from working directory or file using backend modules.
 
         Returns:
-            dict: Parsed measurement data dictionary.
+            The canonical rawdata (list of tuples) as a convenience.
+            Canonical access is via self.rawdata.
         """
         from .reader_hdf5 import read_hdf5, read_hdf5_analysis_meta
         from .reader_pickle import read_pickle_dir
@@ -105,7 +84,7 @@ class DataReader:
         else:
             self.rawdata = read_pickle_dir(path)
             self.analysis_meta = {}
-        return self.data
+        return self.rawdata
 
     def _infer_gridstep_from_grid(self, grid_x, grid_y):
         """Infer gridstep from HDF5 grid datasets when missing."""
@@ -123,25 +102,6 @@ class DataReader:
                 "Failed to infer gridstep from HDF5 grid", exc_info=True
             )
 
-    def _handle_beamline_selection_file(self, beamline_selector) -> None:
-        """Handle beamline selection logic for file-based input."""
-        # If beamline still unknown, try selector to avoid terminal prompt
-        if beamline_selector and not self.prm.beamline:
-            beamlines = self._extract_beamlines_from_header()
-            if not beamlines:
-                beamlines = self._extract_beamlines_fallback(self.rawdata)
-
-            if len(beamlines) == 1:
-                chosen = beamlines[0]
-                self.prm.beamline = chosen
-                self.builder.prm.beamline = chosen
-            elif beamlines:
-                selected = beamline_selector(beamlines)
-                # If user cancels, pick first to avoid terminal prompt
-                chosen = selected or beamlines[0]
-                self.prm.beamline = chosen
-                self.builder.prm.beamline = chosen
-
     def _configure_xbpmdist(self) -> None:
         """Configure XBPM distance from source."""
         if self.prm.xbpmdist is None:
@@ -152,18 +112,18 @@ class DataReader:
             print("\n WARNING: distance from source to XBPM not provided."
                   f" Using default value: {self.prm.xbpmdist} m")
 
-    def _infer_gridstep(self) -> None:
-        """Infer grid step from data keys if not explicitly provided."""
-        try:
-            xs = np.unique([k[0] for k in self.data.keys()])
-            ys = np.unique([k[1] for k in self.data.keys()])
-            dx = np.min(np.diff(np.sort(xs))) if xs.size > 1 else None
-            dy = np.min(np.diff(np.sort(ys))) if ys.size > 1 else None
-            steps = [v for v in (dx, dy) if v not in (None, 0)]
-            if steps:
-                self.prm.gridstep = float(min(steps))
-        except Exception as err:
-            print(f"\nWARNING: could not infer grid step from data: {err}.")
+    # def _infer_gridstep(self) -> None:
+    #     """Infer grid step from data keys if not explicitly provided."""
+    #     try:
+    #         xs = np.unique([k[0] for k in self.data.keys()])
+    #         ys = np.unique([k[1] for k in self.data.keys()])
+    #         dx = np.min(np.diff(np.sort(xs))) if xs.size > 1 else None
+    #         dy = np.min(np.diff(np.sort(ys))) if ys.size > 1 else None
+    #         steps = [v for v in (dx, dy) if v not in (None, 0)]
+    #         if steps:
+    #             self.prm.gridstep = float(min(steps))
+    #     except Exception as err:
+    #         print(f"\nWARNING: could not infer grid step from data: {err}.")
 
     def _print_summary(self) -> None:
         """Print a summary of the loaded data and parameters."""

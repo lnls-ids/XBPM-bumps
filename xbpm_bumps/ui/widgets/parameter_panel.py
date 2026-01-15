@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
     QCheckBox, QGroupBox, QDoubleSpinBox, QSpinBox, QPushButton, QLabel,
     QLineEdit
 )
-from PyQt5.QtCore import pyqtSignal, Qt
+from PyQt5.QtCore import pyqtSignal
 
 
 class ParameterPanel(QWidget):

@@ -22,12 +22,18 @@ class XBPMApp:
         self.processor: Optional[XBPMProcessor] = None
         self.exporter: Optional[Exporter] = None
 
-    def run(self, argv=None) -> None:
-        """Parse args, load data, run analyses, and render outputs."""
-        self.builder = ParameterBuilder()
+    def run(self, argv, builder) -> None:
+        """'Parse args, load data, run analyses, and render outputs.
+
+        Args:
+            argv: Command-line arguments (list of strings).
+            builder: Canonical ParameterBuilder instance (must be provided)
+        """
+        self.builder = builder
         self.prm = self.builder.from_cli(argv)
         self.reader = DataReader(self.prm, self.builder)
-        self.data = self.reader.read()
+        self.reader.read()
+        self.data = self.reader._blades_fetch()
         self.processor = XBPMProcessor(self.data, self.prm)
         self.exporter = Exporter(self.prm)
 

@@ -5,7 +5,7 @@ Includes HDF5 export with figures and derived results.
 
 import numpy as np
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from io import BytesIO
 import logging
 from typing import Optional
@@ -315,7 +315,7 @@ class Exporter:
         machine_pattern = re.compile(r'^[A-Z]{3,4}[0-9]?$')
 
         sweep_keys = [k for k in raw_grp.keys()
-                  if k.startswith('sweep_')]
+                      if k.startswith('sweep_')]
         for sweep_key in sweep_keys:
             sweep_grp = raw_grp[sweep_key]
             for key in sweep_grp.keys():
@@ -339,49 +339,62 @@ class Exporter:
             rawdata: Optional raw data to detect beamlines from.
         """
         analyzed_beamline = getattr(self.prm, 'beamline', None) or 'unknown'
+        all_beamlines, beamline_params = self._detect_beamlines_and_params(
+            raw_grp, rawdata, analyzed_beamline)
+        try:
+            raw_grp.attrs['available_beamlines'] = ','.join(all_beamlines)
+        except Exception:
+            raw_grp.attrs['available_beamlines'] = str(all_beamlines)
+        for beamline in all_beamlines:
+            self._write_measurements_dataset(
+                raw_grp, beamline, analyzed_beamline, table, beamline_params)
 
-        # Detect beamlines from rawdata if available
+    def _detect_beamlines_and_params(self, raw_grp, rawdata,
+                                     analyzed_beamline):
         if rawdata:
             beamlines = self._extract_beamlines_from_rawdata(rawdata)
-            # Extract beamline-specific parameters from rawdata
             beamline_params = self._extract_beamline_specific_params(rawdata)
         else:
             beamlines = set()
             beamline_params = {}
-
-        # Fallback: inspect written sweep groups to discover beamlines
         if not beamlines:
             beamlines = self._extract_beamlines_from_hdf5_sweeps(raw_grp)
-
-        # Ultimate fallback to the analyzed beamline to avoid empty loop
         if not beamlines:
             beamlines = {analyzed_beamline}
+        return list(sorted(beamlines)), beamline_params
 
-        # For each detected beamline, create a group with parameters
-        for beamline in sorted(beamlines):
-            beam_grp = raw_grp.create_group(beamline)
-
-            # Write beamline-specific parameters
-            specific_params = beamline_params.get(beamline, {})
-            self._write_beamline_parameters(beam_grp, beamline,
-                                            specific_params)
-
-            # Write measurements for analyzed beamline from table
-            # Or compute from sweep data for other beamlines
-            if beamline == analyzed_beamline and table is not None:
-                beam_grp.create_dataset('measurements', data=table)
-            else:
-                # Compute measurements from sweep data written to HDF5
-                measurements = self._compute_measurements_from_hdf5_sweeps(
-                    raw_grp, beamline
+    def _write_measurements_dataset(self, raw_grp, beamline,
+                                    analyzed_beamline, table,
+                                    beamline_params):
+        dataset_name = f"measurements_{beamline}"
+        if beamline == analyzed_beamline and table is not None:
+            ds = raw_grp.create_dataset(dataset_name, data=table)
+        else:
+            measurements = (
+                self._compute_measurements_from_hdf5_sweeps(raw_grp, beamline)
                 )
-                if measurements is not None:
-                    beam_grp.create_dataset('measurements', data=measurements)
-                else:
-                    print(
-                        "Warning: Could not compute measurements for "
-                        f"{beamline} from sweep data"
-                    )
+            if measurements is not None:
+                ds = raw_grp.create_dataset(dataset_name, data=measurements)
+            else:
+                print("Warning: Could not compute measurements for"
+                      f" {beamline} from sweep data")
+                return
+        ds.attrs['beamline'] = beamline
+        ds.attrs['description'] = (
+            'Averages and std dev of baldes measurements'
+            ' for each electron beam position'
+        )
+        specific_params = beamline_params.get(beamline, {})
+        for key, val in specific_params.items():
+            if val is None:
+                continue
+            try:
+                ds.attrs[key] = val
+            except (TypeError, ValueError):
+                ds.attrs[key] = str(val)
+            desc = self.PARAM_DESCRIPTIONS.get(key)
+            if desc:
+                ds.attrs[f"{key}_description"] = desc
 
     def _compute_measurements_from_hdf5_sweeps(self, raw_grp, beamline: str):
         """Compute full measurements table from sweep_xxxx/<beamline> datasets.
@@ -720,10 +733,11 @@ class Exporter:
         Beamline-specific parameters are stored per-beamline under
         raw_data/<beamline>/parameters.
         """
-        meta = h5file.create_group('meta')
-        meta.attrs['version'] = 1
-        meta.attrs['created'] = datetime.utcnow().isoformat() + 'Z'
-        meta.attrs['description'] = 'Global metadata for this HDF5 export'
+        # No meta group is created; global metadata can be written as file
+        # attributes if needed
+        h5file.attrs['version'] = 1
+        h5file.attrs['created'] = datetime.now(timezone.utc).isoformat()
+        h5file.attrs['description'] = 'Global metadata for this HDF5 export'
 
     @staticmethod
     def _write_bpm_data(raw_grp, rawdata: list) -> None:
@@ -1263,7 +1277,6 @@ class Exporter:
         sweeps = results.get('sweeps_data')
         bpm_stats = results.get('bpm_stats')
 
-        # Only create analysis group if at least one result is present
         if not any([positions, supmat, supmat_standard, sweeps, bpm_stats,
                     results.get('positions_raw_full'),
                     results.get('positions_scaled_full')]):
@@ -1272,21 +1285,45 @@ class Exporter:
         beamline = getattr(self.prm, 'beamline', None) or 'unknown'
         analysis_name = f'analysis_{beamline}'
         analysis = h5file.create_group(analysis_name)
+        self._write_analysis_attributes(analysis, beamline, results)
+        self._write_positions_group(analysis, positions, bpm_stats, results)
+        self._write_analysis_datasets(analysis, supmat,
+                                      supmat_standard, sweeps)
+
+    def _write_analysis_attributes(self, analysis, beamline, results):
         analysis.attrs['description'] = (
             'Analysis results including positions, matrices, and sweep data'
         )
+        analysis.attrs['beamline'] = beamline
+        for meta_key in ['meta', 'analysis_meta', 'metadata']:
+            meta = results.get(meta_key)
+            if isinstance(meta, dict):
+                for k, v in meta.items():
+                    if v is not None:
+                        try:
+                            analysis.attrs[k] = v
+                        except Exception:
+                            analysis.attrs[k] = str(v)
+        for k, v in results.items():
+            if k.startswith('meta_') and v is not None:
+                try:
+                    analysis.attrs[k] = v
+                except Exception:
+                    analysis.attrs[k] = str(v)
 
+    def _write_positions_group(self, analysis, positions, bpm_stats, results):
         apos = analysis.create_group('positions')
         apos.attrs['description'] = self.ANALYSIS_DESCRIPTIONS['positions']
-
         raw_full = results.get('positions_raw_full')
         scaled_full = results.get('positions_scaled_full')
-
         self._write_full_positions(apos, raw_full, scaled_full)
         self._write_bpm_positions(apos, positions, bpm_stats)
         self._write_fallback_positions(apos, results, positions,
                                        raw_full, scaled_full)
         self._attach_roi_bounds_attrs(apos, bpm_stats)
+
+    def _write_analysis_datasets(self, analysis, supmat,
+                                 supmat_standard, sweeps):
         self._write_supmat_dataset(analysis, supmat, supmat_standard)
         self._write_sweeps_group(analysis, sweeps)
 
@@ -1457,20 +1494,7 @@ class Exporter:
                     exc_info=True
                 )
 
-        # Backward-compatible dataset at /analysis/suppression_matrix
-        # Prefer calculated if available, otherwise standard
-        try:
-            if supmat is not None:
-                analysis.create_dataset('suppression_matrix',
-                                        data=np.asarray(supmat))
-            elif supmat_standard is not None:
-                analysis.create_dataset('suppression_matrix',
-                                        data=np.asarray(supmat_standard))
-        except Exception:
-            logger.warning(
-                "Failed to write backward-compatible suppression_matrix",
-                exc_info=True,
-            )
+        # Removed redundant suppression_matrix dataset; use matrices/calculated
 
     def _write_scales(self, analysis, raw_full, scaled_full) -> None:
         """Persist scaling coefficients for raw and scaled runs."""

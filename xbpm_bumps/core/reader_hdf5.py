@@ -264,42 +264,67 @@ def read_hdf5(path, beamline_selector=None):
         if 'raw_data' not in h5:
             return []
         raw_grp = h5['raw_data']
-        # List all beamlines
-        beamlines = [k for k, v in raw_grp.items()
-                     if isinstance(v, h5py.Group)]
-        # If selector is provided and multiple beamlines, use it
+        measurement_datasets = [k for k, v in raw_grp.items()
+                               if isinstance(v, h5py.Dataset) and
+                               k.endswith('_measurements')]
+        beamlines = extract_beamlines(raw_grp, measurement_datasets)
         chosen_beamlines = beamlines
-
         if beamline_selector and len(beamlines) > 1:
             chosen = beamline_selector(beamlines)
             if chosen:
                 chosen_beamlines = [chosen]
-
         for beamline in chosen_beamlines:
-            bl_grp = raw_grp[beamline]
-
-            # Extract parameters (meta)
-            meta = {}
-            if 'parameters' in bl_grp:
-                meta = dict(bl_grp['parameters'].attrs.items())
-
-            # Extract grid (not always present, but keep for compatibility)
-            grid = None
-
-            # Extract BPM dict (measurements)
-            bpm_dict = {}
-            if 'measurements' in bl_grp:
-                dset = bl_grp['measurements']
-                # If structured array, convert to dict of arrays
-                if hasattr(dset, 'dtype') and dset.dtype.names:
-                    for name in dset.dtype.names:
-                        bpm_dict[name] = dset[name][()]
-                else:
-                    bpm_dict = np.array(dset)
-            # Optionally, extract more info (e.g., sweeps) if needed
-            rawdata.append((meta, grid, bpm_dict))
-
+            result = parse_measurement_dataset(raw_grp, beamline)
+            if result:
+                rawdata.append(result)
     return rawdata
+
+
+def extract_beamlines(raw_grp, measurement_datasets):
+    """Extract available beamlines from measurement datasets."""
+    # Support measurements_<beamline> naming
+    beamlines = [name.replace('measurements_', '')
+                 for name in measurement_datasets
+                 if name.startswith('measurements_')]
+
+    # Try to extract from available_beamlines attribute in raw_data group
+    avail = raw_grp.attrs.get('available_beamlines')
+    if avail:
+        if isinstance(avail, bytes):
+            avail = avail.decode()
+        if isinstance(avail, str):
+            beamlines = [b.strip() for b in avail.split(',') if b.strip()]
+        elif isinstance(avail, (list, tuple, np.ndarray)):
+            beamlines = list(avail)
+    elif measurement_datasets:
+        # Fallback: check first dataset's attribute
+        first_ds = raw_grp[measurement_datasets[0]]
+        avail = first_ds.attrs.get('available_beamlines')
+        if avail:
+            if isinstance(avail, bytes):
+                avail = avail.decode()
+            if isinstance(avail, str):
+                beamlines = [b.strip() for b in avail.split(',') if b.strip()]
+            elif isinstance(avail, (list, tuple, np.ndarray)):
+                beamlines = list(avail)
+    return beamlines
+
+
+def parse_measurement_dataset(raw_grp, beamline):
+    """Parse measurement dataset for a given beamline."""
+    ds_name = f"{beamline}_measurements"
+    if ds_name not in raw_grp:
+        return None
+    dset = raw_grp[ds_name]
+    meta = dict(dset.attrs.items())
+    grid = None  # Not present in new structure
+    bpm_dict = {}
+    if hasattr(dset, 'dtype') and dset.dtype.names:
+        for name in dset.dtype.names:
+            bpm_dict[name] = dset[name][()]
+    else:
+        bpm_dict = np.array(dset)
+    return (meta, grid, bpm_dict)
 
 
 # --- Figure reconstruction utilities moved from readers.py ---

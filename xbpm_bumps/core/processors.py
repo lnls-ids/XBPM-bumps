@@ -4,10 +4,10 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-from .parameters import Prm
+from .parameters  import Prm                     # noqa: E272
 from .visualizers import PositionVisualizer
-from .exporters import Exporter
-from .constants import STD_ROI_SIZE, FIGDPI
+from .constants   import STD_ROI_SIZE, FIGDPI    # noqa: E272
+# from .exporters import Exporter
 
 
 class XBPMProcessor:
@@ -428,7 +428,7 @@ class XBPMProcessor:
                 print()
             print()
 
-        Exporter(self.prm).write_supmat(supmat)
+        # Exporter(self.prm).write_supmat(supmat)
         return supmat
 
     @staticmethod
