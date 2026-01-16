@@ -84,6 +84,14 @@ class DataReader:
         else:
             self.rawdata = read_pickle_dir(path)
             self.analysis_meta = {}
+
+        # DEBUG
+        print("\n\n #### DEBUG (DataReader.read): ####\n")
+        print(f" rawdata type: {type(self.rawdata)}")
+        print(f" rawdata [0]: {self.rawdata[0] if self.rawdata else 'None'}")
+        print("\n ########## END DEBUG DataReader.read ##########\n\n")
+        # END DEBUG
+
         return self.rawdata
 
     def _infer_gridstep_from_grid(self, grid_x, grid_y):

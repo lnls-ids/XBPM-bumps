@@ -4,18 +4,29 @@ import logging
 import numpy as np
 
 
-def read_hdf5_analysis_meta(path):
-    """Read analysis and figure metadata from HDF5 file."""
+def read_hdf5_analysis_meta(path, beamline=None):
+    """Read analysis metadata from HDF5 file for the given beamline.
+
+    Returns a dict of metadata, or empty dict if not found.
+    """
     meta = {}
     with h5py.File(path, 'r') as h5file:
-        analysis = h5file.get('analysis')
-        if analysis is None:
-            return meta
-        _load_scales_meta(analysis, meta)
-        _load_sweeps_meta(analysis, meta)
-        _load_bpm_stats_meta(analysis, meta)
-        _load_roi_bounds_fallback(analysis, meta)
-        _load_supmat_meta(analysis, meta)
+        # Find the correct analysis group
+        if beamline is None:
+            # Try to infer beamline from available
+            # analysis_<beamline> groups
+            for key in h5file.keys():
+                if key.startswith('analysis_'):
+                    beamline = key.replace('analysis_', '')
+                    break
+        group_name = f'analysis_{beamline}' if beamline else None
+        if group_name and group_name in h5file:
+            analysis = h5file[group_name]
+            _load_scales_meta(analysis, meta)
+            _load_sweeps_meta(analysis, meta)
+            _load_bpm_stats_meta(analysis, meta)
+            _load_roi_bounds_fallback(analysis, meta)
+            _load_supmat_meta(analysis, meta)
     return meta
 
 
@@ -247,19 +258,9 @@ def _fit_blade_trends(ds, coord_field):
         return None
 
 
-def read_hdf5(path, beamline_selector=None):
-    """Read HDF5 file and return rawdata as a list of tuples.
-
-    Tuples include meta, grid, bpm_dict.
-
-    Args:
-        path: Path to HDF5 file.
-        beamline_selector: Optional callback for beamline selection.
-
-    Returns:
-        rawdata: List of (meta, grid, bpm_dict) tuples.
-    """
-    rawdata = []
+def read_hdf5(path):
+    """Open HDF5 file and return the list of available beamlines."""
+    import h5py
     with h5py.File(path, 'r') as h5:
         if 'raw_data' not in h5:
             return []
@@ -268,16 +269,7 @@ def read_hdf5(path, beamline_selector=None):
                                if isinstance(v, h5py.Dataset) and
                                k.endswith('_measurements')]
         beamlines = extract_beamlines(raw_grp, measurement_datasets)
-        chosen_beamlines = beamlines
-        if beamline_selector and len(beamlines) > 1:
-            chosen = beamline_selector(beamlines)
-            if chosen:
-                chosen_beamlines = [chosen]
-        for beamline in chosen_beamlines:
-            result = parse_measurement_dataset(raw_grp, beamline)
-            if result:
-                rawdata.append(result)
-    return rawdata
+        return beamlines
 
 
 def extract_beamlines(raw_grp, measurement_datasets):

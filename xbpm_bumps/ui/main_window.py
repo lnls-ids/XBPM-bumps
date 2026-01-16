@@ -40,14 +40,13 @@ class XBPMMainWindow(QMainWindow):
         """Initialize the main window."""
         super().__init__()
         from ..core.parameters import Prm, ParameterBuilder
-        self.builder = ParameterBuilder()
-        self.prm = self.builder.prm or Prm()  # Persistent instance
-        self.canvases = {}
-        self.reader = None  # Canonical DataReader instance
-        self.rawdata = None  # Canonical rawdata
-        self._last_workdir = ""
-        self._preselected_beamline = None
-        self._last_meta = {}
+        self.builder         = ParameterBuilder()
+        self.prm             = self.builder.prm or Prm()  # Persistent
+        self.canvases        = {}
+        self.reader          = None  # Canonical DataReader instance
+        self.rawdata         = None  # Canonical rawdata
+        self._last_workdir   = ""
+        self._last_meta      = {}
         self._last_hdf5_meta = {}
         self.setup_ui()
         self.setup_worker_thread()
@@ -55,16 +54,25 @@ class XBPMMainWindow(QMainWindow):
         # Wider default window to give canvases more horizontal room
         self.resize(1600, 900)
 
-    def _select_and_set_beamline(self, workdir: str) -> str:
+    def _read_data_and_select_beamline(self, workdir: str) -> str:
         """Centralized beamline selection: returns the chosen beamline."""
         from ..core.readers import DataReader
         import os
-        # Only instantiate and read once per data source
-        if self.reader is None or self.prm.workdir != workdir:
-            self.prm.workdir = workdir
-            self.reader = DataReader(self.prm, self.builder)
-            self.reader.read()
-            self.rawdata = self.reader.rawdata
+        # Always instantiate and read DataReader for each new workdir
+        self.prm.workdir = workdir
+        self.reader = DataReader(self.prm, self.builder)
+        self.reader.read(
+            beamline_selector=self._create_beamline_selector()
+        )
+        self.rawdata = self.reader.rawdata
+
+        # DEBUG
+        print("\n\n #### DEBUG (_read_data_and_select_beamline): ####\n")
+        print(f" rawdata type: {type(self.rawdata)}")
+        print(f" rawdata [0]: {self.rawdata[0] if self.rawdata else 'None'}")
+        print("\n ########## END DEBUG ##########\n\n")
+        # END DEBUG
+
         # Extract beamlines using HDF5 logic if file is HDF5
         beamlines = []
         if (os.path.isfile(workdir) and
@@ -99,7 +107,7 @@ class XBPMMainWindow(QMainWindow):
         # Persist in parameter panel for future get_parameters() calls
         if hasattr(self, 'param_panel'):
             self.param_panel.set_beamline(chosen)
-        self._preselected_beamline = chosen
+        # self._preselected_beamline removed
         return chosen
 
     def setup_ui(self):
@@ -252,7 +260,7 @@ class XBPMMainWindow(QMainWindow):
             return
 
         self._last_workdir = workdir
-        self._preselected_beamline = None
+        # self._preselected_beamline removed
 
     def _create_status_bar(self):
         """Create status bar with progress indicator."""
@@ -271,18 +279,11 @@ class XBPMMainWindow(QMainWindow):
         """Attempt beamline selection immediately after workdir change."""
         try:
             self.prm.workdir = workdir
-            if self.reader is None or self.prm.workdir != workdir:
-                from ..core.readers import DataReader
-                self.reader = DataReader(self.prm, self.builder)
-                self.reader.read(
-                    beamline_selector=self._create_beamline_selector()
-                    )
-                self.rawdata = self.reader.rawdata
+            # DataReader instantiation and reading now handled by _read_data_and_select_beamline
             # Handle beamline result
             if self.reader.prm.beamline:
-                self._preselected_beamline = self.reader.prm.beamline
                 self.log_message(
-                    f"Preselected beamline: {self.reader.prm.beamline}"
+                    f"Beamline selected: {self.reader.prm.beamline}"
                 )
                 self._update_xbpmdist_from_beamline(self.reader.prm.beamline)
         except Exception as exc:  # pragma: no cover - defensive
@@ -330,7 +331,6 @@ class XBPMMainWindow(QMainWindow):
             beamlines = reader._extract_beamlines(reader.rawdata)
 
         if len(beamlines) == 1:
-            self._preselected_beamline = beamlines[0]
             self.log_message(f"Auto-selected beamline: {beamlines[0]}")
             self._update_xbpmdist_from_beamline(beamlines[0])
 
@@ -366,27 +366,41 @@ class XBPMMainWindow(QMainWindow):
         for k, v in params.items():
             if hasattr(self.prm, k):
                 setattr(self.prm, k, v)
-        # Use canonical rawdata for parameter enrichment
 
-        # DEBUG
-        print("[DEBUG] _run_analysis_with_canonical_params: rawdata type:", type(self.rawdata))
-        print("[DEBUG] _run_analysis_with_canonical_params: rawdata length:", len(self.rawdata) if self.rawdata is not None else 'None')
+        # Use canonical rawdata for parameter enrichment
+        self.builder.rawdata = self.rawdata
+
+        # DEBUG: Print rawdata structure before parameter enrichment
+        print("\n\n #### DEBUG (_run_analysis_with_canonical_params): ####\n")
+        print("[DEBUG] _run_analysis_with_canonical_params:"
+              " self.rawdata type:", type(self.rawdata))
+        print("[DEBUG] _run_analysis_with_canonical_params:"
+              " self.rawdata length:",
+              len(self.rawdata) if self.rawdata is not None else 'None')
         if self.rawdata:
-            print("[DEBUG] _run_analysis_with_canonical_params: rawdata[0] type:", type(self.rawdata[0]))
+            print("[DEBUG] _run_analysis_with_canonical_params:"
+                  " self.rawdata[0] type:", type(self.rawdata[0]))
+            if (isinstance(self.rawdata[0], (list, tuple)) and
+                len(self.rawdata[0]) > 2):
+                print("[DEBUG] _run_analysis_with_canonical_params:"
+                      " self.rawdata[0][2] keys:",
+                      getattr(self.rawdata[0][2], 'keys', lambda: None)())
         else:
-            print("[DEBUG] _run_analysis_with_canonical_params: rawdata is empty!")
+            print("[DEBUG] _run_analysis_with_canonical_params:"
+                  " self.rawdata is empty or None!")
         # END DEBUG
 
-        self.builder.rawdata = self.rawdata
         self.builder._add_beamline_parameters()
         # Update persistent Prm reference
         self.prm = self.builder.prm
+
         # Always convert rawdata to expected dict format for analysis
         analysis_data = self.reader._blades_fetch() if self.reader else None
         self.analyzer = XBPMAnalyzer(self.prm, self.builder,
                                      self.reader, self.rawdata)
         self.analyzer.moveToThread(self.worker_thread)
         self.analyzer.app = None  # Reset to force re-init
+
         def set_app_reader_data():
             if self.analyzer.app is not None:
                 self.analyzer.app.reader = self.reader
@@ -602,19 +616,20 @@ class XBPMMainWindow(QMainWindow):
 
             # Ensure beamline is selected using canonical workflow
             workdir = params.get('workdir')
-            if not self._preselected_beamline:
-                try:
-                    chosen_beamline = self._select_and_set_beamline(workdir)
-                except Exception as exc:
-                    self.show_error("Beamline Selection Failed", str(exc))
-                    return
-            else:
-                chosen_beamline = self._preselected_beamline
+            try:
+                chosen_beamline = self._read_data_and_select_beamline(workdir)
+            except Exception as exc:
+                self.show_error("Beamline Selection Failed", str(exc))
+                return
             self.log_message(
                 f"Loading data from: {workdir} "
                 f"(beamline: {chosen_beamline})"
             )
             self.analyzer.load_data_only()
+            # Assign analysis metadata for UI display
+            self._last_hdf5_meta = getattr(self.reader, 'analysis_meta', {})
+            self._last_meta = self._last_hdf5_meta
+
             # Automatically load and display figures after import
             self._on_load_hdf5_figures(workdir)
 
@@ -985,8 +1000,10 @@ class XBPMMainWindow(QMainWindow):
         params = self.param_panel.get_parameters()
         if not self._validate_workdir(params):
             return
-        # Centralized beamline selection and data read
-        chosen_beamline = self._select_and_set_beamline(params['workdir'])
+        # Centralized data reading and beamline selection
+        chosen_beamline = (
+            self._read_data_and_select_beamline(params['workdir'])
+            )
         self.log_message(f"Loading data from: {params['workdir']}"
                          f" (beamline: {chosen_beamline})")
         # Set canonical Prm fields directly from params
