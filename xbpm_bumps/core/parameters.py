@@ -157,37 +157,6 @@ class ParameterBuilder:
 
         return parser.parse_args(argv)
 
-    def _identify_beamline(self, beamline_selector=None) -> str:
-        """Identify and select beamline from raw data.
-
-        Avoids terminal prompts by using an optional selector callback
-        when multiple beamlines are found.
-        """
-        # Import here to avoid circular import
-        from xbpm_bumps.core.readers import DataReader
-        beamlines = DataReader._extract_beamlines(self.rawdata)
-        if not beamlines:
-            raise ValueError("No beamlines detected in data.")
-
-        if len(beamlines) == 1:
-            beamline = beamlines[0]
-        else:
-            choice = (beamline_selector(beamlines)
-                      if beamline_selector
-                      else None)
-            if not choice:
-                print("WARNING: multiple beamlines found;"
-                      " defaulting to first.")
-            beamline = choice or beamlines[0]
-        if beamline not in Config.BLADEMAP.keys():
-            print(f" ERROR: beamline {beamline} not defined in blade maps.")
-            print(" Defined blade maps are:"
-                  f" {', '.join(Config.BLADEMAP.keys())}.")
-            print("\n Please, check your data. Aborting.")
-            sys.exit(0)
-
-        return beamline
-
     def _add_beamline_parameters(self) -> None:
         """Add beamline-specific parameters to prm."""
         self.prm.current = self.rawdata[0][2]["current"]

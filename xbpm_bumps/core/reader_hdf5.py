@@ -259,17 +259,86 @@ def _fit_blade_trends(ds, coord_field):
 
 
 def read_hdf5(path):
-    """Open HDF5 file and return the list of available beamlines."""
+    """Open HDF5 file and return canonical rawdata.
+
+    rawdata is a list of (meta, grid, bpm_dict) tuples for each beamline.
+
+    Args:
+        path: Path to HDF5 file.
+    """
     import h5py
+    rawdata, measured_data = [], []
     with h5py.File(path, 'r') as h5:
         if 'raw_data' not in h5:
             return []
         raw_grp = h5['raw_data']
-        measurement_datasets = [k for k, v in raw_grp.items()
-                               if isinstance(v, h5py.Dataset) and
-                               k.endswith('_measurements')]
+        measurement_datasets = [
+            k for k, v in raw_grp.items()
+            if isinstance(v, h5py.Dataset) and
+            k.startswith('measurements_')
+            ]
         beamlines = extract_beamlines(raw_grp, measurement_datasets)
-        return beamlines
+
+        # Extract measured (averaged) datasets for each beamline.
+        for beamline in beamlines:
+            result = parse_measurement_dataset(raw_grp, beamline)
+
+            # DEBUG
+            # print("\n\n #### DEBUG (reader_hdf5.read_hdf5): ####\n")
+            # print(f" result: {result}")
+            # print(f" raw_grp: {raw_grp}")
+            # print("\n ########## END DEBUG reader_hdf5.read_hdf5"
+            #       " ##########\n\n")
+            # END DEBUG
+
+            if result is not None:
+                measured_data.append(result)
+
+        # Also extract raw data from sweeps.
+        rawdata = extract_sweeps(raw_grp)
+
+    # DEBUG
+    print("\n\n #### DEBUG (reader_hdf5.read_hdf5): ####\n")
+    print(f" rawdata type: {type(rawdata)}")
+    print(f" rawdata [0][2]: {rawdata[0][2].keys() if rawdata else 'None'}")
+    print(" rawdata[0][2].keys() ="
+          f" {rawdata[0][2].keys() if rawdata else 'None'}")
+    print(" rawdata[0][2]['current'] = "
+          f"{rawdata[0][2]['current'] if rawdata else 'None'}")
+    print("\n ########## END DEBUG reader_hdf5.read_hdf5 ##########\n\n")
+    # END DEBUG
+
+    return rawdata, measured_data
+
+
+def extract_sweeps(raw_grp):
+    """Extract sweep data from raw_data group."""
+    import numpy as np
+    rawdata = []
+    for key in raw_grp:
+        if key.startswith('sweep_'):
+            sweep_grp = raw_grp[key]
+            meta = dict(sweep_grp.attrs.items())
+            grid = np.array(sweep_grp['grid']) if 'grid' in sweep_grp else None
+            # Extract BPM parameters from attributes
+            bpm_dict = {}
+            for param in ['agx', 'agy', 'current', 'posx', 'posy']:
+                if param in sweep_grp.attrs:
+                    bpm_dict[param] = sweep_grp.attrs[param]
+            # Optionally, add datasets as well if needed
+            for ds_name, ds in sweep_grp.items():
+                if ds_name != 'grid':
+                    bpm_dict[ds_name] = np.array(ds)
+            rawdata.append((meta, grid, bpm_dict))
+
+    # DEBUG
+    print("\n\n #### DEBUG (reader_hdf5.extract_sweeps): ####\n")
+    print(f" rawdata type: {type(rawdata)}")
+    print(f" rawdata [0][2]: {rawdata[0][2].keys() if rawdata else 'None'}")
+    print("\n ########## END DEBUG reader_hdf5.extract_sweeps ##########\n\n")
+    # END DEBUG
+
+    return rawdata
 
 
 def extract_beamlines(raw_grp, measurement_datasets):
@@ -304,7 +373,7 @@ def extract_beamlines(raw_grp, measurement_datasets):
 
 def parse_measurement_dataset(raw_grp, beamline):
     """Parse measurement dataset for a given beamline."""
-    ds_name = f"{beamline}_measurements"
+    ds_name = f"measurements_{beamline}"
     if ds_name not in raw_grp:
         return None
     dset = raw_grp[ds_name]

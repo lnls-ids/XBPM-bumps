@@ -61,16 +61,16 @@ class XBPMMainWindow(QMainWindow):
         # Always instantiate and read DataReader for each new workdir
         self.prm.workdir = workdir
         self.reader = DataReader(self.prm, self.builder)
-        self.reader.read(
-            beamline_selector=self._create_beamline_selector()
-        )
+        self.reader.read()
         self.rawdata = self.reader.rawdata
 
         # DEBUG
-        print("\n\n #### DEBUG (_read_data_and_select_beamline): ####\n")
-        print(f" rawdata type: {type(self.rawdata)}")
-        print(f" rawdata [0]: {self.rawdata[0] if self.rawdata else 'None'}")
-        print("\n ########## END DEBUG ##########\n\n")
+        # print(
+        # "\n\n #### DEBUG (main window._read_data_and_select_beamline):"
+        # " ####\n")
+        # print(f" rawdata type: {type(self.rawdata)}")
+        # print(f" rawdata [0]: {self.rawdata[0] if self.rawdata else 'None'}")
+        # print("\n ########## END DEBUG ##########\n\n")
         # END DEBUG
 
         # Extract beamlines using HDF5 logic if file is HDF5
@@ -90,7 +90,8 @@ class XBPMMainWindow(QMainWindow):
                         beamlines = extract_beamlines(raw_grp,
                                                       measurement_datasets)
         else:
-            beamlines = self.reader._extract_beamlines(self.rawdata)
+            from xbpm_bumps.core.reader_pickle import extract_beamlines
+            beamlines = extract_beamlines(self.rawdata)
         if not beamlines:
             raise RuntimeError("No beamlines found in data.")
         if len(beamlines) == 1:
@@ -107,8 +108,77 @@ class XBPMMainWindow(QMainWindow):
         # Persist in parameter panel for future get_parameters() calls
         if hasattr(self, 'param_panel'):
             self.param_panel.set_beamline(chosen)
-        # self._preselected_beamline removed
+
+        # Re-read rawdata to include only chosen beamline's data
+        self.rawdata = self._re_read_rawdata(chosen, workdir)
+
         return chosen
+        def _read_data_and_select_beamline(self, workdir: str) -> str:
+            """Centralized beamline selection: returns the chosen beamline."""
+            import os
+            # Use read_hdf5 to open and extract all data at once
+            if (os.path.isfile(workdir) and workdir.lower().endswith(('.h5', '.hdf5'))):
+                from xbpm_bumps.core.reader_hdf5 import read_hdf5, extract_beamlines
+                rawdata, measured_data = read_hdf5(workdir)
+                self.rawdata = rawdata
+                # Extract beamlines from the file (using the same logic as read_hdf5)
+                with h5py.File(workdir, 'r') as h5:
+                    if 'raw_data' in h5:
+                        raw_grp = h5['raw_data']
+                        measurement_datasets = [k for k, v in raw_grp.items()
+                                               if isinstance(v, h5py.Dataset)
+                                               and k.startswith('measurements_')]
+                        beamlines = extract_beamlines(raw_grp, measurement_datasets)
+                    else:
+                        beamlines = []
+            else:
+                from ..core.readers import DataReader
+                self.prm.workdir = workdir
+                self.reader = DataReader(self.prm, self.builder)
+                self.reader.read()
+                self.rawdata = self.reader.rawdata
+                from xbpm_bumps.core.reader_pickle import extract_beamlines
+                beamlines = extract_beamlines(self.rawdata)
+            if not beamlines:
+                raise RuntimeError("No beamlines found in data.")
+            if len(beamlines) == 1:
+                chosen = beamlines[0]
+                self.log_message(f"Auto-selected beamline: {chosen}")
+            else:
+                dialog = BeamlineSelectionDialog(sorted(beamlines))
+                if dialog.exec_() != dialog.Accepted:
+                    raise RuntimeError("Beamline selection cancelled by user.")
+                chosen = dialog.get_selection()
+                if not chosen:
+                    raise RuntimeError("No beamline selected.")
+                self.log_message(f"Selected beamline: {chosen}")
+            if hasattr(self, 'param_panel'):
+                self.param_panel.set_beamline(chosen)
+            # No re-reading: self.rawdata is already correct
+            return chosen
+
+    @staticmethod
+    def _re_read_rawdata(chosen, workdir):
+        """Re-read rawdata to include only the chosen beamline's data."""
+        # After selection, re-populate rawdata with only the chosen
+        # beamline's data
+        if (os.path.isfile(workdir) and
+            workdir.lower().endswith(('.h5', '.hdf5'))):
+            from xbpm_bumps.core.reader_hdf5 import parse_measurement_dataset
+            import h5py
+            with h5py.File(workdir, 'r') as h5:
+                raw_grp = h5['raw_data']
+                result = parse_measurement_dataset(raw_grp, chosen)
+                rawdata = [result] if result is not None else []
+
+        # DEBUG
+        print("\n\n #### DEBUG (main window._re_read_rawdata): ####\n")
+        print(" rawdata [0][2].keys(): "
+              f"{rawdata[0][2].keys() if rawdata else 'None'}")
+        # END DEBUG
+
+        return rawdata
+        # _re_read_rawdata is no longer needed and has been removed.
 
     def setup_ui(self):
         """Initialize the main window layout."""
@@ -279,7 +349,8 @@ class XBPMMainWindow(QMainWindow):
         """Attempt beamline selection immediately after workdir change."""
         try:
             self.prm.workdir = workdir
-            # DataReader instantiation and reading now handled by _read_data_and_select_beamline
+            # DataReader instantiation and reading now handled by
+            # _read_data_and_select_beamline
             # Handle beamline result
             if self.reader.prm.beamline:
                 self.log_message(
@@ -328,7 +399,8 @@ class XBPMMainWindow(QMainWindow):
 
         beamlines = []
         if (os.path.isfile(workdir) and getattr(reader, "rawdata", None)):
-            beamlines = reader._extract_beamlines(reader.rawdata)
+            from xbpm_bumps.core.reader_pickle import extract_beamlines
+            beamlines = extract_beamlines(reader.rawdata)
 
         if len(beamlines) == 1:
             self.log_message(f"Auto-selected beamline: {beamlines[0]}")
@@ -371,23 +443,24 @@ class XBPMMainWindow(QMainWindow):
         self.builder.rawdata = self.rawdata
 
         # DEBUG: Print rawdata structure before parameter enrichment
-        print("\n\n #### DEBUG (_run_analysis_with_canonical_params): ####\n")
-        print("[DEBUG] _run_analysis_with_canonical_params:"
-              " self.rawdata type:", type(self.rawdata))
-        print("[DEBUG] _run_analysis_with_canonical_params:"
-              " self.rawdata length:",
-              len(self.rawdata) if self.rawdata is not None else 'None')
-        if self.rawdata:
-            print("[DEBUG] _run_analysis_with_canonical_params:"
-                  " self.rawdata[0] type:", type(self.rawdata[0]))
-            if (isinstance(self.rawdata[0], (list, tuple)) and
-                len(self.rawdata[0]) > 2):
-                print("[DEBUG] _run_analysis_with_canonical_params:"
-                      " self.rawdata[0][2] keys:",
-                      getattr(self.rawdata[0][2], 'keys', lambda: None)())
-        else:
-            print("[DEBUG] _run_analysis_with_canonical_params:"
-                  " self.rawdata is empty or None!")
+        # print("\n\n #### DEBUG (_run_analysis_with_canonical_params):"
+        #       " ####\n")
+        # print("[DEBUG] _run_analysis_with_canonical_params:"
+        #       " self.rawdata type:", type(self.rawdata))
+        # print("[DEBUG] _run_analysis_with_canonical_params:"
+        #       " self.rawdata length:",
+        #       len(self.rawdata) if self.rawdata is not None else 'None')
+        # if self.rawdata:
+        #     print("[DEBUG] _run_analysis_with_canonical_params:"
+        #           " self.rawdata[0] type:", type(self.rawdata[0]))
+        #     if (isinstance(self.rawdata[0], (list, tuple)) and
+        #         len(self.rawdata[0]) > 2):
+        #         print("[DEBUG] _run_analysis_with_canonical_params:"
+        #               " self.rawdata[0][2] keys:",
+        #               getattr(self.rawdata[0][2], 'keys', lambda: None)())
+        # else:
+        #     print("[DEBUG] _run_analysis_with_canonical_params:"
+        #           " self.rawdata is empty or None!")
         # END DEBUG
 
         self.builder._add_beamline_parameters()

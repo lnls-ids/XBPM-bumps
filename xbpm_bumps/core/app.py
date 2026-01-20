@@ -45,6 +45,23 @@ class XBPMApp:
 
         plt.show()
 
+    @staticmethod
+    def cli_prompt(beamlines):
+        """Prompt the user to select a beamline from the CLI."""
+        print("Available beamlines:")
+        for i, b in enumerate(beamlines):
+            print(f"  {i+1}: {b}")
+        while True:
+            try:
+                choice = int(input("Select beamline by number: ")) - 1
+                if 0 <= choice < len(beamlines):
+                    return beamlines[choice]
+                else:
+                    print("Please enter a number between"
+                          f" 1 and {len(beamlines)}.")
+            except ValueError:
+                print("Invalid input. Please enter a number.")
+
     def _maybe_bpm_positions(self) -> None:
         if not self.prm.xbpmfrombpm:
             return

@@ -1,4 +1,5 @@
 """Pickle directory backend for XBPM DataReader."""
+
 import pickle  # noqa: S403
 import os
 import sys
@@ -34,3 +35,24 @@ def read_pickle_dir(path):
             else:
                 rawdata.append(({}, None, {}))
     return rawdata
+
+
+def extract_beamlines(rawdata):
+    """Extract unique beamlines from pickle raw data headers."""
+    try:
+        beamlines = set()
+        for record in rawdata or []:
+            if not (isinstance(record, (list, tuple)) and len(record) > 0):
+                continue
+            header = record[0]
+            if isinstance(header, dict):
+                for key in header.keys():
+                    if isinstance(key, str):
+                        beamlines.add(key)
+            elif isinstance(header, (list, tuple)):
+                for item in header:
+                    if isinstance(item, str):
+                        beamlines.add(item)
+        return list(beamlines)
+    except Exception:
+        return []

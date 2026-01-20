@@ -39,29 +39,7 @@ class DataReader:
         self._hdf5_path = None
         self.analysis_meta = {}
 
-    def _extract_beamlines(self, rawdata):
-        """Extract unique beamlines from raw data headers."""
-        try:
-            beamlines = set()
-            for record in rawdata or []:
-                if not (isinstance(record, (list, tuple)) and len(record) > 0):
-                    continue
-                header = record[0]
-
-                if isinstance(header, dict):
-                    # Beamlines are dict keys (e.g., 'MNC1', 'MNC2', 'CAT')
-                    for key in header.keys():
-                        if isinstance(key, str):
-                            beamlines.add(key)
-                elif isinstance(header, (list, tuple)):
-                    for item in header:
-                        if isinstance(item, str):
-                            beamlines.add(item)
-            return list(beamlines)
-        except Exception:
-            return []
-
-    def read(self, beamline_selector=None):
+    def read(self):
         """Read data from working directory or file using backend modules.
 
         Returns:
@@ -76,7 +54,7 @@ class DataReader:
         if os.path.isfile(path):
             lower = (path or '').lower()
             if lower.endswith('.h5') or lower.endswith('.hdf5'):
-                self.rawdata = read_hdf5(path, beamline_selector)
+                self.rawdata, self.measured_data = read_hdf5(path)
                 self.analysis_meta = read_hdf5_analysis_meta(path)
             else:
                 self.rawdata = read_text_file(path)
@@ -86,10 +64,10 @@ class DataReader:
             self.analysis_meta = {}
 
         # DEBUG
-        print("\n\n #### DEBUG (DataReader.read): ####\n")
-        print(f" rawdata type: {type(self.rawdata)}")
-        print(f" rawdata [0]: {self.rawdata[0] if self.rawdata else 'None'}")
-        print("\n ########## END DEBUG DataReader.read ##########\n\n")
+        # print("\n\n #### DEBUG (DataReader.read): ####\n")
+        # print(f" rawdata type: {type(self.rawdata)}")
+        # print(f" rawdata [0]: {self.rawdata[0] if self.rawdata else 'None'}")
+        # print("\n ########## END DEBUG DataReader.read ##########\n\n")
         # END DEBUG
 
         return self.rawdata
