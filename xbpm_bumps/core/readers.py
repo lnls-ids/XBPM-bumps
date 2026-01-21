@@ -46,7 +46,6 @@ class DataReader:
             The canonical rawdata (list of tuples) as a convenience.
             Canonical access is via self.rawdata.
         """
-        from .reader_hdf5 import read_hdf5, read_hdf5_analysis_meta
         from .reader_pickle import read_pickle_dir
         from .reader_text import read_text_file
 
@@ -54,8 +53,12 @@ class DataReader:
         if os.path.isfile(path):
             lower = (path or '').lower()
             if lower.endswith('.h5') or lower.endswith('.hdf5'):
-                self.rawdata, self.measured_data = read_hdf5(path)
-                self.analysis_meta = read_hdf5_analysis_meta(path)
+                from .reader_hdf5 import HDF5DataReader
+                with HDF5DataReader(path) as reader:
+                    reader.load_all()
+                    self.rawdata = reader.rawdata
+                    self.measured_data = reader.measured_data
+                    self.analysis_meta = reader.get_analysis_meta()
             else:
                 self.rawdata = read_text_file(path)
                 self.analysis_meta = {}

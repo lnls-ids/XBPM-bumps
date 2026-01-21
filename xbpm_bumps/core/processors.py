@@ -588,6 +588,13 @@ class BPMProcessor:
         self.prm = prm
         self.last_stats = None
 
+        # DEBUG
+        print("\n\n", "#" * 10)
+        print("# DEBUG BPMProcessor init ")
+        print(f"\n BPMProcessor initialized for beamline {self.prm.beamline}"
+              f" section {self.prm.section}.\n")
+        # END DEBUG
+
     def calculate_positions(self):
         """Calculate and plot XBPM positions derived from BPM data.
 

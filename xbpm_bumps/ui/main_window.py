@@ -65,35 +65,41 @@ class XBPMMainWindow(QMainWindow):
         self.rawdata = self.reader.rawdata
 
         # DEBUG
-        # print(
-        # "\n\n #### DEBUG (main window._read_data_and_select_beamline):"
-        # " ####\n")
-        # print(f" rawdata type: {type(self.rawdata)}")
-        # print(f" rawdata [0]: {self.rawdata[0] if self.rawdata else 'None'}")
-        # print("\n ########## END DEBUG ##########\n\n")
+        print(
+            "\n\n #### DEBUG (main window._read_data_and_select_beamline):"
+            " ####\n"
+        )
+        print(f" rawdata type: {type(self.rawdata)}")
+        print(f" rawdata [0] : {type(self.rawdata[0])}"
+              f" {self.rawdata[0][0].keys()}")
+        try:
+            print(f" rawdata [1] : {type(self.rawdata[0])}"
+                f" {self.rawdata[0][1].keys()}")
+        except Exception as exc:
+            print(f" rawdata [1] access error: {exc}")
+        try:
+            print(f" rawdata [2] : {type(self.rawdata[0])}"
+                f" {self.rawdata[0][2].keys()}")
+        except Exception as exc:
+            print(f" rawdata [2] access error: {exc}")
+        print("\n ########## END DEBUG ##########\n\n")
         # END DEBUG
 
         # Extract beamlines using HDF5 logic if file is HDF5
         beamlines = []
         if (os.path.isfile(workdir) and
             workdir.lower().endswith(('.h5', '.hdf5'))):
-            from xbpm_bumps.core.reader_hdf5 import extract_beamlines
-            with open(workdir, 'rb') as f:
-                import h5py
-                with h5py.File(f, 'r') as h5:
-                    if 'raw_data' in h5:
-                        raw_grp = h5['raw_data']
-                        measurement_datasets = [k for k, v in raw_grp.items()
-                                               if isinstance(v, h5py.Dataset)
-                                               and
-                                               k.startswith('measurements_')]
-                        beamlines = extract_beamlines(raw_grp,
-                                                      measurement_datasets)
+            from xbpm_bumps.core.reader_hdf5 import HDF5DataReader
+            with HDF5DataReader(workdir) as reader:
+                reader.load_all()
+                beamlines = reader.beamlines
         else:
             from xbpm_bumps.core.reader_pickle import extract_beamlines
             beamlines = extract_beamlines(self.rawdata)
+
         if not beamlines:
             raise RuntimeError("No beamlines found in data.")
+
         if len(beamlines) == 1:
             chosen = beamlines[0]
             self.log_message(f"Auto-selected beamline: {chosen}")
@@ -109,76 +115,7 @@ class XBPMMainWindow(QMainWindow):
         if hasattr(self, 'param_panel'):
             self.param_panel.set_beamline(chosen)
 
-        # Re-read rawdata to include only chosen beamline's data
-        self.rawdata = self._re_read_rawdata(chosen, workdir)
-
         return chosen
-        def _read_data_and_select_beamline(self, workdir: str) -> str:
-            """Centralized beamline selection: returns the chosen beamline."""
-            import os
-            # Use read_hdf5 to open and extract all data at once
-            if (os.path.isfile(workdir) and workdir.lower().endswith(('.h5', '.hdf5'))):
-                from xbpm_bumps.core.reader_hdf5 import read_hdf5, extract_beamlines
-                rawdata, measured_data = read_hdf5(workdir)
-                self.rawdata = rawdata
-                # Extract beamlines from the file (using the same logic as read_hdf5)
-                with h5py.File(workdir, 'r') as h5:
-                    if 'raw_data' in h5:
-                        raw_grp = h5['raw_data']
-                        measurement_datasets = [k for k, v in raw_grp.items()
-                                               if isinstance(v, h5py.Dataset)
-                                               and k.startswith('measurements_')]
-                        beamlines = extract_beamlines(raw_grp, measurement_datasets)
-                    else:
-                        beamlines = []
-            else:
-                from ..core.readers import DataReader
-                self.prm.workdir = workdir
-                self.reader = DataReader(self.prm, self.builder)
-                self.reader.read()
-                self.rawdata = self.reader.rawdata
-                from xbpm_bumps.core.reader_pickle import extract_beamlines
-                beamlines = extract_beamlines(self.rawdata)
-            if not beamlines:
-                raise RuntimeError("No beamlines found in data.")
-            if len(beamlines) == 1:
-                chosen = beamlines[0]
-                self.log_message(f"Auto-selected beamline: {chosen}")
-            else:
-                dialog = BeamlineSelectionDialog(sorted(beamlines))
-                if dialog.exec_() != dialog.Accepted:
-                    raise RuntimeError("Beamline selection cancelled by user.")
-                chosen = dialog.get_selection()
-                if not chosen:
-                    raise RuntimeError("No beamline selected.")
-                self.log_message(f"Selected beamline: {chosen}")
-            if hasattr(self, 'param_panel'):
-                self.param_panel.set_beamline(chosen)
-            # No re-reading: self.rawdata is already correct
-            return chosen
-
-    @staticmethod
-    def _re_read_rawdata(chosen, workdir):
-        """Re-read rawdata to include only the chosen beamline's data."""
-        # After selection, re-populate rawdata with only the chosen
-        # beamline's data
-        if (os.path.isfile(workdir) and
-            workdir.lower().endswith(('.h5', '.hdf5'))):
-            from xbpm_bumps.core.reader_hdf5 import parse_measurement_dataset
-            import h5py
-            with h5py.File(workdir, 'r') as h5:
-                raw_grp = h5['raw_data']
-                result = parse_measurement_dataset(raw_grp, chosen)
-                rawdata = [result] if result is not None else []
-
-        # DEBUG
-        print("\n\n #### DEBUG (main window._re_read_rawdata): ####\n")
-        print(" rawdata [0][2].keys(): "
-              f"{rawdata[0][2].keys() if rawdata else 'None'}")
-        # END DEBUG
-
-        return rawdata
-        # _re_read_rawdata is no longer needed and has been removed.
 
     def setup_ui(self):
         """Initialize the main window layout."""
@@ -714,11 +651,9 @@ class XBPMMainWindow(QMainWindow):
         """
         try:
             self.prm.workdir = hdf5_path
-            from xbpm_bumps.core.reader_hdf5 import load_figures_from_hdf5
-            figures = load_figures_from_hdf5(hdf5_path)
-            # Optionally update meta if needed
-            # self._last_hdf5_meta = ...
-            # self._last_meta = self._last_hdf5_meta
+            from xbpm_bumps.core.reader_hdf5 import HDF5FigureReconstructor
+            reconstructor = HDF5FigureReconstructor(hdf5_path)
+            figures = reconstructor.load_figures()
             if not figures:
                 self.log_message("No figures found in HDF5 file")
                 return
