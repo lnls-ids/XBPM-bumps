@@ -232,11 +232,7 @@ class HDF5DataReader:
             self.rawdata, self.measured_data, self.beamlines = [], [], []
             return
         raw_grp = self.h5['raw_data']
-        measurement_datasets = [
-            k for k, v in raw_grp.items()
-            if isinstance(v, h5py.Dataset) and k.startswith('measurements_')
-        ]
-        self.beamlines = self.extract_beamlines(raw_grp, measurement_datasets)
+        self.beamlines = self.extract_beamlines(raw_grp)
         self.measured_data = [
             self.parse_measurement_dataset(raw_grp, bl)
             for bl in self.beamlines
@@ -244,37 +240,16 @@ class HDF5DataReader:
         self.rawdata = self.extract_sweeps(raw_grp)
 
     @staticmethod
-    def extract_beamlines(raw_grp, measurement_datasets):
+    def extract_beamlines(raw_grp):
         """Extract available beamlines from measurement datasets."""
-        beamlines = [name.replace('measurements_', '')
-                     for name in measurement_datasets
-                     if name.startswith('measurements_')]
-        avail = raw_grp.attrs.get('available_beamlines')
-        if avail:
-            if isinstance(avail, bytes):
-                avail = avail.decode()
-            if isinstance(avail, str):
-                beamlines = [
-                    b.strip()
-                    for b in avail.split(',')
-                    if b.strip()
-                    ]
-            elif isinstance(avail, (list, tuple, np.ndarray)):
-                beamlines = list(avail)
-        elif measurement_datasets:
-            first_ds = raw_grp[measurement_datasets[0]]
-            avail = first_ds.attrs.get('available_beamlines')
-            if avail:
-                if isinstance(avail, bytes):
-                    avail = avail.decode()
-                if isinstance(avail, str):
-                    beamlines = [
-                        b.strip()
-                        for b in avail.split(',')
-                        if b.strip()
-                        ]
-                elif isinstance(avail, (list, tuple, np.ndarray)):
-                    beamlines = list(avail)
+        # Always prefer the 'beamlines' attribute from raw_grp if present
+        avail = raw_grp.attrs['beamlines']
+        if isinstance(avail, bytes):
+            avail = avail.decode()
+        if isinstance(avail, str):
+            beamlines = [b.strip() for b in avail.split(',') if b.strip()]
+        elif isinstance(avail, (list, tuple, np.ndarray)):
+            beamlines = list(avail)
         return beamlines
 
     @staticmethod
@@ -296,36 +271,80 @@ class HDF5DataReader:
 
     @staticmethod
     def extract_sweeps(raw_grp):
-        """Extract sweep data from raw_data, enforcing canonical structure."""
+        """Extract sweep data from raw_data, enforcing canonical structure.
+
+        Args:
+            raw_grp: HDF5 group containing raw data
+
+        Returns:
+            rawdata: List of (meta, grid, bpm_dict) tuples
+        """
         import numpy as np
+        from .config import Config
+
         rawdata = []
-        expected_keys = [
-            'current', 'agx', 'agy', 'posx', 'posy', 'orbx', 'orby',
-            'MNC1', 'MNC2', 'cnb', 'mnc', 'orb'
+        rawdata_0_keys = list(Config.BEAMLINENAME.keys())
+
+        rawdata_1_keys = [
+            'cnb', 'mnc', 'cat', 'mgn'
         ]
+        rawdata_2_keys = [
+            'current', 'agx', 'agy', 'posx', 'posy', 'orbx', 'orby',
+        ]
+
+        sweep_idx = 0
         for key in raw_grp:
-            if key.startswith('sweep_'):
-                sweep_grp = raw_grp[key]
-                meta = dict(sweep_grp.attrs.items())
-                grid = (np.array(sweep_grp['grid'])
-                        if 'grid' in sweep_grp else None)
-                bpm_dict = {}
-                # Collect all datasets and attrs
-                for ds_name, ds in sweep_grp.items():
-                    if ds_name == 'grid':
-                        continue
-                    arr = np.array(ds)
-                    bpm_dict[ds_name] = arr
-                for param in expected_keys:
-                    # Prefer dataset, fallback to attribute
-                    if param not in bpm_dict and param in sweep_grp.attrs:
-                        bpm_dict[param] = sweep_grp.attrs[param]
-                # Ensure all expected keys are present
-                # (fill with None if missing)
-                for param in expected_keys:
-                    if param not in bpm_dict:
-                        bpm_dict[param] = None
-                rawdata.append((meta, grid, bpm_dict))
+            if not key.startswith('sweep_'):
+                continue
+
+            sweep_grp = raw_grp[key]
+
+            # --- Rebuild first element: {beamline: {param: array, ...}} ---
+            beamline_data = {}
+            for dsname in sweep_grp:
+                if dsname.startswith('rawdata_'):
+                    beamline = dsname[len('rawdata_'):]
+                    dset = sweep_grp[dsname]
+                    # Convert structured array to dict of arrays
+                    param_dict = {}
+                    if hasattr(dset, 'dtype') and dset.dtype.names:
+                        for name in dset.dtype.names:
+                            param_dict[name] = dset[name][()]
+                    else:
+                        param_dict = np.array(dset)
+                    beamline_data[beamline] = param_dict
+
+            # --- Second element: gap dictionary from attributes ---
+            gap_dict = {attr_key[:-4].strip(): attr_val
+                        for attr_key, attr_val in sweep_grp.attrs.items()
+                        if attr_key.endswith(' gap')}
+
+            # --- Third element: bpm_dict, patched to read bpm_data for orbx/orby ---
+            bpm_dict = {}
+            bpm_data = None
+            if 'bpm_data' in sweep_grp:
+                bpm_data_ds = sweep_grp['bpm_data']
+                # Should be a structured array with fields 'orbx' and 'orby'
+                bpm_data = bpm_data_ds[()]
+            for param in rawdata_2_keys:
+                arr = None
+                if param in sweep_grp:
+                    arr = np.array(sweep_grp[param])
+                elif param in sweep_grp.attrs:
+                    arr = sweep_grp.attrs[param]
+                elif param in ('orbx', 'orby'):
+                    # Patch: read from bpm_data if available
+                    if bpm_data is not None and param in bpm_data.dtype.names:
+                        arr = bpm_data[param]
+                # Flatten structured arrays with a single field
+                if (isinstance(arr, np.ndarray) and
+                    arr.dtype.names is not None and
+                    len(arr.dtype.names) == 1):
+                    arr = arr[arr.dtype.names[0]]
+                bpm_dict[param] = arr
+
+            rawdata.append((beamline_data, gap_dict, bpm_dict))
+
         return rawdata
 
     def get_analysis_meta(self, beamline=None):
@@ -577,15 +596,3 @@ class HDF5DataReader:
             return fits or None
         except Exception:
             return None
-
-
-# DEBUG
-# print("\n\n #### DEBUG (reader_hdf5.read_hdf5): ####\n")
-# print(f" rawdata type: {type(rawdata)}")
-# print(f" rawdata [0][2]: {rawdata[0][2].keys() if rawdata else 'None'}")
-# print(" rawdata[0][2].keys() ="
-#       f" {rawdata[0][2].keys() if rawdata else 'None'}")
-# print(" rawdata[0][2]['current'] = "
-#       f"{rawdata[0][2]['current'] if rawdata else 'None'}")
-# print("\n ########## END DEBUG reader_hdf5.read_hdf5 ##########\n\n")
-# END DEBUG

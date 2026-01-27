@@ -136,7 +136,7 @@ class DataReader:
         data = dict()
         beamline = self.prm.beamline
 
-        for dt in self.rawdata:
+        for idx, dt in enumerate(self.rawdata):
             try:
                 xbpm = dt[0][beamline]
                 vals = list()
@@ -145,7 +145,18 @@ class DataReader:
                     vals.append((av, sd))
                 bpm_x = dt[2]['agx']
                 bpm_y = dt[2]['agy']
-                data[bpm_x, bpm_y] = np.array(vals)
+
+                # Debug: print types and values
+                print(f"[DEBUG] Entry {idx}: agx={bpm_x} ({type(bpm_x)}), agy={bpm_y} ({type(bpm_y)})")
+                # Validate both are floats or ints and not None
+                if (bpm_x is None or bpm_y is None or
+                    not isinstance(bpm_x, (float, int)) or
+                    not isinstance(bpm_y, (float, int))):
+                    print(f"[WARNING] Skipping entry {idx}: Invalid agx/agy: agx={bpm_x}, agy={bpm_y}")
+                    continue
+                # END Debug
+                data[(float(bpm_x), float(bpm_y))] = np.array(vals)
+
             except Exception as err:
                 print("\n WARNING: when fetching blades' values and averaging:"
                       f" {err}\n")

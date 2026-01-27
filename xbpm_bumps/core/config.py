@@ -7,6 +7,7 @@ class Config:
     # Power relative to Ampere subunits.
     AMPSUB = {
         0    : 1.0,    # no unit defined.
+        "0"  : 1.0,    # no unit defined.
         "mA" : 1e-3,   # mili
         "uA" : 1e-6,   # micro
         "nA" : 1e-9,   # nano

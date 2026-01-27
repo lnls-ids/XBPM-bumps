@@ -65,24 +65,24 @@ class XBPMMainWindow(QMainWindow):
         self.rawdata = self.reader.rawdata
 
         # DEBUG
-        print(
-            "\n\n #### DEBUG (main window._read_data_and_select_beamline):"
-            " ####\n"
-        )
-        print(f" rawdata type: {type(self.rawdata)}")
-        print(f" rawdata [0] : {type(self.rawdata[0])}"
-              f" {self.rawdata[0][0].keys()}")
-        try:
-            print(f" rawdata [1] : {type(self.rawdata[0])}"
-                f" {self.rawdata[0][1].keys()}")
-        except Exception as exc:
-            print(f" rawdata [1] access error: {exc}")
-        try:
-            print(f" rawdata [2] : {type(self.rawdata[0])}"
-                f" {self.rawdata[0][2].keys()}")
-        except Exception as exc:
-            print(f" rawdata [2] access error: {exc}")
-        print("\n ########## END DEBUG ##########\n\n")
+        # print(
+        #     "\n\n #### DEBUG (main window._read_data_and_select_beamline):"
+        #     " ####\n"
+        # )
+        # print(f" rawdata type: {type(self.rawdata)}")
+        # print(f" rawdata [0] : {type(self.rawdata[0])}"
+        #       f" {self.rawdata[0][0].keys()}")
+        # try:
+        #     print(f" rawdata [1] : {type(self.rawdata[0])}"
+        #         f" {self.rawdata[0][1].keys()}")
+        # except Exception as exc:
+        #     print(f" rawdata [1] access error: {exc}")
+        # try:
+        #     print(f" rawdata [2] : {type(self.rawdata[0])}"
+        #         f" {self.rawdata[0][2].keys()}")
+        # except Exception as exc:
+        #     print(f" rawdata [2] access error: {exc}")
+        # print("\n ########## END DEBUG ##########\n\n")
         # END DEBUG
 
         # Extract beamlines using HDF5 logic if file is HDF5

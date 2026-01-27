@@ -11,7 +11,7 @@ import logging
 from typing import Optional
 
 from .parameters import Prm
-
+from .config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -83,11 +83,11 @@ class Exporter:
             'scales/raw': 'Scaling factors for raw XBPM positions',
             'scales/scaled': 'Scaling factors for corrected XBPM positions',
 
-            'sweeps': 'Blade sweep measurement data',
-            'sweeps/blades_h': (
+            'central_sweeps': 'Blade sweep measurement data',
+            'central_sweeps/blades_h': (
                 'Horizontal blade sweep positions and currents'
             ),
-            'sweeps/blades_v': (
+            'central_sweeps/blades_v': (
                 'Vertical blade sweep positions and currents'
             ),
         }
@@ -170,21 +170,46 @@ class Exporter:
                 "h5py is required for HDF5 export. Please install it"
             ) from exc
 
-        grid_x, grid_y = self._build_grid_arrays(data)
-        table = self._build_nominal_index_table(data, grid_x, grid_y)
-
+        # Available beamlines.
+        beamlines = sorted(list(rawdata[0][0].keys()))
         with h5py.File(filepath, 'w') as h5:
             self._write_meta_and_params(h5)
             raw_grp = h5.create_group('raw_data')
+
+            # Write beamlines as attribute of raw_data
+            raw_grp.attrs['beamlines'] = ','.join(beamlines)
 
             # Write raw BPM sweeps data FIRST (organized per beamline)
             if rawdata:
                 self._write_bpm_data(raw_grp, rawdata)
 
-            # Write blade measurements and parameters per beamline
-            # (can now compute from sweep data for non-analyzed beamlines)
-            if table is not None:
-                self._write_data(raw_grp, table, rawdata)
+            # Write top-level avg_<beamline> datasets for all beamlines
+            # Each entry: (metadata, grid_data, bpm_dict)
+            for beamline in beamlines:
+                # Collect all grid_data dicts for this beamline
+                avg_table = dict()
+                for entry in rawdata:
+
+                    blademap = Config.BLADEMAP.get(beamline)
+                    pos_index = (float(entry[2].get('agx')),
+                                 float(entry[2].get('agy')))
+
+                    avg_table[pos_index] = (
+                      self._average_blade_values(entry[0][beamline], blademap)
+                    )
+
+                # Convert avg_table to structured array for HDF5
+                grid_x, grid_y = self._build_grid_arrays(avg_table)
+                avg_struct = self._build_nominal_index_table(
+                    avg_table, grid_x, grid_y
+                    )
+                ds = raw_grp.create_dataset(f'avg_{beamline}',
+                                            data=avg_struct)
+                ds.attrs['description'] = (
+                    "Averaged blade measurements for all sweeps"
+                    " (full table/grid, matches original"
+                    " measurements_<beamline>)"
+                )
 
             # Only write analysis if results are provided and non-empty
             if results:
@@ -193,6 +218,32 @@ class Exporter:
                 self._write_figures(h5, results, data)
 
         print(f"HDF5 export written to {filepath}")
+
+    @staticmethod
+    def _average_blade_values(data: list, blademap: dict) -> tuple:
+        """Compute average and standard deviation of blade values.
+
+        Args:
+            data: List of (mantissa, unit) tuples.
+            pos_index: Tuple of (agx, agy) nominal positions.
+            blademap: Blade mapping dictionary for the beamline.
+            avg_table: Dictionary to store results.
+
+        Returns:
+            Tuple of (average, standard deviation) in Amperes.
+        """
+        avg = {}
+        for key, val in data.items():
+            if key.endswith('_val'):
+                bladename = next((k for k, v in
+                                  blademap.items() if v == key[0]), None
+                                  )
+                blade_vals = []
+                for mant, unit in val:
+                    blade_vals.append(mant * Config.AMPSUB[unit])
+                avg[bladename] = np.average(blade_vals)
+                avg[bladename + '_std'] = np.std(blade_vals)
+        return avg
 
     @staticmethod
     def _build_grid_arrays(data: dict):
@@ -245,16 +296,15 @@ class Exporter:
         rows = []
         for y in grid_y[::-1]:
             for x in grid_x:
-                to_mean = to_err = ti_mean = ti_err = np.nan
-                bi_mean = bi_err = bo_mean = bo_err = np.nan
                 arr = data.get((float(x), float(y)))
-                if arr is not None:
-                    a = np.asarray(arr)
-                    if a.shape == (4, 2):
-                        to_mean, to_err = float(a[0, 0]), float(a[0, 1])
-                        ti_mean, ti_err = float(a[1, 0]), float(a[1, 1])
-                        bi_mean, bi_err = float(a[2, 0]), float(a[2, 1])
-                        bo_mean, bo_err = float(a[3, 0]), float(a[3, 1])
+                to_mean = arr.get('TO', np.nan)
+                to_err = arr.get('TO_std', np.nan)
+                ti_mean = arr.get('TI', np.nan)
+                ti_err = arr.get('TI_std', np.nan)
+                bi_mean = arr.get('BI', np.nan)
+                bi_err = arr.get('BI_std', np.nan)
+                bo_mean = arr.get('BO', np.nan)
+                bo_err = arr.get('BO_std', np.nan)
 
                 row = (
                     float(x), float(y),
@@ -265,8 +315,7 @@ class Exporter:
                 )
                 rows.append(row)
 
-        table = np.array(rows, dtype=dtype)
-        return table
+        return np.array(rows, dtype=dtype)
 
     @staticmethod
     def _extract_beamlines_from_rawdata(rawdata: list) -> set:
@@ -325,30 +374,6 @@ class Exporter:
                 break  # one sweep is enough to discover beamlines
         return beamlines
 
-    def _write_data(
-        self, raw_grp, table: np.ndarray, rawdata: list = None
-    ):
-        """Write blade measurements per beamline with separate parameters.
-
-        Creates beamline-specific groups under raw_data with parameters.
-        Computes measurements for all beamlines from sweep data.
-
-        Args:
-            raw_grp: HDF5 raw_data group.
-            table: Blade measurements array (for analyzed beamline only).
-            rawdata: Optional raw data to detect beamlines from.
-        """
-        analyzed_beamline = getattr(self.prm, 'beamline', None) or 'unknown'
-        all_beamlines, beamline_params = self._detect_beamlines_and_params(
-            raw_grp, rawdata, analyzed_beamline)
-        try:
-            raw_grp.attrs['available_beamlines'] = ','.join(all_beamlines)
-        except Exception:
-            raw_grp.attrs['available_beamlines'] = str(all_beamlines)
-        for beamline in all_beamlines:
-            self._write_measurements_dataset(
-                raw_grp, beamline, analyzed_beamline, table, beamline_params)
-
     def _detect_beamlines_and_params(self, raw_grp, rawdata,
                                      analyzed_beamline):
         if rawdata:
@@ -363,39 +388,6 @@ class Exporter:
             beamlines = {analyzed_beamline}
         return list(sorted(beamlines)), beamline_params
 
-    def _write_measurements_dataset(self, raw_grp, beamline,
-                                    analyzed_beamline, table,
-                                    beamline_params):
-        dataset_name = f"measurements_{beamline}"
-        if beamline == analyzed_beamline and table is not None:
-            ds = raw_grp.create_dataset(dataset_name, data=table)
-        else:
-            measurements = (
-                self._compute_measurements_from_hdf5_sweeps(raw_grp, beamline)
-                )
-            if measurements is not None:
-                ds = raw_grp.create_dataset(dataset_name, data=measurements)
-            else:
-                print("Warning: Could not compute measurements for"
-                      f" {beamline} from sweep data")
-                return
-        ds.attrs['beamline'] = beamline
-        ds.attrs['description'] = (
-            'Averages and std dev of baldes measurements'
-            ' for each electron beam position'
-        )
-        specific_params = beamline_params.get(beamline, {})
-        for key, val in specific_params.items():
-            if val is None:
-                continue
-            try:
-                ds.attrs[key] = val
-            except (TypeError, ValueError):
-                ds.attrs[key] = str(val)
-            desc = self.PARAM_DESCRIPTIONS.get(key)
-            if desc:
-                ds.attrs[f"{key}_description"] = desc
-
     def _compute_measurements_from_hdf5_sweeps(self, raw_grp, beamline: str):
         """Compute full measurements table from sweep_xxxx/<beamline> datasets.
 
@@ -403,7 +395,7 @@ class Exporter:
         mapping each sweep to its nominal position (agx/agy) and averaging the
         blade readings within that sweep.
         """
-        from .config import Config
+        # from .config import Config
 
         blademap = Config.BLADEMAP.get(beamline)
         if not blademap:
@@ -481,7 +473,7 @@ class Exporter:
         Returns:
             Structured array with averaged blade measurements, or None.
         """
-        from .config import Config
+        # from .config import Config
 
         if not rawdata:
             print(f"  Debug: No rawdata for {beamline}")
@@ -634,7 +626,7 @@ class Exporter:
             Dict mapping beamline -> {param_name: value}
         """
         import re
-        from .config import Config
+        # from .config import Config
 
         beamline_pattern = re.compile(r'^[A-Z]{3,4}[0-9]?$')
         param_keys = ['xbpmdist', 'bpmdist', 'current', 'phaseorgap']
@@ -741,49 +733,98 @@ class Exporter:
 
     @staticmethod
     def _write_bpm_data(raw_grp, rawdata: list) -> None:
-        """Write raw acquisition sweeps to HDF5 under /raw_data.
+        """Write raw and averaged acquisition sweeps to HDF5 under /raw_data.
 
-        Stores the third element of each rawdata tuple (BPM/XBPM dict)
-        in /raw_data/sweep_XXXX/ groups for complete re-analysis capability.
-
-        Args:
-            raw_grp: HDF5 group to store sweeps in (raw_data group).
-            rawdata: List of tuples [(metadata, grid_data, bpm_dict), ...].
+        For each sweep:
+        - rawdata_<beamline>: full, unaveraged data
+            (columns: A_val, ..., D_range, etc)
+        - avg_<beamline>: averaged data (as currently stored)
+        - bpm_data: dataset with columns orbx, orby; all simple metadata
+            as attributes
         """
         if not rawdata or raw_grp is None:
             return
 
-        import logging
-        import re
-        logger = logging.getLogger(__name__)
-
-        machine_pattern = re.compile(r'^[A-Z]{3,4}[0-9]?$')
-
+        import numpy as np
         for i, entry in enumerate(rawdata):
-            if not Exporter._validate_rawdata_entry(entry, i, logger):
-                continue
-
             metadata, grid_data, bpm_dict = entry[:3]
             sweep_grp = raw_grp.create_group(f'sweep_{i:04d}')
 
-            # Store non-machine metadata as attributes
-            Exporter._store_metadata_attrs(sweep_grp, metadata)
-
-            # Store machine data from metadata (MNC1, MNC2, etc.) as datasets
+            # --- Write rawdata_<beamline> datasets ---
             if isinstance(metadata, dict):
-                for key, val in metadata.items():
-                    is_machine = machine_pattern.match(str(key))
-                    if is_machine and isinstance(val, dict):
-                        try:
-                            Exporter._store_machine_group(sweep_grp, key, val)
-                        except Exception as exc:
-                            logger.debug(
-                                "Could not store metadata['%s'] for "
-                                "sweep %d: %s", key, i, exc
-                            )
+                for beamline, val in metadata.items():
+                    if isinstance(val, dict):
+                        columns = [k for k in val.keys()
+                                   if isinstance(val[k], (list, np.ndarray))]
+                        if not columns:
+                            continue
+                        arr_len = len(val[columns[0]])
+                        dtype = []
+                        split_data = {}
+                        for k in columns:
+                            arr = np.asarray(val[k])
+                            if arr.ndim == 2 and arr.shape[1] == 2:
+                                dtype.append((k, 'f8'))
+                                dtype.append((f'{k}_unit', 'f8'))
+                                split_data[k] = arr[:, 0]
+                                split_data[f'{k}_unit'] = arr[:, 1]
+                            else:
+                                dtype.append((k, 'f8'))
+                                split_data[k] = arr
+                        data = np.empty(arr_len, dtype=dtype)
+                        for name in data.dtype.names:
+                            data[name] = split_data[name]
+                        ds = sweep_grp.create_dataset(f'rawdata_{beamline}',
+                                                      data=data)
+                        # Add prefix attribute if present
+                        ds.attrs['PV'] = val.get('prefix')
 
-            # Store BPM dict data
-            Exporter._store_bpm_dict(sweep_grp, bpm_dict, i, logger)
+            # --- Write avg_<beamline> datasets (if present in grid_data) ---
+            if isinstance(grid_data, dict):
+                for beamline, val in grid_data.items():
+                    if isinstance(val, dict):
+                        columns = [k for k in val.keys()
+                                   if isinstance(val[k], (list, np.ndarray))]
+                        if not columns:
+                            continue
+                        arr_len = len(val[columns[0]])
+                        dtype = []
+                        split_data = {}
+                        for k in columns:
+                            arr = np.asarray(val[k])
+                            if arr.ndim == 2 and arr.shape[1] == 2:
+                                dtype.append((k, 'f8'))
+                                dtype.append((f'{k}_unit', 'f8'))
+                                split_data[k] = arr[:, 0]
+                                split_data[f'{k}_unit'] = arr[:, 1]
+                            else:
+                                dtype.append((k, 'f8'))
+                                split_data[k] = arr
+                        data = np.empty(arr_len, dtype=dtype)
+                        for name in data.dtype.names:
+                            data[name] = split_data[name]
+                        ds = sweep_grp.create_dataset(f'avg_{beamline}',
+                                                      data=data)
+                        # Add prefix attribute if present
+                        ds.attrs['PV'] = val.get('prefix')
+
+            # --- Write bpm_data dataset and attributes ---
+            bpm_simple_keys = ['current', 'agx', 'agy',
+                               'posx', 'posy', 'prefix']
+            bpm_array_keys = ['orbx', 'orby']
+            # Store attributes
+            for k in bpm_simple_keys:
+                if k in bpm_dict and bpm_dict[k] is not None:
+                    sweep_grp.attrs[k] = bpm_dict[k]
+            # Store orbx/orby as columns in bpm_data
+            if all(k in bpm_dict and bpm_dict[k] is not None
+                   for k in bpm_array_keys):
+                arr_len = len(bpm_dict['orbx'])
+                dtype = [('orbx', 'f8'), ('orby', 'f8')]
+                data = np.empty(arr_len, dtype=dtype)
+                data['orbx'] = np.asarray(bpm_dict['orbx'])
+                data['orby'] = np.asarray(bpm_dict['orby'])
+                sweep_grp.create_dataset('bpm_data', data=data)
 
     @staticmethod
     def _validate_rawdata_entry(entry, index: int, logger) -> bool:
@@ -1274,10 +1315,11 @@ class Exporter:
         positions = results.get('positions', {})
         supmat = results.get('supmat')
         supmat_standard = results.get('supmat_standard')
-        sweeps = results.get('sweeps_data')
+        central_sweeps = results.get('sweeps_data')
         bpm_stats = results.get('bpm_stats')
 
-        if not any([positions, supmat, supmat_standard, sweeps, bpm_stats,
+        if not any([positions, supmat, supmat_standard,
+                    central_sweeps, bpm_stats,
                     results.get('positions_raw_full'),
                     results.get('positions_scaled_full')]):
             return
@@ -1288,7 +1330,7 @@ class Exporter:
         self._write_analysis_attributes(analysis, beamline, results)
         self._write_positions_group(analysis, positions, bpm_stats, results)
         self._write_analysis_datasets(analysis, supmat,
-                                      supmat_standard, sweeps)
+                                      supmat_standard, central_sweeps)
 
     def _write_analysis_attributes(self, analysis, beamline, results):
         analysis.attrs['description'] = (
@@ -1323,9 +1365,9 @@ class Exporter:
         self._attach_roi_bounds_attrs(apos, bpm_stats)
 
     def _write_analysis_datasets(self, analysis, supmat,
-                                 supmat_standard, sweeps):
+                                 supmat_standard, central_sweeps):
         self._write_supmat_dataset(analysis, supmat, supmat_standard)
-        self._write_sweeps_group(analysis, sweeps)
+        self._write_sweeps_group(analysis, central_sweeps)
 
     def _write_full_positions(self, apos, raw_full, scaled_full) -> None:
         self._write_raw_full(apos, raw_full)
@@ -1592,9 +1634,9 @@ class Exporter:
     def _write_sweeps_group(self, analysis, sweeps) -> None:
         if not sweeps:
             return
-        sweeps_new = analysis.create_group('sweeps')
+        sweeps_new = analysis.create_group('central_sweeps')
         sweeps_new.attrs['description'] = (
-            self.ANALYSIS_DESCRIPTIONS['sweeps']
+            self.ANALYSIS_DESCRIPTIONS['central_sweeps']
         )
         self._write_sweeps_dual(None, sweeps_new, sweeps)
 

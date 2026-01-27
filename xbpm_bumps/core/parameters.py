@@ -165,8 +165,8 @@ class ParameterBuilder:
             self.prm.phaseorgap = self.rawdata[0][1][
                 self.prm.beamline[:3].lower()
                 ]
-            print(f"### Phase / Gap ({self.prm.beamline})   :\t"
-                  f" {self.prm.phaseorgap}")
+            # print(f"### Phase / Gap ({self.prm.beamline})   :\t"
+            #       f" {self.prm.phaseorgap}")
         except Exception:
             print(f"\n WARNING: no phase/gap defined for {self.prm.beamline}.")
 
