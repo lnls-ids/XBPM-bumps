@@ -172,7 +172,7 @@ class ParameterBuilder:
 
         self.prm.bpmdist  = Config.BPMDISTS[self.prm.beamline[:3]]
         self.prm.section  = Config.SECTIONS[self.prm.beamline[:3]]
-        self.prm.blademap = Config.BLADEMAP[self.prm.beamline[:3]]
+        self.prm.blademap = Config.BLADEMAP[self.prm.beamline]
 
         if self.prm.xbpmdist is None:
             self.prm.xbpmdist = Config.XBPMDISTS[self.prm.beamline]

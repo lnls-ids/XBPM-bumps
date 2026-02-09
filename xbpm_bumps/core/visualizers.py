@@ -62,8 +62,18 @@ class BladeMapVisualizer:
             extent = None
         else:
             alist = np.array(list(self.data.keys()))
-            klist = np.unique(alist[:, 0])
-            mlist = np.unique(alist[:, 1])
+
+            # DEBUG
+            print(f"\n\n#####\n##### SHOW in VISUALIZER: {alist}\n#####\n")
+            # DEBUG
+
+            try:
+                klist = np.unique(alist[:, 0])
+                mlist = np.unique(alist[:, 1])
+            except:
+                # Some data are 1-D only
+                mlist = np.unique(alist)
+                klist = np.zeros(len(mlist))
             minvalx, maxvalx = np.min(klist), np.max(klist)
             minvaly, maxvaly = np.min(mlist), np.max(mlist)
             extent = (minvalx, maxvalx, minvaly, maxvaly)

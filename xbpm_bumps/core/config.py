@@ -20,7 +20,7 @@ class Config:
     # TO, TI, BO, BI : top/bottom, in/out, relative to the storage ring;
     # A, B, C, D : names of respective P.V.s
     BLADEMAP = {
-        "MNC"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+        # "MNC"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
         "MNC1" : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
         "MNC2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
         "CAT"  : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
@@ -28,12 +28,16 @@ class Config:
 
         # ## To be checked: ## #
         # "CAT2": {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-        "CNB"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-        "CNB1" : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-        "CNB2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-        "MGN"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-        "MGN1" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-        "MGN2" : {"TO": 'B', "TI": 'C', "BI": 'A', "BO": 'D'},
+        "CNB"  : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+        "CNB1" : {"TO": 'B', "TI": 'A', "BI": 'D', "BO": 'C'},
+        # "CNB"  : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+        # "CNB1" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+        # "CNB2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+        "MGN1" : {"TO": 'B', "TI": 'C', "BI": 'A', "BO": 'D'},
+        "MGN2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+        # "MGN"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+        # "MGN1" : {"TO": 'A', "TI": 'D', "BI": 'B', "BO": 'C'},
+        # "MGN2" : {"TO": 'A', "TI": 'B', "BI": 'D', "BO": 'C'},
         "SIMUL": {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
     }
 

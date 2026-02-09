@@ -244,9 +244,9 @@ class XBPMProcessor:
         range_v = np.unique(keys[:, 1])
         halfh = int(range_h.shape[0] / 2)
         halfv = int(range_v.shape[0] / 2)
-        abh = STD_ROI_SIZE if range_h[-1] > STD_ROI_SIZE else halfh
+        abh = STD_ROI_SIZE if range_h[-1] < STD_ROI_SIZE else halfh
         frh, uph = halfh - abh, halfh + abh + 1
-        abv = STD_ROI_SIZE if range_v[-1] > STD_ROI_SIZE else halfv
+        abv = STD_ROI_SIZE if range_v[-1] < STD_ROI_SIZE else halfv
         frv, upv = halfv - abv, halfv + abv + 1
 
         if pos_nom_h.shape[0] == 1 or pos_nom_v.shape[0] == 1:
@@ -466,29 +466,54 @@ class XBPMProcessor:
     def position_dict_parse(self, data):
         """Parse XBPM position dict into structured arrays."""
         gridlist = np.array(list(data.keys()))
-        gsh_lin = len(np.unique(gridlist[:, 1]))
-        gsh_col = len(np.unique(gridlist[:, 0]))
+
+        grid_lin = np.unique(gridlist[:, 1])
+        grid_col = np.unique(gridlist[:, 0])
+
+        gsh_lin = len(grid_lin)
+        gsh_col = len(grid_col)
+
+        # minval_h = np.min(grid_col)
+        # maxval_v = np.max(grid_lin)
 
         xbpm_nom_h  = np.zeros((gsh_lin, gsh_col))
         xbpm_nom_v  = np.zeros((gsh_lin, gsh_col))
         xbpm_meas_h = np.zeros((gsh_lin, gsh_col))
         xbpm_meas_v = np.zeros((gsh_lin, gsh_col))
 
-        minval_h = np.min(gridlist[:, 0])
-        maxval_v = np.max(gridlist[:, 1])
-        for key, val in data.items():
-            col = int((key[0] - minval_h) / self.prm.gridstep)
-            lin = int((maxval_v - key[1]) / self.prm.gridstep)
+        for ii, y in enumerate(grid_lin):
+            for jj, x in enumerate(grid_col):
+                # key = (x, y) = (col, lin)
+                key = (x, y)
+                if key not in data.keys():
+                    print(f"\n WARNING: position {key} not found in data,"
+                        " Skipping.")
+                    continue
 
-            try:
-                xbpm_nom_h[lin, col]  = key[0]
-                xbpm_nom_v[lin, col]  = key[1]
-                xbpm_meas_h[lin, col] = val[0]
-                xbpm_meas_v[lin, col] = val[1]
-            except Exception as err:
-                print(f"\n WARNING: failed when parsing positions dictionary:"
-                      f"\n{err}\n lin, col = {lin}, {col}, key = {key}")
-                continue
+                try:
+                    xbpm_nom_h[ii, jj]  = x
+                    xbpm_nom_v[ii, jj]  = y
+                    xbpm_meas_h[ii, jj] = data[key][0]
+                    xbpm_meas_v[ii, jj] = data[key][1]
+                except Exception as err:
+                    print(f"\n WARNING: failed when parsing positions"
+                          f" dictionary:\n{err}\n"
+                          f" lin, col = {y}, {x}, key = {key}")
+                    continue
+
+        # for key, val in data.items():
+        #     col = int((key[0] - minval_h) / self.prm.gridstep)
+        #     lin = int((maxval_v - key[1]) / self.prm.gridstep)
+        #
+        #     try:
+        #         xbpm_nom_h[lin, col]  = key[0]
+        #         xbpm_nom_v[lin, col]  = key[1]
+        #         xbpm_meas_h[lin, col] = val[0]
+        #         xbpm_meas_v[lin, col] = val[1]
+        #     except Exception as err:
+        #         print(f"\n WARNING: failed when parsing positions dictionary:"
+        #               f"\n{err}\n lin, col = {lin}, {col}, key = {key}")
+        #         continue
 
         return (xbpm_nom_h, xbpm_nom_v, xbpm_meas_h, xbpm_meas_v)
 
@@ -539,8 +564,14 @@ class XBPMProcessor:
         """Extract each blade's data from whole data dict into arrays."""
         dk = np.array(list(self.data.keys()))
 
-        nh = np.unique(dk[:, 0])
-        nv = np.unique(dk[:, 1])
+        try:
+            nh = np.unique(dk[:, 0])
+            nv = np.unique(dk[:, 1])
+        except:
+            # Some data are 1-D only
+            nh = np.zeros(len(dk))
+            nv = np.unique(dk)
+
         ngrid = (nv.shape[0], nh.shape[0])
         to,  ti  = np.zeros(ngrid), np.zeros(ngrid)
         bo,  bi  = np.zeros(ngrid), np.zeros(ngrid)
@@ -611,7 +642,9 @@ class BPMProcessor:
                   "\n### Skipping BPM analysis.")
             return None
 
-        fig, ax = plt.subplots()
+        self.last_fig, (axpos, axdiff) = plt.subplots(
+            1, 2, figsize=(10.5, 5.5), constrained_layout=True
+        )
 
         sector_idx = self._sector_index()
         tangents = self._tangents_calc(sector_idx)
@@ -630,26 +663,49 @@ class BPMProcessor:
             xpos.append(val[0])
             ypos.append(val[1])
 
-        stats = self._std_dev_estimate(xnom, ynom, xpos, ypos)
-        self.last_stats = stats
+        self.last_stats, self.bpm_roi_diffs = self._std_dev_estimate(
+            xnom, ynom, xpos, ypos
+            )
 
-        ax.plot(xpos, np.array(ypos), 'bo', label="measured")
-        ax.plot(xnom, ynom, 'r+', label="nominal")
+        axpos.plot(xpos, np.array(ypos), 'bo', label="measured")
+        axpos.plot(xnom, ynom, 'r+', label="nominal")
 
-        ax.set_xlabel("$x$ [$\\mu$m]")  # noqa: W605
-        ax.set_ylabel("$y$ [$\\mu$m]")  # noqa: W605
-        ax.set_title(f"Beam positions @ {self.prm.beamline} from BPM values")
+        axpos.set_xlabel("$x$ [$\\mu$m]")  # noqa: W605
+        axpos.set_ylabel("$y$ [$\\mu$m]")  # noqa: W605
+        axpos.set_title(f"Beam positions @ {self.prm.beamline}"
+                        " (from BPM)")
 
-        lim = np.max(np.abs(xnom + ynom)) * 1.7
-        ax.axis("equal")
-        ax.set_xlim(-lim, lim)
-        ax.set_ylim(-lim, lim)
-        ax.legend()
-        ax.grid()
+        limx = np.max(np.abs(xnom)) * 1.4
+        limy = np.max(np.abs(ynom)) * 1.4
+
+        # DEBUG
+        print("\n#####\n#### BPMProcessor.calculate_positions:"
+              f"\n##### x lim = {limx}"
+              f"\n##### y lim = {limy}"
+              f"\n##### x pos max = {np.max(xpos)}"
+              f"\n##### y pos max = {np.max(ypos)}"
+              "\n#####")
+        # DEBUG
+        axpos.set_xlim(-limx, limx)
+        axpos.set_ylim(-limy, limy)
+        axpos.set_aspect("equal", adjustable="box")
+        axpos.legend()
+        axpos.grid()
+
+        im = axdiff.imshow(self.bpm_roi_diffs, cmap='viridis')
+        cbar = self.last_fig.colorbar(im, ax=axdiff,
+                                      fraction=0.046, pad=0.04)
+        cbar.set_label(u"RMS differences (ROI)")
+
+        # axdiff.plot(self.bpm_roi_diffs, 'g+', label="ROI differences")
+        axdiff.set_xlabel(u"$x$ [$\\mu$m]")  # noqa: W605
+        axdiff.set_ylabel(u"$y$ [$\\mu$m]")
+        axdiff.set_title("Differences at ROI")
+        axdiff.grid()
 
         if self.prm.outputfile:
             outfile = f"bpm_positions_{self.prm.beamline}.png"
-            fig.savefig(outfile, dpi=FIGDPI)
+            self.last_fig.savefig(outfile, dpi=FIGDPI)
             print(" Figure of positions calculated by BPM measurements "
                   f"saved to file {outfile}.\n")
 
@@ -748,6 +804,7 @@ class BPMProcessor:
         np_x_pos = np.array(xpos)
         np_y_pos = np.array(ypos)
 
+        # Total differences.
         nfh = np_x_nom.shape[0]
         nfv = np_y_nom.shape[0]
         diff_h = np.abs(np_x_nom.ravel() - np_x_pos.ravel())
@@ -785,6 +842,7 @@ class BPMProcessor:
                 'roi_available': False,
             }
 
+        # Differences at ROI.
         frh, uptoh = int(nsh_x / 2 - 2), int(nsh_x / 2 + 2)
         frv, uptov = int(nsh_y / 2 - 2), int(nsh_y / 2 + 2)
 
@@ -799,10 +857,12 @@ class BPMProcessor:
             np_x_pos_cut = np_x_pos.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
             np_y_pos_cut = np_y_pos.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
 
-        sig2_v_roi = np.sum((np_y_nom_cut.ravel() -
-                             np_y_pos_cut.ravel())**2) / nfv
-        sig2_h_roi = np.sum((np_x_nom_cut.ravel() -
-                             np_x_pos_cut.ravel())**2) / nfh
+        diff_h_cut = np.abs(np_x_nom_cut - np_x_pos_cut)
+        diff_v_cut = np.abs(np_y_nom_cut - np_y_pos_cut)
+        diff_cut = np.sqrt(diff_h_cut**2 + diff_v_cut**2)
+
+        sig2_v_roi = np.sum(diff_v_cut**2) / nfv
+        sig2_h_roi = np.sum(diff_h_cut**2) / nfh
 
         roi_sig_h = np.sqrt(sig2_h_roi)
         roi_sig_v = np.sqrt(sig2_v_roi)
@@ -815,7 +875,7 @@ class BPMProcessor:
               f"       V = {roi_sig_v:.4f},\n"
               f"   total = {roi_sig_tot:.4f}")
 
-        return {
+        rms_stats = {
             'sigma_h': sig_h,
             'sigma_v': sig_v,
             'sigma_total': sig_tot,
@@ -832,3 +892,5 @@ class BPMProcessor:
                 'y_max': float(np.max(np_y_nom_cut)),
             },
         }
+
+        return rms_stats, diff_cut

@@ -243,6 +243,7 @@ class XBPMAnalyzer(QObject):
         }
         if stats is not None:
             results['bpm_stats'] = stats
+        results['bpm_figure'] = bpm_processor.last_fig
 
     def _step_blade_map(self, results: dict):
         """Generate blade map."""

@@ -146,15 +146,17 @@ class DataReader:
                 bpm_x = dt[2]['agx']
                 bpm_y = dt[2]['agy']
 
-                # Debug: print types and values
-                print(f"[DEBUG] Entry {idx}: agx={bpm_x} ({type(bpm_x)}), agy={bpm_y} ({type(bpm_y)})")
+                # DEBUG: print types and values
+                # print(f"[DEBUG] Entry {idx}: agx={bpm_x} ({type(bpm_x)}),"
+                #      f" agy={bpm_y} ({type(bpm_y)})")
                 # Validate both are floats or ints and not None
-                if (bpm_x is None or bpm_y is None or
-                    not isinstance(bpm_x, (float, int)) or
-                    not isinstance(bpm_y, (float, int))):
-                    print(f"[WARNING] Skipping entry {idx}: Invalid agx/agy: agx={bpm_x}, agy={bpm_y}")
-                    continue
-                # END Debug
+                # if (bpm_x is None or bpm_y is None or
+                #    not isinstance(bpm_x, (float, int)) or
+                #    not isinstance(bpm_y, (float, int))):
+                #    print(f"[WARNING] Skipping entry {idx}:"
+                #          f" Invalid agx/agy: agx={bpm_x}, agy={bpm_y}")
+                #    continue
+                # END DEBUG
                 data[(float(bpm_x), float(bpm_y))] = np.array(vals)
 
             except Exception as err:
