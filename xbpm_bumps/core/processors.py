@@ -226,21 +226,23 @@ class XBPMProcessor:
     def _xbpm_position_calc(self, rtitle: str, nosuppress: bool,
                             showmatrix: bool) -> list:
         """Calculate positions from blades' measured data and visualize."""
-        data = self.data
-        prm  = self.prm
-
+        # Parse data into blade measurements.
         blades, _stddevs = self.data_parse()
 
+        # Calculate suppression matrix and apply to data.
         supmat = self.suppression_matrix(showmatrix=showmatrix,
                                          nosuppress=nosuppress)
 
+        # Calculate positions using pairwise and cross-blade formulas.
         pos_pair  = self.beam_position_pair(supmat)
         (pos_nom_h, pos_nom_v,
          pos_pair_h, pos_pair_v) = self.position_dict_parse(pos_pair)
 
-        pos_nom_h *= prm.xbpmdist
-        pos_nom_v *= prm.xbpmdist
+        # Scale positions to physical units using central sweep fits.
+        pos_nom_h *= self.prm.xbpmdist
+        pos_nom_v *= self.prm.xbpmdist
 
+        # Define ROI for scaling fit.
         nh = pos_nom_h.shape[1]
         nv = pos_nom_h.shape[0]
         roi_h = min(self.roi_h_size, nh)
@@ -250,6 +252,8 @@ class XBPMProcessor:
         frv = max(0, int((nv - roi_v) / 2))
         upv = min(nv, frv + roi_v)
 
+        # Extract positions in ROI for scaling fit.
+        # Handle cases where data is 1D.
         if pos_nom_h.shape[0] == 1 or pos_nom_v.shape[0] == 1:
             pos_nom_h_roi = pos_nom_h[0, frv:upv]
             pos_nom_v_roi = pos_nom_v[0, frv:upv]
@@ -270,9 +274,13 @@ class XBPMProcessor:
             pos_pair_h_roi = pos_pair_h[frv:upv, frh:uph]
             pos_pair_v_roi = pos_pair_v[frv:upv, frh:uph]
 
+        # Perform scaling fit to convert from normalized units to
+        # physical units.
         (kxp, deltaxp,
-         kyp, deltayp) = XBPMProcessor.scaling_fit(pos_pair_h_roi,
-                pos_pair_v_roi, pos_nom_h_roi, pos_nom_v_roi, "Pairwise")
+         kyp, deltayp) = XBPMProcessor.scaling_fit(
+             pos_pair_h_roi, pos_pair_v_roi,
+             pos_nom_h_roi, pos_nom_v_roi, "Pairwise"
+             )
         pos_pair_h_scaled = kxp * pos_pair_h + deltaxp
         pos_pair_v_scaled = kyp * pos_pair_v + deltayp
         pos_pair_h_roi_scaled = kxp * pos_pair_h_roi + deltaxp
@@ -282,7 +290,11 @@ class XBPMProcessor:
         diffy2  = (pos_pair_v_roi_scaled - pos_nom_v_roi) ** 2
         diffpairroi = np.sqrt(diffx2 + diffy2)
 
-        pair_visualizer = PositionVisualizer(prm, f"Pairwise {rtitle}")
+        # Calculate pairwise statistics
+        pairwise_stats = self._calculate_roi_stats(diffx2, diffy2)
+
+        # Visualize pairwise positions and differences in ROI.
+        pair_visualizer = PositionVisualizer(self.prm, f"Pairwise {rtitle}")
         pair_visualizer.show_position_results(
             pos_nom_h, pos_nom_v,
             pos_pair_h_scaled, pos_pair_v_scaled,
@@ -291,6 +303,7 @@ class XBPMProcessor:
             diffpairroi
         )
 
+        # Calculate cross-blade positions and perform scaling fit.
         pos_cr_h, pos_cr_v = XBPMProcessor.beam_position_cross(blades)
 
         if pos_nom_h.shape[0] == 1 or pos_nom_v.shape[0] == 1:
@@ -303,6 +316,7 @@ class XBPMProcessor:
             pos_cr_h_roi  = pos_cr_h[frv:upv, frh:uph]
             pos_cr_v_roi  = pos_cr_v[frv:upv, frh:uph]
 
+        # Perform scaling fit for cross-blade positions.
         (kxc, deltaxc,
          kyc, deltayc) = XBPMProcessor.scaling_fit(pos_cr_h_roi,
                                                    pos_cr_v_roi,
@@ -317,7 +331,12 @@ class XBPMProcessor:
         diffy2  = (pos_cr_v_roi_scaled - pos_nom_v_roi) ** 2
         diffcrroi = np.sqrt(diffx2 + diffy2)
 
-        cross_visualizer = PositionVisualizer(prm, f"Cross-blades {rtitle}")
+        # Calculate cross-blade statistics
+        cross_stats = self._calculate_roi_stats(diffx2, diffy2)
+
+        # Visualize cross-blade positions and differences in ROI.
+        cross_visualizer = PositionVisualizer(self.prm,
+                                              f"Cross-blades {rtitle}")
         cross_visualizer.show_position_results(
             pos_nom_h, pos_nom_v,
             pos_cr_h_scaled, pos_cr_v_scaled,
@@ -326,10 +345,11 @@ class XBPMProcessor:
             diffcrroi
         )
 
-        if prm.outputfile:
+        # Save figures if output file option is set.
+        if self.prm.outputfile:
             outdir = '.'
             sup = "raw" if nosuppress else "scaled"
-            bl = prm.beamline
+            bl = self.prm.beamline
 
             outfile_p = os.path.join(outdir, f"xbpm_pair_pos_{sup}_{bl}.png")
             pair_visualizer.save_figure(outfile_p)
@@ -337,6 +357,7 @@ class XBPMProcessor:
             outfile_c = os.path.join(outdir, f"xbpm_cross_pos_{sup}_{bl}.png")
             cross_visualizer.save_figure(outfile_c)
 
+        # Prepare position dictionaries for export.
         scaled_pos_pair = dict()
         scaled_pos_cros = dict()
         for ii, lin in enumerate(pos_nom_h):
@@ -369,6 +390,10 @@ class XBPMProcessor:
                 },
             },
             'supmat': supmat,
+            'xbpm_stats': {
+                'pairwise': pairwise_stats,
+                'cross': cross_stats,
+            },
         }
 
     @staticmethod
@@ -561,6 +586,38 @@ class XBPMProcessor:
         print(f"kx = {kx:12.4f},   deltax = {deltax:12.4f}")
         print(f"ky = {ky:12.4f},   deltay = {deltay:12.4f}\n")
         return kx, deltax, ky, deltay
+
+    @staticmethod
+    def _calculate_roi_stats(diffx2, diffy2):
+        """Calculate RMS statistics from squared position differences in ROI.
+
+        Args:
+            diffx2: Squared horizontal differences array.
+            diffy2: Squared vertical differences array.
+
+        Returns:
+            dict: Statistics with sigma_h, sigma_v, sigma_total,
+                  diff_max_h, diff_min_h, diff_max_v, diff_min_v.
+        """
+        n = diffx2.size
+        sigma_h = np.sqrt(np.sum(diffx2) / n)
+        sigma_v = np.sqrt(np.sum(diffy2) / n)
+        sigma_total = np.sqrt((np.sum(diffx2) + np.sum(diffy2)) / n)
+
+        diff_max_h = np.sqrt(np.max(diffx2))
+        diff_min_h = np.sqrt(np.min(diffx2))
+        diff_max_v = np.sqrt(np.max(diffy2))
+        diff_min_v = np.sqrt(np.min(diffy2))
+
+        return {
+            'sigma_h'     : sigma_h,
+            'sigma_v'     : sigma_v,
+            'sigma_total' : sigma_total,
+            'diff_max_h'  : diff_max_h,
+            'diff_min_h'  : diff_min_h,
+            'diff_max_v'  : diff_max_v,
+            'diff_min_v'  : diff_min_v,
+        }
 
     def data_parse(self):
         """Extract each blade's data from whole data dict into arrays."""

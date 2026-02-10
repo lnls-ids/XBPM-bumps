@@ -384,6 +384,11 @@ class XBPMAnalyzer(QObject):
                       if isinstance(result_data, dict) else None)
         if supmat_std is not None:
             results['supmat_standard'] = supmat_std
+        # Capture XBPM statistics
+        xbpm_stats = (result_data.get('xbpm_stats')
+                      if isinstance(result_data, dict) else None)
+        if xbpm_stats is not None:
+            results['xbpm_stats_raw'] = xbpm_stats
         if pairwise_fig:
             results['xbpm_raw_pairwise_figure'] = pairwise_fig
             self.logMessage.emit("Captured raw pairwise figure")
@@ -427,6 +432,11 @@ class XBPMAnalyzer(QObject):
                        if isinstance(result_data, dict) else None)
         if supmat_calc is not None:
             results['supmat'] = supmat_calc
+        # Capture XBPM statistics
+        xbpm_stats = (result_data.get('xbpm_stats')
+                      if isinstance(result_data, dict) else None)
+        if xbpm_stats is not None:
+            results['xbpm_stats_scaled'] = xbpm_stats
         if pairwise_fig:
             results['xbpm_scaled_pairwise_figure'] = pairwise_fig
             self.logMessage.emit("Captured scaled pairwise figure")

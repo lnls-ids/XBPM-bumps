@@ -1189,6 +1189,7 @@ class XBPMMainWindow(QMainWindow):
         self._collect_bpm_stats_meta(results, meta)
         self._collect_sweeps_meta_from_results(results, meta)
         self._collect_supmat_meta(results, meta)
+        self._collect_xbpm_stats_meta(results, meta)
         return meta
 
     def _collect_scales_meta(self, results: dict, meta: dict) -> None:
@@ -1227,6 +1228,13 @@ class XBPMMainWindow(QMainWindow):
             meta['supmat_standard'] = results.get('supmat_standard')
         if 'supmat' in results:
             meta['supmat'] = results.get('supmat')
+
+    def _collect_xbpm_stats_meta(self, results: dict, meta: dict) -> None:
+        """Extract XBPM statistics from results."""
+        if 'xbpm_stats_raw' in results:
+            meta['xbpm_stats_raw'] = results.get('xbpm_stats_raw')
+        if 'xbpm_stats_scaled' in results:
+            meta['xbpm_stats_scaled'] = results.get('xbpm_stats_scaled')
 
     def _extract_sweeps_meta(self, sweeps_data):
         """Extract sweep metadata: positions fits and per-blade fits."""
@@ -1362,6 +1370,13 @@ class XBPMMainWindow(QMainWindow):
         sections.update(self._format_sweeps_positions_section(meta))
         sections.update(self._format_blades_section(meta))
         sections.update(self._format_bpm_stats_section(meta))
+
+        # Add XBPM stats to positions section if present
+        xbpm_stats_dict = self._format_xbpm_stats_section(meta, active_tab)
+        if xbpm_stats_dict:
+            sections.setdefault('positions', []).extend(
+                xbpm_stats_dict.get('xbpm', [])
+                )
 
         supmat_lines = self._format_supmat_lines(meta, active_tab)
         if supmat_lines:
@@ -1518,6 +1533,79 @@ class XBPMMainWindow(QMainWindow):
                         bpm_lines.append(f"  {key:>17}  =  {bpm_stats[key]}")
 
         return {'bpm': bpm_lines} if bpm_lines else {}
+
+    def _format_xbpm_stats_section(self, meta: dict,
+                                   active_tab: str) -> dict[str, list[str]]:
+        """Format XBPM statistics metadata section.
+
+        Only shows the relevant calculation type based on active tab:
+        - Pairwise stats for tabs containing 'pair'
+        - Cross-blade stats for tabs containing 'cross'
+        """
+        xbpm_lines: list[str] = []
+        text = (active_tab or "").lower()
+
+        # Determine which stats to display based on active tab
+        xbpm_stats = None
+        if 'raw' in text:
+            xbpm_stats = (meta.get('xbpm_stats_raw', {})
+                          if isinstance(meta, dict) else {})
+        elif 'scaled' in text:
+            xbpm_stats = (meta.get('xbpm_stats_scaled', {})
+                          if isinstance(meta, dict) else {})
+        else:
+            xbpm_stats = {}
+
+        if not isinstance(xbpm_stats, dict) or not xbpm_stats:
+            return {}
+
+        # Determine which calculation type to display based on tab name
+        calc_type = None
+        if 'pair' in text:
+            calc_type = 'pairwise'
+        elif 'cross' in text:
+            calc_type = 'cross'
+
+        if not calc_type:
+            return {}
+
+        calc_stats = xbpm_stats.get(calc_type, {})
+        if not isinstance(calc_stats, dict) or not calc_stats:
+            return {}
+
+        # Format statistics similar to BPM _std_dev_estimate print output
+        # All statistics should always be present in calc_stats dictionary
+        try:
+            xbpm_lines.append("")
+            xbpm_lines.append("  Sigmas (RMS differences):")
+            xbpm_lines.append(f"     H = {float(calc_stats['sigma_h']):.4f}")
+            xbpm_lines.append(f"     V = {float(calc_stats['sigma_v']):.4f}")
+            xbpm_lines.append(
+                f" total = {float(calc_stats['sigma_total']):.4f}"
+            )
+
+            xbpm_lines.append("")
+            xbpm_lines.append("  Maximum difference:")
+            xbpm_lines.append(
+                f"     H = {float(calc_stats['diff_max_h']):.4f}"
+            )
+            xbpm_lines.append(
+                f"     V = {float(calc_stats['diff_max_v']):.4f}"
+            )
+
+            xbpm_lines.append("")
+            xbpm_lines.append("  Minimum difference:")
+            xbpm_lines.append(
+                f"     H = {float(calc_stats['diff_min_h']):.4f}"
+            )
+            xbpm_lines.append(
+                f"     V = {float(calc_stats['diff_min_v']):.4f}"
+            )
+        except (KeyError, TypeError, ValueError):
+            # If any key is missing or can't be converted, return empty
+            return {}
+
+        return {'xbpm': xbpm_lines} if xbpm_lines else {}
 
     def _format_supmat_lines(self, meta: dict, active_tab: str) -> list[str]:
         """Format suppression matrix lines for the active tab."""
