@@ -2,7 +2,7 @@
 
 import argparse
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Any, List
 
 import numpy as np
@@ -11,7 +11,7 @@ import numpy as np
 # from xbpm_bumps.core.readers import DataReader
 
 from .config import Config
-from .constants import GRIDSTEP, HELP_DESCRIPTION
+from .constants import GRIDSTEP, HELP_DESCRIPTION, ROI_SIZE_H, ROI_SIZE_V
 
 
 @dataclass
@@ -42,7 +42,9 @@ class Prm:
     bpmdist          : Optional[float]     = None
     section          : Optional[str]       = None
     blademap         : Optional[Any]       = None
-    roisize          : Optional[List[int]] = None
+    roisize          : Optional[List[int]] = field(
+        default_factory=lambda: [ROI_SIZE_H, ROI_SIZE_V]
+    )
 
     def __getitem__(self, key: str):
         """Dictionary-style access (prm['key']) for backward compatibility."""
@@ -89,6 +91,10 @@ class ParameterBuilder:
             gridstep         = float(args.gridstep),
             maxradangle      = 20.0,
             beamline         = "",
+            roisize          = [
+                args.roi_h if args.roi_h is not None else ROI_SIZE_H,
+                args.roi_v if args.roi_v is not None else ROI_SIZE_V,
+            ],
         )
         return self.prm
 
@@ -141,6 +147,14 @@ class ParameterBuilder:
                 Usually inferred from data, but might be provided
                 in some cases."""
             ),
+        )
+        parser.add_argument(
+            '--roi-h', type=int, default=None,
+            help='ROI horizontal size (number of sites)'
+        )
+        parser.add_argument(
+            '--roi-v', type=int, default=None,
+            help='ROI vertical size (number of sites)'
         )
         parser.add_argument(
             '-k', '--skip', type=int, default=0,

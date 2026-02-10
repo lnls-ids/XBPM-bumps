@@ -161,15 +161,15 @@ class PositionVisualizer:
             prm: Parameters dataclass instance.
             title: Title prefix for plots (e.g., "Pairwise" or "Cross-blades").
         """
-        self.prm = prm
+        self.prm   = prm
         self.title = title
-        self.fig = None
+        self.fig   = None
 
         # Module logger
         self._logger = logging.getLogger(__name__)
 
     def show_position_results(self, pos_nom_h, pos_nom_v,
-                              pos_h, pos_v, pos_h_roi, pos_v_roi,
+                              pos_h, pos_v, pos_roi_h, pos_roi_v,
                               pos_nom_h_roi, pos_nom_v_roi,
                               diff_roi, figsize=(18, 6)) -> None:
         """Display full position results in 1x3 subplot layout.
@@ -179,10 +179,10 @@ class PositionVisualizer:
             pos_nom_v: Nominal vertical positions (full grid).
             pos_h: Calculated horizontal positions (full grid).
             pos_v: Calculated vertical positions (full grid).
-            pos_h_roi: Calculated horizontal positions in ROI.
-            pos_v_roi: Calculated vertical positions in ROI.
-            pos_nom_h_roi: Nominal horizontal positions in ROI.
-            pos_nom_v_roi: Nominal vertical positions in ROI.
+            pos_roi_h: Calculated horizontal positions in ROI.
+            pos_roi_v: Calculated vertical positions in ROI.
+            pos_nom_h_roi: Nominal horizontal positions inside ROI.
+            pos_nom_v_roi: Nominal vertical positions inside ROI.
             diff_roi: RMS position differences in ROI.
             figsize: Figure size as (width, height) tuple.
         """
@@ -218,7 +218,7 @@ class PositionVisualizer:
         # ROI closeup
         self._plot_scaled_positions(
             ax_close, pos_nom_h_roi, pos_nom_v_roi,
-            pos_h_roi, pos_v_roi,
+            pos_roi_h, pos_roi_v,
             f"{self.title} @ {self.prm.beamline} closeup"
         )
 

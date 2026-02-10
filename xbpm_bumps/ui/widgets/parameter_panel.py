@@ -7,6 +7,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import pyqtSignal
 
+from ...core.constants import ROI_SIZE_H, ROI_SIZE_V
+
 
 class ParameterPanel(QWidget):
     """Widget for inputting XBPM analysis parameters.
@@ -79,15 +81,20 @@ class ParameterPanel(QWidget):
         self.xbpmdist_spin.valueChanged.connect(self.parametersChanged.emit)
         layout.addRow("XBPM Distance:", self.xbpmdist_spin)
 
-        # Grid step
-        self.gridstep_spin = QDoubleSpinBox()
-        self.gridstep_spin.setRange(0.0, 100.0)
-        self.gridstep_spin.setValue(0.0)
-        self.gridstep_spin.setDecimals(2)
-        self.gridstep_spin.setSuffix(" µm")
-        self.gridstep_spin.setSpecialValueText("Auto (infer from data)")
-        self.gridstep_spin.valueChanged.connect(self.parametersChanged.emit)
-        layout.addRow("Grid Step:", self.gridstep_spin)
+        # ROI sizes (horizontal/vertical)
+        self.roi_h_spin = QSpinBox()
+        self.roi_h_spin.setRange(1, 999)
+        self.roi_h_spin.setValue(int(ROI_SIZE_H))
+        self.roi_h_spin.setSuffix(" pts")
+        self.roi_h_spin.valueChanged.connect(self.parametersChanged.emit)
+        layout.addRow("ROI Size H:", self.roi_h_spin)
+
+        self.roi_v_spin = QSpinBox()
+        self.roi_v_spin.setRange(1, 999)
+        self.roi_v_spin.setValue(int(ROI_SIZE_V))
+        self.roi_v_spin.setSuffix(" pts")
+        self.roi_v_spin.valueChanged.connect(self.parametersChanged.emit)
+        layout.addRow("ROI Size V:", self.roi_v_spin)
 
         # Skip initial data
         self.skip_spin = QSpinBox()
@@ -191,11 +198,10 @@ class ParameterPanel(QWidget):
                 if self.xbpmdist_spin.value() > 0
                 else None
             ),
-            'gridstep': (
-                self.gridstep_spin.value()
-                if self.gridstep_spin.value() > 0
-                else None
-            ),
+            'roisize': [
+                int(self.roi_h_spin.value()),
+                int(self.roi_v_spin.value()),
+            ],
             'skip': self.skip_spin.value(),
             'xbpmpositionsraw': self.xbpm_raw_check.isChecked(),
             'xbpmpositions': self.xbpm_check.isChecked(),
@@ -221,8 +227,12 @@ class ParameterPanel(QWidget):
             self.set_workdir(params['workdir'])
         if 'xbpmdist' in params and params['xbpmdist'] is not None:
             self.xbpmdist_spin.setValue(params['xbpmdist'])
-        if 'gridstep' in params and params['gridstep'] is not None:
-            self.gridstep_spin.setValue(params['gridstep'])
+        if 'roisize' in params and params['roisize']:
+            try:
+                self.roi_h_spin.setValue(int(params['roisize'][0]))
+                self.roi_v_spin.setValue(int(params['roisize'][1]))
+            except Exception:
+                pass
         if 'skip' in params:
             self.skip_spin.setValue(params['skip'])
 

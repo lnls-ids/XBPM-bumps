@@ -232,7 +232,7 @@ class XBPMProcessor:
         blades, _stddevs = self.data_parse()
 
         supmat = self.suppression_matrix(showmatrix=showmatrix,
-                                        nosuppress=nosuppress)
+                                         nosuppress=nosuppress)
 
         pos_pair  = self.beam_position_pair(supmat)
         (pos_nom_h, pos_nom_v,
@@ -241,15 +241,14 @@ class XBPMProcessor:
         pos_nom_h *= prm.xbpmdist
         pos_nom_v *= prm.xbpmdist
 
-        keys = np.array(list(data.keys()))
-        range_h = np.unique(keys[:, 0])
-        range_v = np.unique(keys[:, 1])
-        halfh = int(range_h.shape[0] / 2)
-        halfv = int(range_v.shape[0] / 2)
-        abh = self.roi_h_size if range_h[-1] < self.roi_h_size else halfh
-        frh, uph = halfh - abh, halfh + abh + 1
-        abv = self.roi_v_size if range_v[-1] < self.roi_v_size else halfv
-        frv, upv = halfv - abv, halfv + abv + 1
+        nh = pos_nom_h.shape[1]
+        nv = pos_nom_h.shape[0]
+        roi_h = min(self.roi_h_size, nh)
+        roi_v = min(self.roi_v_size, nv)
+        frh = max(0, int((nh - roi_h) / 2))
+        uph = min(nh, frh + roi_h)
+        frv = max(0, int((nv - roi_v) / 2))
+        upv = min(nv, frv + roi_v)
 
         if pos_nom_h.shape[0] == 1 or pos_nom_v.shape[0] == 1:
             pos_nom_h_roi = pos_nom_h[0, frv:upv]
@@ -258,8 +257,8 @@ class XBPMProcessor:
             pos_nom_h_roi = pos_nom_h[frv:upv, 0]
             pos_nom_v_roi = pos_nom_v[frv:upv, 0]
         else:
-            pos_nom_h_roi  = pos_nom_h[frh:uph, frv:upv]
-            pos_nom_v_roi  = pos_nom_v[frh:uph, frv:upv]
+            pos_nom_h_roi  = pos_nom_h[frv:upv, frh:uph]
+            pos_nom_v_roi  = pos_nom_v[frv:upv, frh:uph]
 
         if pos_nom_h.shape[0] == 1 or pos_nom_v.shape[0] == 1:
             pos_pair_h_roi = pos_pair_h[0, frv:upv]
@@ -268,8 +267,8 @@ class XBPMProcessor:
             pos_pair_h_roi = pos_pair_h[frv:upv, 0]
             pos_pair_v_roi = pos_pair_v[frv:upv, 0]
         else:
-            pos_pair_h_roi = pos_pair_h[frh:uph, frv:upv]
-            pos_pair_v_roi = pos_pair_v[frh:uph, frv:upv]
+            pos_pair_h_roi = pos_pair_h[frv:upv, frh:uph]
+            pos_pair_v_roi = pos_pair_v[frv:upv, frh:uph]
 
         (kxp, deltaxp,
          kyp, deltayp) = XBPMProcessor.scaling_fit(pos_pair_h_roi,
@@ -301,8 +300,8 @@ class XBPMProcessor:
             pos_cr_h_roi  = pos_cr_h[frv:upv, 0]
             pos_cr_v_roi  = pos_cr_v[frv:upv, 0]
         else:
-            pos_cr_h_roi  = pos_cr_h[frh:uph, frv:upv]
-            pos_cr_v_roi  = pos_cr_v[frh:uph, frv:upv]
+            pos_cr_h_roi  = pos_cr_h[frv:upv, frh:uph]
+            pos_cr_v_roi  = pos_cr_v[frv:upv, frh:uph]
 
         (kxc, deltaxc,
          kyc, deltayc) = XBPMProcessor.scaling_fit(pos_cr_h_roi,
@@ -621,8 +620,8 @@ class BPMProcessor:
         self.rawdata = rawdata
         self.prm     = prm
 
-        self.roi_h_size = prm.roisize[1] if prm.roisize else ROI_SIZE_H
-        self.roi_v_size = prm.roisize[0] if prm.roisize else ROI_SIZE_V
+        self.roi_h_size = prm.roisize[0] if prm.roisize else ROI_SIZE_H
+        self.roi_v_size = prm.roisize[1] if prm.roisize else ROI_SIZE_V
 
         # DEBUG
         print("\n\n", "#" * 10)
@@ -672,8 +671,10 @@ class BPMProcessor:
             self.xnom, self.ynom, self.xpos, self.ypos
             )
 
-        axpos.plot(self.xpos, self.ypos, 'bo', label="measured")
-        axpos.plot(self.xnom, self.ynom, 'r+', label="nominal")
+        axpos.scatter(self.xpos.ravel(), self.ypos.ravel(),
+                  c='b', marker='o', label="measured")
+        axpos.scatter(self.xnom.ravel(), self.ynom.ravel(),
+                  c='r', marker='+', label="nominal")
         axpos.set_xlabel("$x$ [$\\mu$m]")  # noqa: W605
         axpos.set_ylabel("$y$ [$\\mu$m]")  # noqa: W605
         axpos.set_title(f"Beam positions @ {self.prm.beamline}"
@@ -698,16 +699,29 @@ class BPMProcessor:
         axpos.legend()
         axpos.grid()
 
-        im = axdiff.imshow(self.bpm_roi_diffs, cmap='viridis')
-        cbar = self.last_fig.colorbar(im, ax=axdiff,
-                                      fraction=0.046, pad=0.04)
-        cbar.set_label(u"RMS differences (ROI)")
+        if self.bpm_roi_diffs is not None:
+            xnom_cut, ynom_cut = self._roi_cut(self.xnom, self.ynom)
+            if (self.bpm_roi_diffs.ndim == 2 and xnom_cut is not None
+                    and ynom_cut is not None):
+                im = axdiff.pcolormesh(
+                    xnom_cut, ynom_cut, self.bpm_roi_diffs,
+                    cmap='viridis', shading='auto'
+                )
+            else:
+                im = axdiff.scatter(
+                    np.ravel(xnom_cut), np.ravel(ynom_cut),
+                    c=np.ravel(self.bpm_roi_diffs), cmap='viridis', s=50
+                )
+            cbar = self.last_fig.colorbar(im, ax=axdiff,
+                                          fraction=0.046, pad=0.04)
+            cbar.set_label(u"RMS differences (ROI)")
 
         # axdiff.plot(self.bpm_roi_diffs, 'g+', label="ROI differences")
         axdiff.set_xlabel(u"$x$ [$\\mu$m]")  # noqa: W605
         axdiff.set_ylabel(u"$y$ [$\\mu$m]")
         axdiff.set_title("Differences at ROI")
-        axdiff.grid()
+        axdiff.set_aspect("equal", adjustable="box")
+        axdiff.grid(False)
 
         if self.prm.outputfile:
             outfile = f"bpm_positions_{self.prm.beamline}.png"
@@ -743,6 +757,21 @@ class BPMProcessor:
                 self.ynom[iy, ix] = key[1]
                 self.xpos[iy, ix] = self.xbpm_pos[key][0]
                 self.ypos[iy, ix] = self.xbpm_pos[key][1]
+
+    def _roi_cut(self, xnom, ynom):
+        """Return ROI slices of nominal coordinate grids."""
+        nv, nh = xnom.shape[0], xnom.shape[1]
+        roi_h = min(self.roi_h_size, nh)
+        roi_v = min(self.roi_v_size, nv)
+        fromh = max(0, int((nh - roi_h) / 2))
+        uptoh = min(nh, fromh + roi_h)
+        fromv = max(0, int((nv - roi_v) / 2))
+        uptov = min(nv, fromv + roi_v)
+
+        if nh == 1 or nv == 1:
+            return xnom[fromv:uptov], ynom[fromv:uptov]
+
+        return xnom[fromv:uptov, fromh:uptoh], ynom[fromv:uptov, fromh:uptoh]
 
     def _sector_index(self) -> int:
         sector = int(self.prm.section.split(':')[1][:2])
@@ -888,10 +917,12 @@ class BPMProcessor:
             return rms_stats, None
 
         # Differences at ROI.
-        fromh = int((nh - self.roi_h_size) / 2)
-        uptoh = int((nh + self.roi_h_size) / 2) + 1
-        fromv = int((nv - self.roi_v_size) / 2)
-        uptov = int((nv + self.roi_v_size) / 2) + 1
+        roi_h = min(self.roi_h_size, nh)
+        roi_v = min(self.roi_v_size, nv)
+        fromh = max(0, int((nh - roi_h) / 2))
+        uptoh = min(nh, fromh + roi_h)
+        fromv = max(0, int((nv - roi_v) / 2))
+        uptov = min(nv, fromv + roi_v)
         nroi = (uptov - fromv) * (uptoh - fromh)
 
         if nh == 1 or nv == 1:

@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QTextEdit, QSplitter, QTabWidget,
     QStatusBar, QProgressBar, QMessageBox, QFileDialog
 )
-from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot, QThread
+from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot, QThread, QTimer
 from PyQt5.QtGui import QFont
 import numpy as np
 import logging
@@ -48,6 +48,11 @@ class XBPMMainWindow(QMainWindow):
         self._last_workdir   = ""
         self._last_meta      = {}
         self._last_hdf5_meta = {}
+        self._last_roisize   = None
+        self._analysis_running = False
+        self._roi_rerun_timer = QTimer(self)
+        self._roi_rerun_timer.setSingleShot(True)
+        self._roi_rerun_timer.timeout.connect(self._on_run_clicked)
         self.setup_ui()
         self.setup_worker_thread()
         self.setWindowTitle("XBPM Beam Position Analysis")
@@ -263,11 +268,21 @@ class XBPMMainWindow(QMainWindow):
         """React to parameter changes; pre-select beamline on workdir set."""
         params = self.param_panel.get_parameters()
         workdir = params.get('workdir') or ""
-        if not workdir or workdir == self._last_workdir:
-            return
+        if workdir and workdir != self._last_workdir:
+            self._last_workdir = workdir
+            # self._preselected_beamline removed
 
-        self._last_workdir = workdir
-        # self._preselected_beamline removed
+        roisize = params.get('roisize')
+        if roisize is not None and roisize != self._last_roisize:
+            self._last_roisize = list(roisize)
+            if self.rawdata is not None and not self._analysis_running:
+                self._schedule_roi_rerun()
+
+    def _schedule_roi_rerun(self):
+        """Debounce ROI changes and re-run analysis if data is loaded."""
+        if self._roi_rerun_timer.isActive():
+            self._roi_rerun_timer.stop()
+        self._roi_rerun_timer.start(400)
 
     def _create_status_bar(self):
         """Create status bar with progress indicator."""
@@ -1074,6 +1089,7 @@ class XBPMMainWindow(QMainWindow):
         Args:
             running: True if analysis is running, False otherwise.
         """
+        self._analysis_running = running
         self.run_btn.setEnabled(not running)
         self.stop_btn.setEnabled(running)
         self.param_panel.setEnabled(not running)
