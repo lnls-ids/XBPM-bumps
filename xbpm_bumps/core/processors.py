@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 from .parameters  import Prm                     # noqa: E272
 from .visualizers import PositionVisualizer
-from .constants   import STD_ROI_SIZE, FIGDPI    # noqa: E272
+from .constants   import ROI_SIZE_V, ROI_SIZE_H, FIGDPI    # noqa: E272
 # from .exporters import Exporter
 
 
@@ -43,6 +43,8 @@ class XBPMProcessor:
         self.blades_h = None
         self.blades_v = None
         self.suppression_matrix_val = None
+        self.roi_h_size = prm.roisize[0] if prm.roisize else ROI_SIZE_H
+        self.roi_v_size = prm.roisize[1] if prm.roisize else ROI_SIZE_V
 
     def analyze_central_sweeps(self, show: bool = False) -> tuple:
         """Analyze blade behavior at central sweep positions.
@@ -225,7 +227,7 @@ class XBPMProcessor:
                             showmatrix: bool) -> list:
         """Calculate positions from blades' measured data and visualize."""
         data = self.data
-        prm = self.prm
+        prm  = self.prm
 
         blades, _stddevs = self.data_parse()
 
@@ -244,9 +246,9 @@ class XBPMProcessor:
         range_v = np.unique(keys[:, 1])
         halfh = int(range_h.shape[0] / 2)
         halfv = int(range_v.shape[0] / 2)
-        abh = STD_ROI_SIZE if range_h[-1] < STD_ROI_SIZE else halfh
+        abh = self.roi_h_size if range_h[-1] < self.roi_h_size else halfh
         frh, uph = halfh - abh, halfh + abh + 1
-        abv = STD_ROI_SIZE if range_v[-1] < STD_ROI_SIZE else halfv
+        abv = self.roi_v_size if range_v[-1] < self.roi_v_size else halfv
         frv, upv = halfv - abv, halfv + abv + 1
 
         if pos_nom_h.shape[0] == 1 or pos_nom_v.shape[0] == 1:
@@ -511,7 +513,8 @@ class XBPMProcessor:
         #         xbpm_meas_h[lin, col] = val[0]
         #         xbpm_meas_v[lin, col] = val[1]
         #     except Exception as err:
-        #         print(f"\n WARNING: failed when parsing positions dictionary:"
+        #         print(f"\n WARNING: failed when parsing positions"
+        #               " dictionary:"
         #               f"\n{err}\n lin, col = {lin}, {col}, key = {key}")
         #         continue
 
@@ -567,7 +570,7 @@ class XBPMProcessor:
         try:
             nh = np.unique(dk[:, 0])
             nv = np.unique(dk[:, 1])
-        except:
+        except:  # noqa: E722
             # Some data are 1-D only
             nh = np.zeros(len(dk))
             nv = np.unique(dk)
@@ -616,8 +619,10 @@ class BPMProcessor:
     def __init__(self, rawdata, prm: Prm):
         """Store raw BPM/XBPM dataset and parameters for later processing."""
         self.rawdata = rawdata
-        self.prm = prm
-        self.last_stats = None
+        self.prm     = prm
+
+        self.roi_h_size = prm.roisize[1] if prm.roisize else ROI_SIZE_H
+        self.roi_v_size = prm.roisize[0] if prm.roisize else ROI_SIZE_V
 
         # DEBUG
         print("\n\n", "#" * 10)
@@ -654,36 +659,37 @@ class BPMProcessor:
               "# Distance between source and XBPM ="
               f" {self.prm.xbpmdist:8.4f} m\n")
 
-        xbpm_pos = self._positions_from_tangents(tangents, self.prm.xbpmdist)
-
-        xpos, ypos, xnom, ynom = [], [], [], []
-        for key, val in xbpm_pos.items():
-            xnom.append(key[0])
-            ynom.append(key[1])
-            xpos.append(val[0])
-            ypos.append(val[1])
-
-        self.last_stats, self.bpm_roi_diffs = self._std_dev_estimate(
-            xnom, ynom, xpos, ypos
+        # Calculate positions at XBPM from BPM tangents and distances.
+        self.xbpm_pos = self._positions_from_tangents(
+            tangents, self.prm.xbpmdist
             )
 
-        axpos.plot(xpos, np.array(ypos), 'bo', label="measured")
-        axpos.plot(xnom, ynom, 'r+', label="nominal")
+        # Assemble position data into structured grid arrays.
+        self._position_grid_assemble()
 
+        # Estimate standard deviations.
+        self.last_stats, self.bpm_roi_diffs = self._std_dev_estimate(
+            self.xnom, self.ynom, self.xpos, self.ypos
+            )
+
+        axpos.plot(self.xpos, self.ypos, 'bo', label="measured")
+        axpos.plot(self.xnom, self.ynom, 'r+', label="nominal")
         axpos.set_xlabel("$x$ [$\\mu$m]")  # noqa: W605
         axpos.set_ylabel("$y$ [$\\mu$m]")  # noqa: W605
         axpos.set_title(f"Beam positions @ {self.prm.beamline}"
                         " (from BPM)")
 
-        limx = np.max(np.abs(xnom)) * 1.4
-        limy = np.max(np.abs(ynom)) * 1.4
+        limx = np.max(np.abs(self.xnom)) * 1.5
+        limy = np.max(np.abs(self.ynom)) * 1.5
+        limx = max(limx, limy)
+        limy = limy
 
         # DEBUG
         print("\n#####\n#### BPMProcessor.calculate_positions:"
               f"\n##### x lim = {limx}"
               f"\n##### y lim = {limy}"
-              f"\n##### x pos max = {np.max(xpos)}"
-              f"\n##### y pos max = {np.max(ypos)}"
+              f"\n##### x pos max = {np.max(self.xpos)}"
+              f"\n##### y pos max = {np.max(self.ypos)}"
               "\n#####")
         # DEBUG
         axpos.set_xlim(-limx, limx)
@@ -710,9 +716,33 @@ class BPMProcessor:
                   f"saved to file {outfile}.\n")
 
         # Return measured and nominal coordinates
-        measured = np.column_stack((xpos, ypos)) if xpos else None
-        nominal = np.column_stack((xnom, ynom)) if xnom else None
+        measured = (np.column_stack((self.xpos, self.ypos))
+                    if self.xpos.size else None)
+        nominal  = (np.column_stack((self.xnom, self.ynom))
+                    if self.xnom.size else None)
         return measured, nominal
+
+    def _position_grid_assemble(self):
+        """Assemble position data into structured grid numpy arrays."""
+        # Get unique sorted indices for x and y from the position keys.
+        xidx = sorted(set([key[0] for key in self.xbpm_pos.keys()]))
+        yidx = sorted(set([key[1] for key in self.xbpm_pos.keys()]))
+        nx, ny = len(xidx), len(yidx)
+
+        # Initialize numpy arrays for nominal and measured positions.
+        self.xnom = np.zeros((ny, nx))
+        self.ynom = np.zeros((ny, nx))
+        self.xpos = np.zeros((ny, nx))
+        self.ypos = np.zeros((ny, nx))
+
+        # Fill the arrays.
+        for iy in range(ny):
+            for ix in range(nx):
+                key = (xidx[ix], yidx[iy])
+                self.xnom[iy, ix] = key[0]
+                self.ynom[iy, ix] = key[1]
+                self.xpos[iy, ix] = self.xbpm_pos[key][0]
+                self.ypos[iy, ix] = self.xbpm_pos[key][1]
 
     def _sector_index(self) -> int:
         sector = int(self.prm.section.split(':')[1][:2])
@@ -725,6 +755,7 @@ class BPMProcessor:
         offset_x_next, offset_y_next = 0, 0
         offsetfound = False
 
+        # Search for zero-angle reference orbit to define the offset.
         for dt in self.rawdata:
             if dt[2]['agx'] == 0 and dt[2]['agy'] == 0:
                 offset_x_sect = dt[2]['orbx'][idx]
@@ -734,16 +765,19 @@ class BPMProcessor:
                 offsetfound = True
                 break
 
+        # Try and guess offsets by extrapolation if not found.
         if not offsetfound:
             (offset_x_sect, offset_x_next,
              offset_y_sect, offset_y_next) = self._offset_search(idx)
 
+        # Calculate tangents for all angles.
         tangents = dict()
+        bdist = self.prm.bpmdist
         for dt in self.rawdata:
             tx = (((dt[2]['orbx'][nextidx] - offset_x_next)) -
-                  (dt[2]['orbx'][idx]     - offset_x_sect)) / self.prm.bpmdist
+                  (dt[2]['orbx'][idx]     - offset_x_sect)) / bdist
             ty = (((dt[2]['orby'][nextidx] - offset_y_next)) -
-                  (dt[2]['orby'][idx]     - offset_y_sect)) / self.prm.bpmdist
+                  (dt[2]['orby'][idx]     - offset_y_sect)) / bdist
             agx, agy = dt[2]['agx'], dt[2]['agy']
             tangents[agx, agy] = np.array([tx, ty])
         return tangents
@@ -763,11 +797,13 @@ class BPMProcessor:
 
         osx = np.array(sorted(list(set(orbx))))
         oxmin, oxmax = osx[0], osx[-1]
-        offset_x_sect = (oxmin * agxmax - oxmax * agxmin) / (agxmax - agxmin)
+        offset_x_sect = ((oxmin * agxmax - oxmax * agxmin) /
+                         (agxmax - agxmin))
 
         onx = np.array(sorted(list(set(n_orbx))))
         onxmin, onxmax = onx[0], onx[-1]
-        offset_x_next = (onxmin * agxmax - onxmax * agxmin) / (agxmax - agxmin)
+        offset_x_next = ((onxmin * agxmax - onxmax * agxmin) /
+                         (agxmax - agxmin))
 
         agy    = np.array([dt[2]['agy']
                            for dt in self.rawdata])
@@ -781,11 +817,13 @@ class BPMProcessor:
 
         osy = np.array(sorted(list(set(orby))))
         oymin, oymax = osy[0], osy[-1]
-        offset_y_sect = (oymin * agymax - oymax * agymin) / (agymax - agymin)
+        offset_y_sect = ((oymin * agymax - oymax * agymin) /
+                         (agymax - agymin))
 
         ony = np.array(sorted(list(set(n_orby))))
         onymin, onymax = ony[0], ony[-1]
-        offset_y_next = (onymin * agymax - onymax * agymin) / (agymax - agymin)
+        offset_y_next = ((onymin * agymax - onymax * agymin) /
+                         (agymax - agymin))
 
         return (offset_x_sect, offset_x_next, offset_y_sect, offset_y_next)
 
@@ -799,21 +837,19 @@ class BPMProcessor:
 
     def _std_dev_estimate(self, xnom, ynom, xpos, ypos):
         """Estimate RMS deviations between measured and nominal positions."""
-        np_x_nom = np.array(xnom)
-        np_y_nom = np.array(ynom)
-        np_x_pos = np.array(xpos)
-        np_y_pos = np.array(ypos)
+        # Total differences (all sites).
+        nv, nh = xnom.shape[0], xnom.shape[1]
+        nsites = nv * nh
 
-        # Total differences.
-        nfh = np_x_nom.shape[0]
-        nfv = np_y_nom.shape[0]
-        diff_h = np.abs(np_x_nom.ravel() - np_x_pos.ravel())
-        diff_h_max = np.max(diff_h)
-        sig2_h = np.sum(diff_h**2) / nfh
+        diff_h = xnom - xpos
+        diff_h_min = np.abs(np.min(diff_h))
+        diff_h_max = np.abs(np.max(diff_h))
+        sig2_h = np.sum(diff_h**2) / nsites
 
-        diff_v = np.abs(np_y_nom.ravel() - np_y_pos.ravel())
-        diff_v_max = np.max(diff_v)
-        sig2_v = np.sum(diff_v**2) / nfv
+        diff_v = ynom - ypos
+        diff_v_min = np.abs(np.min(diff_v))
+        diff_v_max = np.abs(np.max(diff_v))
+        sig2_v = np.sum(diff_v**2) / nsites
 
         sig_h = np.sqrt(sig2_h)
         sig_v = np.sqrt(sig2_v)
@@ -825,71 +861,85 @@ class BPMProcessor:
               f"   (all sites) total = {sig_tot:.4f}\n"
               "\n  Maximum difference:\n"
               f"   (all sites) H = {diff_h_max:.4f}\n"
-              f"   (all sites) V = {diff_v_max:.4f},\n")
+              f"   (all sites) V = {diff_v_max:.4f},\n"
+              "\n  Minimum difference:\n"
+              f"   (all sites) H = {diff_h_min:.4f}\n"
+              f"   (all sites) V = {diff_v_min:.4f},\n"
+              )
 
-        nsh_x, nsh_y = len(set(xnom)), len(set(ynom))
-        nmax = nsh_x * nsh_y
-
-        if nmax > nfh or nmax > nfv:
-            print("\n WARNING: sweeping looks incomplete, no ROI was defined. "
-                  " (Maybe just one line swept?)")
-            return {
-                'sigma_h': sig_h,
-                'sigma_v': sig_v,
-                'sigma_total': sig_tot,
-                'diff_max_h': diff_h_max,
-                'diff_max_v': diff_v_max,
-                'roi_available': False,
+        # Check whether the sweeping is complete.
+        # nmax = len(set(list(xnom.ravel()))) * len(set(list(ynom.ravel())))
+        nmax = (np.unique(xnom.ravel()).shape[0] *
+                np.unique(ynom.ravel()).shape[0])
+        if nmax < nsites:
+            print("\n WARNING: sweeping looks incomplete, no ROI was defined"
+                  f" ({nmax} sites measured at most, out of {nsites}"
+                  " in total). Skipping ROI analysis.")
+            rms_stats = {
+                'sigma_h'       : sig_h,
+                'sigma_v'       : sig_v,
+                'sigma_total'   : sig_tot,
+                'diff_min_h'    : diff_h_min,
+                'diff_min_v'    : diff_v_min,
+                'diff_max_h'    : diff_h_max,
+                'diff_max_v'    : diff_v_max,
+                'roi_available' : False,
             }
+            return rms_stats, None
 
         # Differences at ROI.
-        frh, uptoh = int(nsh_x / 2 - 2), int(nsh_x / 2 + 2)
-        frv, uptov = int(nsh_y / 2 - 2), int(nsh_y / 2 + 2)
+        fromh = int((nh - self.roi_h_size) / 2)
+        uptoh = int((nh + self.roi_h_size) / 2) + 1
+        fromv = int((nv - self.roi_v_size) / 2)
+        uptov = int((nv + self.roi_v_size) / 2) + 1
+        nroi = (uptov - fromv) * (uptoh - fromh)
 
-        if nsh_x == 1 or nsh_y == 1:
-            np_x_nom_cut = np_x_nom.reshape(nsh_x, nsh_y)[0, frv:uptov]
-            np_y_nom_cut = np_y_nom.reshape(nsh_x, nsh_y)[0, frv:uptov]
-            np_x_pos_cut = np_x_pos.reshape(nsh_x, nsh_y)[0, frv:uptov]
-            np_y_pos_cut = np_y_pos.reshape(nsh_x, nsh_y)[0, frv:uptov]
+        if nh == 1 or nv == 1:
+            xnom_cut = xnom[fromv:uptov]
+            ynom_cut = ynom[fromv:uptov]
+            xpos_cut = xpos[fromv:uptov]
+            ypos_cut = ypos[fromv:uptov]
         else:
-            np_x_nom_cut = np_x_nom.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
-            np_y_nom_cut = np_y_nom.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
-            np_x_pos_cut = np_x_pos.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
-            np_y_pos_cut = np_y_pos.reshape(nsh_x, nsh_y)[frv:uptov, frh:uptoh]
+            xnom_cut = xnom[fromv:uptov, fromh:uptoh]
+            ynom_cut = ynom[fromv:uptov, fromh:uptoh]
+            xpos_cut = xpos[fromv:uptov, fromh:uptoh]
+            ypos_cut = ypos[fromv:uptov, fromh:uptoh]
 
-        diff_h_cut = np.abs(np_x_nom_cut - np_x_pos_cut)
-        diff_v_cut = np.abs(np_y_nom_cut - np_y_pos_cut)
+        diff_h_cut = np.abs(xnom_cut - xpos_cut)
+        diff_v_cut = np.abs(ynom_cut - ypos_cut)
         diff_cut = np.sqrt(diff_h_cut**2 + diff_v_cut**2)
 
-        sig2_v_roi = np.sum(diff_v_cut**2) / nfv
-        sig2_h_roi = np.sum(diff_h_cut**2) / nfh
+        sig2_v_roi = np.sum(diff_v_cut**2) / nroi
+        sig2_h_roi = np.sum(diff_h_cut**2) / nroi
 
         roi_sig_h = np.sqrt(sig2_h_roi)
         roi_sig_v = np.sqrt(sig2_v_roi)
         roi_sig_tot = np.sqrt(sig2_h_roi + sig2_v_roi)
 
         print("  Differences in ROI\n"
-              f"   (x in [{np.min(np_x_nom_cut)}, {np.max(np_x_nom_cut)}];"
-              f"  y in [{np.min(np_y_nom_cut)}, {np.max(np_y_nom_cut)}])\n"
+              f"   (x in [{np.min(xnom_cut)}, {np.max(xnom_cut)}];"
+              f"  y in [{np.min(ynom_cut)}, {np.max(ynom_cut)}])\n"
               f"       H = {roi_sig_h:.4f}\n"
               f"       V = {roi_sig_v:.4f},\n"
               f"   total = {roi_sig_tot:.4f}")
 
         rms_stats = {
-            'sigma_h': sig_h,
-            'sigma_v': sig_v,
-            'sigma_total': sig_tot,
-            'diff_max_h': diff_h_max,
-            'diff_max_v': diff_v_max,
-            'roi_available': True,
-            'roi_sigma_h': roi_sig_h,
-            'roi_sigma_v': roi_sig_v,
-            'roi_sigma_total': roi_sig_tot,
-            'roi_bounds': {
-                'x_min': float(np.min(np_x_nom_cut)),
-                'x_max': float(np.max(np_x_nom_cut)),
-                'y_min': float(np.min(np_y_nom_cut)),
-                'y_max': float(np.max(np_y_nom_cut)),
+            'sigma_h'         : sig_h,
+            'sigma_v'         : sig_v,
+            'sigma_total'     : sig_tot,
+            'diff_min_h'      : diff_h_min,
+            'diff_min_v'      : diff_v_min,
+            'diff_max_h'      : diff_h_max,
+            'diff_max_v'      : diff_v_max,
+            'roi_available'   : True,
+            'roi_sigma_h'     : roi_sig_h,
+            'roi_sigma_v'     : roi_sig_v,
+            'roi_sigma_total' : roi_sig_tot,
+            'roi_bounds'      : {
+                'x_min' : float(np.min(xnom_cut)),
+                'x_max' : float(np.max(xnom_cut)),
+                'y_min' : float(np.min(ynom_cut)),
+                'y_max' : float(np.max(ynom_cut)),
             },
         }
 

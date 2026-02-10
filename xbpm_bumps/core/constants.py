@@ -2,7 +2,8 @@
 
 FILE_EXTENSION = ".pickle"    # Data file type.
 GRIDSTEP = 2                  # Default grid step.
-STD_ROI_SIZE = 2              # Default range for ROI.
+ROI_SIZE_V = 5                # Default vertical ROI number of sites.
+ROI_SIZE_H = 5                # Default horizontal ROI number of sites.
 FIGDPI = 300                  # Figure dpi saving parameter.
 
 HELP_DESCRIPTION = (

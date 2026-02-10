@@ -136,7 +136,7 @@ class DataReader:
         data = dict()
         beamline = self.prm.beamline
 
-        for idx, dt in enumerate(self.rawdata):
+        for dt in self.rawdata:
             try:
                 xbpm = dt[0][beamline]
                 vals = list()

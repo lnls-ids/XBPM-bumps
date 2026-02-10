@@ -70,7 +70,7 @@ class BladeMapVisualizer:
             try:
                 klist = np.unique(alist[:, 0])
                 mlist = np.unique(alist[:, 1])
-            except:
+            except:  # noqa: E722
                 # Some data are 1-D only
                 mlist = np.unique(alist)
                 klist = np.zeros(len(mlist))

@@ -42,7 +42,7 @@ class Prm:
     bpmdist          : Optional[float]     = None
     section          : Optional[str]       = None
     blademap         : Optional[Any]       = None
-    nroi             : Optional[List[int]] = None
+    roisize          : Optional[List[int]] = None
 
     def __getitem__(self, key: str):
         """Dictionary-style access (prm['key']) for backward compatibility."""
