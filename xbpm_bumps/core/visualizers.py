@@ -127,7 +127,7 @@ class BladeMapVisualizer:
             for col in range(2):
                 ax = axes[row][col]
                 # Use the same orientation as live plots
-                ax.imshow(quad[row][col], extent=extent, origin='upper')
+                ax.imshow(quad[row][col], extent=extent, origin='lower')
                 ax.set_xlabel(blade_grp.attrs.get('xlabel', 'x [μrad]'))
                 ax.set_ylabel(blade_grp.attrs.get('ylabel', 'y [μrad]'))
                 ax.set_title(names[row][col])
@@ -278,20 +278,22 @@ class PositionVisualizer:
                                    pos_nom_v=None, title=""):
         """Plot position difference heatmap or scatter on given axis."""
         if len(diffroi.shape) > 1:
-            im = ax.imshow(diffroi, cmap='viridis')
+            # 2D heatmap: use extent to map array indices to actual coordinates
+            h_min = np.nanmin(pos_nom_h)
+            h_max = np.nanmax(pos_nom_h)
+            v_min = np.nanmin(pos_nom_v)
+            v_max = np.nanmax(pos_nom_v)
+            # extent = [left, right, bottom, top]
+            extent = [h_min, h_max, v_min, v_max]
+
+            im = ax.imshow(diffroi, cmap='viridis', extent=extent,
+                          origin='lower', aspect='equal')
             cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
             cbar.set_label(u"RMS differences (ROI)")
         else:
-            # Ensure x, y, and color arrays have matching lengths
-            if pos_nom_h is not None and pos_nom_v is not None:
-                x = np.ravel(pos_nom_h)
-                y = np.ravel(pos_nom_v)
-            else:
-                # Fallback to index-based positions
-                n = int(np.size(diffroi))
-                x = np.arange(n)
-                y = np.zeros(n)
-
+            # 1D scatter plot: use position arrays directly
+            x = np.ravel(pos_nom_h)
+            y = np.ravel(pos_nom_v)
             cvals = np.ravel(diffroi)
 
             # Align lengths if shapes are inconsistent

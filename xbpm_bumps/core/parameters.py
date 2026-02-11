@@ -28,6 +28,7 @@ class Prm:
     xbpmpositions    : bool                = False
     xbpmfrombpm      : bool                = False
     xbpmpositionsraw : bool                = False
+    usebpmref        : bool                = False
     outputfile       : Optional[str]       = None
     xbpmdist         : Optional[float]     = None
     workdir          : Optional[str]       = None
@@ -84,6 +85,7 @@ class ParameterBuilder:
             xbpmpositions    = bool(args.xbpmpositions),
             xbpmfrombpm      = bool(args.xbpmfrombpm),
             xbpmpositionsraw = bool(args.xbpmpositionsraw),
+            usebpmref        = bool(args.usebpmref),
             outputfile       = bool(args.outputfile),
             xbpmdist         = args.xbpmdist,
             workdir          = args.workdir,
@@ -134,6 +136,10 @@ class ParameterBuilder:
         parser.add_argument(
             '-x', action='store_true', dest='xbpmpositions',
             help='Positions calculated from XBPM data'
+        )
+        parser.add_argument(
+            '--bpmref', action='store_true', dest='usebpmref',
+            help='Use BPM measured positions as nominal reference'
         )
 
         # Options with values

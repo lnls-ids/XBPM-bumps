@@ -177,15 +177,22 @@ class XBPMMainWindow(QMainWindow):
 
     def _create_control_panel(self) -> QWidget:
         """Create the left control panel with parameters, info, and buttons."""
+        from PyQt5.QtWidgets import QScrollArea
+        
         panel = QWidget()
         layout = QVBoxLayout(panel)
 
-        # Parameter input panel
+        # Parameter input panel with scroll area
         self.param_panel = ParameterPanel()
         self.param_panel.parametersChanged.connect(
             self._on_parameters_changed
         )
-        layout.addWidget(self.param_panel)
+
+        # Wrap parameter panel in scroll area to handle many widgets
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(self.param_panel)
+        layout.addWidget(scroll)
 
         # Analysis info box (read-only, compact)
         self.analysis_info = QTextEdit()
@@ -765,6 +772,30 @@ class XBPMMainWindow(QMainWindow):
             logger.exception("Failed to open Help dialog")
             self.show_error("Help", f"Could not open Help: {exc}")
 
+    def _compute_nominal_positions(self, data: dict):
+        """Compute nominal grid positions from measurement data.
+
+        Args:
+            data: Measurement data dictionary.
+
+        Returns:
+            Tuple (pos_nom_h, pos_nom_v) - nominal position grids.
+        """
+        processor = self.analyzer.app.processor
+        prm = self.analyzer.app.prm
+
+        # Use processor to compute nominal positions from data
+        pair = processor.beam_position_pair(
+            processor.suppression_matrix(showmatrix=False, nosuppress=True)
+        )
+        pos_nom_h, pos_nom_v, _, _ = processor.position_dict_parse(pair)
+
+        # Scale by XBPM distance
+        pos_nom_h *= prm.xbpmdist
+        pos_nom_v *= prm.xbpmdist
+
+        return pos_nom_h, pos_nom_v
+
     def _export_xbpm_raw(self, prefix: str, params: dict) -> bool:
         """Export raw XBPM positions and figures.
 
@@ -782,8 +813,17 @@ class XBPMMainWindow(QMainWindow):
 
         exporter = Exporter(self.analyzer.app.prm)
         processor = self.analyzer.app.processor
+        prm = self.analyzer.app.prm
+        data = self.analyzer.app.data
 
-        result_raw = processor.calculate_raw_positions(showmatrix=True)
+        # Compute nominal grid positions from data
+        pos_nom_h, pos_nom_v = self._compute_nominal_positions(data)
+
+        result_raw = processor.calculate_raw_positions(
+            pos_nom_h=pos_nom_h,
+            pos_nom_v=pos_nom_v,
+            showmatrix=True
+        )
         exporter.data_dump_with_prefix(
             prefix,
             self.analyzer.app.data,
@@ -849,8 +889,17 @@ class XBPMMainWindow(QMainWindow):
 
         exporter = Exporter(self.analyzer.app.prm)
         processor = self.analyzer.app.processor
+        prm = self.analyzer.app.prm
+        data = self.analyzer.app.data
 
-        result_scaled = processor.calculate_scaled_positions(showmatrix=True)
+        # Compute nominal grid positions from data
+        pos_nom_h, pos_nom_v = self._compute_nominal_positions(data)
+
+        result_scaled = processor.calculate_scaled_positions(
+            pos_nom_h=pos_nom_h,
+            pos_nom_v=pos_nom_v,
+            showmatrix=True
+        )
         exporter.data_dump_with_prefix(
             prefix,
             self.analyzer.app.data,

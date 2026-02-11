@@ -32,6 +32,7 @@ class Exporter:
             'xbpmpositions': 'Calculate XBPM positions from BPM data',
             'xbpmfrombpm': 'Derive XBPM positions using BPM measurements',
             'xbpmpositionsraw': 'Calculate raw (unsuppressed) XBPM positions',
+            'usebpmref': 'Use BPM measured positions as nominal reference',
             'outputfile': 'Path to output HDF5 file',
             'workdir': 'Working directory for analysis',
             'skip': 'Number of initial sweeps to skip in processing',

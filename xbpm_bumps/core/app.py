@@ -21,6 +21,7 @@ class XBPMApp:
         self.data = None
         self.processor: Optional[XBPMProcessor] = None
         self.exporter: Optional[Exporter] = None
+        self._bpm_reference = None
 
     def run(self, argv, builder) -> None:
         """'Parse args, load data, run analyses, and render outputs.
@@ -71,6 +72,49 @@ class XBPMApp:
         bpm_processor = BPMProcessor(raw, self.prm)
         bpm_processor.calculate_positions()
 
+    def _compute_nominal_grid(self):
+        """Compute nominal position grid from beam position pair.
+
+        Returns:
+            Tuple (pos_nom_h, pos_nom_v) - nominal position grids scaled
+            by XBPM distance.
+        """
+        pair = self.processor.beam_position_pair(
+            self.processor.suppression_matrix(
+                showmatrix=False, nosuppress=True
+            )
+        )
+        pos_nom_h, pos_nom_v, _, _ = (
+            self.processor.position_dict_parse(pair)
+        )
+        pos_nom_h *= self.prm.xbpmdist
+        pos_nom_v *= self.prm.xbpmdist
+        return pos_nom_h, pos_nom_v
+
+    def _resolve_reference_positions(self):
+        """Resolve reference positions for XBPM analysis.
+
+        Uses the usebpmref parameter to determine whether to use BPM
+        measured positions or nominal grid as the reference.
+
+        Returns:
+            Tuple (pos_nom_h, pos_nom_v) - reference position grids.
+        """
+        if not self.prm.usebpmref:
+            # Use nominal grid from beam position pair
+            return self._compute_nominal_grid()
+
+        # Use BPM measured positions as reference
+        if self._bpm_reference is not None:
+            return self._bpm_reference
+        raw = (self.reader.rawdata
+               if self.reader.rawdata is not None
+               else self.data)
+        bpm_processor = BPMProcessor(raw, self.prm)
+        bpm_processor.calculate_positions()
+        self._bpm_reference = (bpm_processor.xpos, bpm_processor.ypos)
+        return self._bpm_reference
+
     def _maybe_show_blade_map(self) -> None:
         if not self.prm.showblademap:
             return
@@ -88,14 +132,19 @@ class XBPMApp:
         self.processor.show_blades_at_center()
 
     def _maybe_xbpm_positions(self) -> None:
+        pos_nom_h, pos_nom_v = self._resolve_reference_positions()
         if self.prm.xbpmpositionsraw:
-            positions = self.processor.calculate_raw_positions(showmatrix=True)
+            positions = self.processor.calculate_raw_positions(
+                pos_nom_h, pos_nom_v,
+                showmatrix=True,
+            )
             if self.prm.outputfile:
                 self.exporter.data_dump(self.data, positions, sup="raw")
 
         if self.prm.xbpmpositions:
             positions = self.processor.calculate_scaled_positions(
-                showmatrix=True
-                )
+                pos_nom_h, pos_nom_v,
+                showmatrix=True,
+            )
             if self.prm.outputfile:
                 self.exporter.data_dump(self.data, positions, sup="scaled")

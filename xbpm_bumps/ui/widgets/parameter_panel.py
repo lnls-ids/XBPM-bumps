@@ -58,6 +58,10 @@ class ParameterPanel(QWidget):
         params_group = self._create_parameters_group()
         layout.addWidget(params_group)
 
+        # Reference selection group (BPM vs nominal)
+        reference_group = self._create_reference_group()
+        layout.addWidget(reference_group)
+
         # Analysis options group
         options_group = self._create_options_group()
         layout.addWidget(options_group)
@@ -103,6 +107,23 @@ class ParameterPanel(QWidget):
         self.skip_spin.setSuffix(" points")
         self.skip_spin.valueChanged.connect(self.parametersChanged.emit)
         layout.addRow("Skip Initial:", self.skip_spin)
+
+        group.setLayout(layout)
+        return group
+
+    def _create_reference_group(self) -> QGroupBox:
+        """Create the reference selection group (BPM vs nominal)."""
+        group = QGroupBox()
+        group.setTitle("")  # No title for minimal appearance
+        layout = QVBoxLayout()
+
+        # Use BPM positions as nominal reference
+        self.bpm_ref_check = QCheckBox(
+            "Use BPM positions as nominal reference"
+        )
+        self.bpm_ref_check.setChecked(True)  # Default to BPM reference
+        self.bpm_ref_check.toggled.connect(self.parametersChanged.emit)
+        layout.addWidget(self.bpm_ref_check)
 
         group.setLayout(layout)
         return group
@@ -206,6 +227,7 @@ class ParameterPanel(QWidget):
             'xbpmpositionsraw': self.xbpm_raw_check.isChecked(),
             'xbpmpositions': self.xbpm_check.isChecked(),
             'xbpmfrombpm': self.bpm_check.isChecked(),
+            'usebpmref': self.bpm_ref_check.isChecked(),
             'showblademap': self.blademap_check.isChecked(),
             'centralsweep': self.central_check.isChecked(),
             'showbladescenter': self.center_check.isChecked(),
@@ -241,6 +263,7 @@ class ParameterPanel(QWidget):
             'xbpmpositionsraw' : self.xbpm_raw_check,
             'xbpmpositions'    : self.xbpm_check,
             'xbpmfrombpm'      : self.bpm_check,
+            'usebpmref'         : self.bpm_ref_check,
             'showblademap'     : self.blademap_check,
             'centralsweep'     : self.central_check,
             'showbladescenter' : self.center_check,

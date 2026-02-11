@@ -183,6 +183,7 @@ class XBPMAnalyzer(QObject):
             'xbpmpositions'   : '-x',
             'xbpmpositionsraw': '-r',
             'xbpmfrombpm'     : '-b',
+            'usebpmref'       : '--bpmref',
             'showblademap'    : '-m',
             'centralsweep'    : '-c',
             'showbladescenter': '-s',
@@ -241,9 +242,57 @@ class XBPMAnalyzer(QObject):
             'measured': measured,
             'nominal': nominal,
         }
+        results['bpm_reference'] = {
+            'xpos': getattr(bpm_processor, 'xpos', None),
+            'ypos': getattr(bpm_processor, 'ypos', None),
+            'xnom': getattr(bpm_processor, 'xnom', None),
+            'ynom': getattr(bpm_processor, 'ynom', None),
+        }
         if stats is not None:
             results['bpm_stats'] = stats
         results['bpm_figure'] = bpm_processor.last_fig
+
+    def _compute_nominal_grid(self):
+        """Compute nominal position grid from beam position pair.
+
+        Returns:
+            Tuple (pos_nom_h, pos_nom_v) - nominal position grids scaled
+            by XBPM distance.
+        """
+        pair = self.app.processor.beam_position_pair(
+            self.app.processor.suppression_matrix(
+                showmatrix=False, nosuppress=True
+            )
+        )
+        pos_nom_h, pos_nom_v, _, _ = (
+            self.app.processor.position_dict_parse(pair)
+        )
+        pos_nom_h *= self.app.prm.xbpmdist
+        pos_nom_v *= self.app.prm.xbpmdist
+        return pos_nom_h, pos_nom_v
+
+    def _resolve_reference_positions(self, results: dict):
+        """Resolve reference positions for XBPM analysis.
+
+        Uses the usebpmref parameter to determine whether to use BPM
+        measured positions or nominal grid as the reference.
+
+        Returns:
+            Tuple (pos_nom_h, pos_nom_v) - reference position grids.
+        """
+        if not self.app.prm.usebpmref:
+            # Use nominal grid from beam position pair
+            return self._compute_nominal_grid()
+
+        # Use BPM measured positions as reference
+        bpm_ref = results.get('bpm_reference')
+        if bpm_ref is None:
+            self._step_bpm_positions(results)
+            bpm_ref = results.get('bpm_reference')
+
+        ref_x = bpm_ref.get('xpos')
+        ref_y = bpm_ref.get('ypos')
+        return ref_x, ref_y
 
     def _step_blade_map(self, results: dict):
         """Generate blade map."""
@@ -354,8 +403,10 @@ class XBPMAnalyzer(QObject):
     def _step_xbpm_raw(self, results: dict):
         """Calculate raw XBPM positions."""
         self.analysisProgress.emit("Calculating raw XBPM positions...")
+        pos_nom_h, pos_nom_v = self._resolve_reference_positions(results)
         result_data = self.app.processor.calculate_raw_positions(
-            showmatrix=True
+            pos_nom_h, pos_nom_v,
+            showmatrix=True,
         )
         # Handle both dict and list returns for backward compatibility
         if isinstance(result_data, dict):
@@ -402,8 +453,10 @@ class XBPMAnalyzer(QObject):
     def _step_xbpm_scaled(self, results: dict):
         """Calculate scaled XBPM positions."""
         self.analysisProgress.emit("Calculating scaled XBPM positions...")
+        pos_nom_h, pos_nom_v = self._resolve_reference_positions(results)
         result_data = self.app.processor.calculate_scaled_positions(
-            showmatrix=True
+            pos_nom_h, pos_nom_v,
+            showmatrix=True,
         )
         # Handle both dict and list returns for backward compatibility
         if isinstance(result_data, dict):

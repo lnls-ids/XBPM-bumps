@@ -178,7 +178,8 @@ class XBPMProcessor:
             print("\n Figure of blades behaviour at central sweeps"
                   f" saved to file {outfile}.\n")
 
-    def calculate_scaled_positions(self, showmatrix: bool = True) -> list:
+    def calculate_scaled_positions(self, pos_nom_h, pos_nom_v,
+                                   showmatrix: bool = True) -> list:
         """Calculate positions with suppression matrix correction.
 
         Applies suppression matrices to correct for blade gain variations
@@ -186,6 +187,8 @@ class XBPMProcessor:
 
         Args:
             showmatrix: If True, display blade behavior matrices.
+            pos_nom_h: Nominal position grid (horizontal).
+            pos_nom_v: Nominal position grid (vertical).
 
         Returns:
             List of [pairwise_positions_dict, cross_positions_dict].
@@ -193,24 +196,43 @@ class XBPMProcessor:
         return self.calculate_positions(
             rtitle="scaled XBPM positions",
             nosuppress=False,
-            showmatrix=showmatrix
+            pos_nom_h=pos_nom_h,
+            pos_nom_v=pos_nom_v,
+            showmatrix=showmatrix,
         )
 
-    def calculate_raw_positions(self, showmatrix: bool = True) -> list:
-        """Calculate positions without suppression (raw)."""
+    def calculate_raw_positions(self, pos_nom_h, pos_nom_v,
+                                showmatrix: bool = True) -> list:
+        """Calculate positions without suppression (raw).
+
+        Args:
+            showmatrix: If True, display blade behavior matrices.
+            pos_nom_h: Nominal position grid (horizontal).
+            pos_nom_v: Nominal position grid (vertical).
+        """
         return self.calculate_positions(
             rtitle="raw XBPM positions",
             nosuppress=True,
-            showmatrix=showmatrix
+            pos_nom_h=pos_nom_h,
+            pos_nom_v=pos_nom_v,
+            showmatrix=showmatrix,
         )
 
     def calculate_positions(self, rtitle: str,
                              nosuppress: bool,
+                             pos_nom_h, pos_nom_v,
                              showmatrix: bool = True) -> list:
         """Orchestrate XBPM position calculations and visualization.
 
         Ensures central sweeps are analyzed, then delegates to
-        `xbpm_position_calc` to compute positions and plot results.
+        `_xbpm_position_calc` to compute positions and plot results.
+
+        Args:
+            rtitle: Result title for visualization.
+            nosuppress: If True, skip suppression matrix (raw mode).
+            showmatrix: If True, display blade behavior matrices.
+            pos_nom_h: Nominal position grid (horizontal).
+            pos_nom_v: Nominal position grid (vertical).
         """
         # Ensure sweep data is available
         if (self.range_h is None or self.range_v is None or
@@ -221,10 +243,13 @@ class XBPMProcessor:
             rtitle=rtitle,
             nosuppress=nosuppress,
             showmatrix=showmatrix,
+            pos_nom_h=pos_nom_h,
+            pos_nom_v=pos_nom_v,
         )
 
     def _xbpm_position_calc(self, rtitle: str, nosuppress: bool,
-                            showmatrix: bool) -> list:
+                            showmatrix: bool,
+                            pos_nom_h, pos_nom_v) -> list:
         """Calculate positions from blades' measured data and visualize."""
         # Parse data into blade measurements.
         blades, _stddevs = self.data_parse()
@@ -235,12 +260,7 @@ class XBPMProcessor:
 
         # Calculate positions using pairwise and cross-blade formulas.
         pos_pair  = self.beam_position_pair(supmat)
-        (pos_nom_h, pos_nom_v,
-         pos_pair_h, pos_pair_v) = self.position_dict_parse(pos_pair)
-
-        # Scale positions to physical units using central sweep fits.
-        pos_nom_h *= self.prm.xbpmdist
-        pos_nom_v *= self.prm.xbpmdist
+        (_, _, pos_pair_h, pos_pair_v) = self.position_dict_parse(pos_pair)
 
         # Define ROI for scaling fit.
         nh = pos_nom_h.shape[1]
