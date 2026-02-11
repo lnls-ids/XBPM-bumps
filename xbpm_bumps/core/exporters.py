@@ -181,7 +181,7 @@ class Exporter:
 
             # Write raw BPM sweeps data FIRST (organized per beamline)
             if rawdata:
-                self._write_bpm_data(raw_grp, rawdata)
+                self._write_raw_data(raw_grp, rawdata)
 
             # Write top-level avg_<beamline> datasets for all beamlines
             # Each entry: (metadata, grid_data, bpm_dict)
@@ -219,8 +219,7 @@ class Exporter:
 
         print(f"HDF5 export written to {filepath}")
 
-    @staticmethod
-    def _average_blade_values(data: list, blademap: dict) -> tuple:
+    def _average_blade_values(self, data: list, blademap: dict) -> tuple:
         """Compute average and standard deviation of blade values.
 
         Args:
@@ -245,15 +244,13 @@ class Exporter:
                 avg[bladename + '_std'] = np.std(blade_vals)
         return avg
 
-    @staticmethod
-    def _build_grid_arrays(data: dict):
+    def _build_grid_arrays(self, data: dict):
         keys = np.array(list(data.keys())) if data else np.empty((0, 2))
         grid_x = np.unique(keys[:, 0]) if keys.size else np.array([])
         grid_y = np.unique(keys[:, 1]) if keys.size else np.array([])
         return grid_x, grid_y
 
-    @staticmethod
-    def _build_blades_dataset(data: dict, grid_x: np.ndarray,
+    def _build_blades_dataset(self, data: dict, grid_x: np.ndarray,
                               grid_y: np.ndarray):
         ny = grid_y.shape[0] if grid_y.size else 0
         nx = grid_x.shape[0] if grid_x.size else 0
@@ -731,14 +728,13 @@ class Exporter:
         h5file.attrs['created'] = datetime.now(timezone.utc).isoformat()
         h5file.attrs['description'] = 'Global metadata for this HDF5 export'
 
-    @staticmethod
-    def _write_bpm_data(raw_grp, rawdata: list) -> None:
-        """Write raw and averaged acquisition sweeps to HDF5 under /raw_data.
+    def _write_raw_data(self, raw_grp, rawdata: list) -> None:
+        """Write raw sweep data to HDF5 under /raw_data.
 
         For each sweep:
-        - rawdata_<beamline>: full, unaveraged data
+        - rawdata_<beamline>: unaveraged XBPM blade data
             (columns: A_val, ..., D_range, etc)
-        - avg_<beamline>: averaged data (as currently stored)
+        - avg_<beamline>: averaged XBPM data (as currently stored)
         - bpm_data: dataset with columns orbx, orby; all simple metadata
             as attributes
         """
@@ -750,63 +746,9 @@ class Exporter:
             metadata, grid_data, bpm_dict = entry[:3]
             sweep_grp = raw_grp.create_group(f'sweep_{i:04d}')
 
-            # --- Write rawdata_<beamline> datasets ---
-            if isinstance(metadata, dict):
-                for beamline, val in metadata.items():
-                    if isinstance(val, dict):
-                        columns = [k for k in val.keys()
-                                   if isinstance(val[k], (list, np.ndarray))]
-                        if not columns:
-                            continue
-                        arr_len = len(val[columns[0]])
-                        dtype = []
-                        split_data = {}
-                        for k in columns:
-                            arr = np.asarray(val[k])
-                            if arr.ndim == 2 and arr.shape[1] == 2:
-                                dtype.append((k, 'f8'))
-                                dtype.append((f'{k}_unit', 'f8'))
-                                split_data[k] = arr[:, 0]
-                                split_data[f'{k}_unit'] = arr[:, 1]
-                            else:
-                                dtype.append((k, 'f8'))
-                                split_data[k] = arr
-                        data = np.empty(arr_len, dtype=dtype)
-                        for name in data.dtype.names:
-                            data[name] = split_data[name]
-                        ds = sweep_grp.create_dataset(f'rawdata_{beamline}',
-                                                      data=data)
-                        # Add prefix attribute if present
-                        ds.attrs['PV'] = val.get('prefix')
-
-            # --- Write avg_<beamline> datasets (if present in grid_data) ---
-            if isinstance(grid_data, dict):
-                for beamline, val in grid_data.items():
-                    if isinstance(val, dict):
-                        columns = [k for k in val.keys()
-                                   if isinstance(val[k], (list, np.ndarray))]
-                        if not columns:
-                            continue
-                        arr_len = len(val[columns[0]])
-                        dtype = []
-                        split_data = {}
-                        for k in columns:
-                            arr = np.asarray(val[k])
-                            if arr.ndim == 2 and arr.shape[1] == 2:
-                                dtype.append((k, 'f8'))
-                                dtype.append((f'{k}_unit', 'f8'))
-                                split_data[k] = arr[:, 0]
-                                split_data[f'{k}_unit'] = arr[:, 1]
-                            else:
-                                dtype.append((k, 'f8'))
-                                split_data[k] = arr
-                        data = np.empty(arr_len, dtype=dtype)
-                        for name in data.dtype.names:
-                            data[name] = split_data[name]
-                        ds = sweep_grp.create_dataset(f'avg_{beamline}',
-                                                      data=data)
-                        # Add prefix attribute if present
-                        ds.attrs['PV'] = val.get('prefix')
+            # --- Write rawdata_<beamline> and avg_<beamline> datasets ---
+            self._write_beamline_datasets(sweep_grp, metadata, 'rawdata')
+            self._write_beamline_datasets(sweep_grp, grid_data, 'avg')
 
             # --- Write bpm_data dataset and attributes ---
             bpm_simple_keys = ['current', 'agx', 'agy',
@@ -826,8 +768,58 @@ class Exporter:
                 data['orby'] = np.asarray(bpm_dict['orby'])
                 sweep_grp.create_dataset('bpm_data', data=data)
 
-    @staticmethod
-    def _validate_rawdata_entry(entry, index: int, logger) -> bool:
+    def _write_beamline_datasets(self, sweep_grp,
+                                 beamline_dict: dict, prefix: str) -> None:
+        """Write beamline datasets to HDF5 sweep group.
+
+        Handles structured arrays with (value, unit) pairs, supporting both
+        string units (e.g., 'uA', 'fA') and numeric units.
+
+        Args:
+            sweep_grp: HDF5 group for this sweep.
+            beamline_dict: Dictionary of beamlines to write {beamline: data}.
+            prefix: Dataset name prefix ('rawdata' or 'avg').
+        """
+        import numpy as np
+        for beamline, val in beamline_dict.items():
+            # Skip if value is not a dict (e.g., grid_data contains floats)
+            if not isinstance(val, dict):
+                continue
+            # Extract prefix before processing columns
+            prefix_val = val.get('prefix')
+            # Filter to only list/array columns (excludes non-array metadata)
+            columns = [k for k in val.keys()
+                       if isinstance(val[k], (list, np.ndarray))]
+            if not columns:
+                continue
+            arr_len = len(val[columns[0]])
+            dtype = []
+            split_data = {}
+            for k in columns:
+                arr = np.asarray(val[k])
+                if arr.ndim == 2 and arr.shape[1] == 2:
+                    # Store value as float, unit as fixed-length string
+                    dtype.append((k, 'f8'))
+                    # Fixed-length bytes for units
+                    dtype.append((f'{k}_unit', 'S4'))
+                    split_data[k] = arr[:, 0].astype('f8')
+                    # Convert unit strings to bytes
+                    split_data[f'{k}_unit'] = np.asarray(
+                        [str(u).encode('utf-8') if isinstance(u, str) else u
+                         for u in arr[:, 1]], dtype='S4')
+                else:
+                    dtype.append((k, 'f8'))
+                    split_data[k] = arr.astype('f8')
+            data = np.empty(arr_len, dtype=dtype)
+            for name in data.dtype.names:
+                data[name] = split_data[name]
+            ds = sweep_grp.create_dataset(f'{prefix}_{beamline}',
+                                            data=data)
+            # Add prefix attribute if present
+            if prefix_val is not None:
+                ds.attrs['PV'] = prefix_val
+
+    def _validate_rawdata_entry(self, entry, index: int, logger) -> bool:
         """Validate a rawdata entry has the expected structure.
 
         Args:
@@ -846,8 +838,7 @@ class Exporter:
             return False
         return True
 
-    @staticmethod
-    def _store_metadata_attrs(group, metadata) -> None:
+    def _store_metadata_attrs(self, group, metadata) -> None:
         """Store metadata dictionary as HDF5 attributes.
 
         Machine data (keys like MNC1, MNC2, CAT, etc.) are excluded
@@ -876,8 +867,8 @@ class Exporter:
             except (TypeError, ValueError):
                 group.attrs[f'meta_{key}'] = str(val)
 
-    @staticmethod
-    def _store_bpm_dict(group, bpm_dict, sweep_index: int, logger) -> None:
+    def _store_bpm_dict(self, group, bpm_dict,
+                        sweep_index: int, logger) -> None:
         """Store BPM dictionary with proper hierarchy.
 
         Coordinates three-pass storage: metadata, orbit, machine data.
@@ -892,44 +883,41 @@ class Exporter:
         metadata_keys = {'agx', 'agy', 'posx', 'posy', 'current'}
         orbit_keys = {'orbx', 'orby'}
 
-        Exporter._store_bpm_metadata_attrs(group, bpm_dict, metadata_keys,
+        self._store_bpm_metadata_attrs(group, bpm_dict, metadata_keys,
                                           sweep_index, logger)
-        Exporter._store_bpm_orbit_data(group, bpm_dict, orbit_keys,
+        self._store_bpm_orbit_data(group, bpm_dict, orbit_keys,
                                       sweep_index, logger)
-        Exporter._store_bpm_machine_data(group, bpm_dict, metadata_keys,
+        self._store_bpm_machine_data(group, bpm_dict, metadata_keys,
                                         orbit_keys, sweep_index, logger)
 
-    @staticmethod
-    def _store_bpm_metadata_attrs(group, bpm_dict, metadata_keys,
+    def _store_bpm_metadata_attrs(self, group, bpm_dict, metadata_keys,
                                  sweep_index: int, logger) -> None:
         """Store BPM metadata fields as HDF5 attributes."""
         for key in metadata_keys:
             if key in bpm_dict and bpm_dict[key] is not None:
                 try:
-                    Exporter._store_scalar_attr(group, key, bpm_dict[key])
+                    self._store_scalar_attr(group, key, bpm_dict[key])
                 except Exception as exc:
                     logger.debug(
                         "Could not store bpm_dict['%s'] for sweep %d: %s",
                         key, sweep_index, exc
                     )
 
-    @staticmethod
-    def _store_bpm_orbit_data(group, bpm_dict, orbit_keys,
+    def _store_bpm_orbit_data(self, group, bpm_dict, orbit_keys,
                              sweep_index: int, logger) -> None:
         """Extract and store orbit data as compound dataset."""
         orbit_data = {k: v for k, v in bpm_dict.items()
                      if k in orbit_keys and v is not None}
         if orbit_data:
             try:
-                Exporter._store_orbit_dataset(group, orbit_data)
+                self._store_orbit_dataset(group, orbit_data)
             except Exception as exc:
                 logger.debug(
                     "Could not store orbit data for sweep %d: %s",
                     sweep_index, exc
                 )
 
-    @staticmethod
-    def _store_bpm_machine_data(group, bpm_dict, metadata_keys,
+    def _store_bpm_machine_data(self, group, bpm_dict, metadata_keys,
                                orbit_keys, sweep_index: int, logger) -> None:
         """Store machine data (MNC1, MNC2, etc.) as compound datasets."""
         import numpy as np
@@ -940,7 +928,7 @@ class Exporter:
 
             try:
                 if isinstance(val, dict):
-                    Exporter._store_machine_group(group, key, val)
+                    self._store_machine_group(group, key, val)
                 else:
                     group.create_dataset(key, data=np.asarray(val))
             except Exception as exc:
@@ -949,8 +937,7 @@ class Exporter:
                     key, sweep_index, exc
                 )
 
-    @staticmethod
-    def _store_scalar_attr(group, key: str, val) -> None:
+    def _store_scalar_attr(self, group, key: str, val) -> None:
         """Store scalar value as attribute."""
         try:
             group.attrs[key] = val
