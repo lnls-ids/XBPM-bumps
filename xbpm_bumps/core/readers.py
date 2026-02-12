@@ -38,6 +38,7 @@ class DataReader:
         self.rawdata = None
         self._hdf5_path = None
         self.analysis_meta = {}
+        self._blades_cache = {}
 
     def read(self):
         """Read data from working directory or file using backend modules.
@@ -73,6 +74,7 @@ class DataReader:
         # print("\n ########## END DEBUG DataReader.read ##########\n\n")
         # END DEBUG
 
+        self._blades_cache = {}
         return self.rawdata
 
     def _infer_gridstep_from_grid(self, grid_x, grid_y):
@@ -133,9 +135,14 @@ class DataReader:
 
     def _blades_fetch(self) -> dict:
         """Retrieve each blade's data and average over their values."""
-        data = dict()
         beamline = self.prm.beamline
 
+        # If cached for current beamline, return from cache.
+        cached = self._blades_cache.get(beamline)
+        if cached is not None:
+            return cached
+
+        data = dict()
         for dt in self.rawdata:
             try:
                 xbpm = dt[0][beamline]
@@ -162,6 +169,7 @@ class DataReader:
             except Exception as err:
                 print("\n WARNING: when fetching blades' values and averaging:"
                       f" {err}\n")
+        self._blades_cache[beamline] = data
         return data
 
     def _blade_average(self, blade):

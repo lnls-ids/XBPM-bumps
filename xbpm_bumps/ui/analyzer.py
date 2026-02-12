@@ -57,13 +57,11 @@ class XBPMAnalyzer(QObject):
         try:
             # The main window/controller must have already set up Prm and
             # builder
-            self.app = XBPMApp()
-            self.app.prm = self.prm
+            self.app         = XBPMApp()
+            self.app.prm     = self.prm
             self.app.builder = self.builder
-            self.app.reader = self.reader
-            self.app.data = (self.reader._blades_fetch()
-                             if self.reader else None)
-            # Beamline is now always set in canonical Prm
+            self.app.reader  = self.reader
+            self.app.data = self.reader._blades_fetch()
 
             # Capture stdout/stderr for logging
             log_capture = StringIO()
@@ -125,8 +123,7 @@ class XBPMAnalyzer(QObject):
             self.app.prm = self.prm
             self.app.builder = self.builder
             self.app.reader = self.reader
-            self.app.data = (self.reader._blades_fetch()
-                             if self.reader else None)
+            self.app.data = self.reader._blades_fetch()
             # Beamline is now always set in canonical Prm
 
             # Capture stdout/stderr for logging

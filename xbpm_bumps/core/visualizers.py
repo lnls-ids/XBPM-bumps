@@ -62,11 +62,6 @@ class BladeMapVisualizer:
             extent = None
         else:
             alist = np.array(list(self.data.keys()))
-
-            # DEBUG
-            print(f"\n\n#####\n##### SHOW in VISUALIZER: {alist}\n#####\n")
-            # DEBUG
-
             try:
                 klist = np.unique(alist[:, 0])
                 mlist = np.unique(alist[:, 1])

@@ -178,7 +178,7 @@ class XBPMMainWindow(QMainWindow):
     def _create_control_panel(self) -> QWidget:
         """Create the left control panel with parameters, info, and buttons."""
         from PyQt5.QtWidgets import QScrollArea
-        
+
         panel = QWidget()
         layout = QVBoxLayout(panel)
 
@@ -400,34 +400,13 @@ class XBPMMainWindow(QMainWindow):
 
         # Use canonical rawdata for parameter enrichment
         self.builder.rawdata = self.rawdata
-
-        # DEBUG: Print rawdata structure before parameter enrichment
-        # print("\n\n #### DEBUG (_run_analysis_with_canonical_params):"
-        #       " ####\n")
-        # print("[DEBUG] _run_analysis_with_canonical_params:"
-        #       " self.rawdata type:", type(self.rawdata))
-        # print("[DEBUG] _run_analysis_with_canonical_params:"
-        #       " self.rawdata length:",
-        #       len(self.rawdata) if self.rawdata is not None else 'None')
-        # if self.rawdata:
-        #     print("[DEBUG] _run_analysis_with_canonical_params:"
-        #           " self.rawdata[0] type:", type(self.rawdata[0]))
-        #     if (isinstance(self.rawdata[0], (list, tuple)) and
-        #         len(self.rawdata[0]) > 2):
-        #         print("[DEBUG] _run_analysis_with_canonical_params:"
-        #               " self.rawdata[0][2] keys:",
-        #               getattr(self.rawdata[0][2], 'keys', lambda: None)())
-        # else:
-        #     print("[DEBUG] _run_analysis_with_canonical_params:"
-        #           " self.rawdata is empty or None!")
-        # END DEBUG
-
         self.builder._add_beamline_parameters()
+
         # Update persistent Prm reference
         self.prm = self.builder.prm
 
         # Always convert rawdata to expected dict format for analysis
-        analysis_data = self.reader._blades_fetch() if self.reader else None
+        analysis_data = self.reader._blades_fetch()
         self.analyzer = XBPMAnalyzer(self.prm, self.builder,
                                      self.reader, self.rawdata)
         self.analyzer.moveToThread(self.worker_thread)
@@ -772,11 +751,8 @@ class XBPMMainWindow(QMainWindow):
             logger.exception("Failed to open Help dialog")
             self.show_error("Help", f"Could not open Help: {exc}")
 
-    def _compute_nominal_positions(self, data: dict):
+    def _compute_nominal_positions(self):
         """Compute nominal grid positions from measurement data.
-
-        Args:
-            data: Measurement data dictionary.
 
         Returns:
             Tuple (pos_nom_h, pos_nom_v) - nominal position grids.
@@ -785,9 +761,9 @@ class XBPMMainWindow(QMainWindow):
         prm = self.analyzer.app.prm
 
         # Use processor to compute nominal positions from data
-        pair = processor.beam_position_pair(
-            processor.suppression_matrix(showmatrix=False, nosuppress=True)
-        )
+        supmat = processor.suppression_matrix(showmatrix=False,
+                                              nosuppress=True)
+        pair = processor.beam_position_pair(supmat)
         pos_nom_h, pos_nom_v, _, _ = processor.position_dict_parse(pair)
 
         # Scale by XBPM distance
@@ -813,7 +789,6 @@ class XBPMMainWindow(QMainWindow):
 
         exporter = Exporter(self.analyzer.app.prm)
         processor = self.analyzer.app.processor
-        prm = self.analyzer.app.prm
         data = self.analyzer.app.data
 
         # Compute nominal grid positions from data
@@ -889,7 +864,6 @@ class XBPMMainWindow(QMainWindow):
 
         exporter = Exporter(self.analyzer.app.prm)
         processor = self.analyzer.app.processor
-        prm = self.analyzer.app.prm
         data = self.analyzer.app.data
 
         # Compute nominal grid positions from data

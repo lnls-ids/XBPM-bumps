@@ -30,13 +30,13 @@ class XBPMApp:
             argv: Command-line arguments (list of strings).
             builder: Canonical ParameterBuilder instance (must be provided)
         """
-        self.builder = builder
-        self.prm = self.builder.from_cli(argv)
-        self.reader = DataReader(self.prm, self.builder)
+        self.builder   = builder
+        self.prm       = self.builder.from_cli(argv)
+        self.reader    = DataReader(self.prm, self.builder)
         self.reader.read()
-        self.data = self.reader._blades_fetch()
+        self.data      = self.reader._blades_fetch()
         self.processor = XBPMProcessor(self.data, self.prm)
-        self.exporter = Exporter(self.prm)
+        self.exporter  = Exporter(self.prm)
 
         self._maybe_bpm_positions()
         self._maybe_show_blade_map()
