@@ -1,5 +1,6 @@
 """Data reading from files and pickle directories."""
 
+from copy import deepcopy
 import os
 import logging
 import numpy as np
@@ -39,6 +40,7 @@ class DataReader:
         self._hdf5_path = None
         self.analysis_meta = {}
         self._blades_cache = {}
+        self._rawblades_cache = {}
 
     def read(self):
         """Read data from working directory or file using backend modules.
@@ -67,14 +69,8 @@ class DataReader:
             self.rawdata = read_pickle_dir(path)
             self.analysis_meta = {}
 
-        # DEBUG
-        # print("\n\n #### DEBUG (DataReader.read): ####\n")
-        # print(f" rawdata type: {type(self.rawdata)}")
-        # print(f" rawdata [0]: {self.rawdata[0] if self.rawdata else 'None'}")
-        # print("\n ########## END DEBUG DataReader.read ##########\n\n")
-        # END DEBUG
-
         self._blades_cache = {}
+        self._rawblades_cache = {}
         return self.rawdata
 
     def _infer_gridstep_from_grid(self, grid_x, grid_y):
@@ -103,19 +99,6 @@ class DataReader:
             print("\n WARNING: distance from source to XBPM not provided."
                   f" Using default value: {self.prm.xbpmdist} m")
 
-    # def _infer_gridstep(self) -> None:
-    #     """Infer grid step from data keys if not explicitly provided."""
-    #     try:
-    #         xs = np.unique([k[0] for k in self.data.keys()])
-    #         ys = np.unique([k[1] for k in self.data.keys()])
-    #         dx = np.min(np.diff(np.sort(xs))) if xs.size > 1 else None
-    #         dy = np.min(np.diff(np.sort(ys))) if ys.size > 1 else None
-    #         steps = [v for v in (dx, dy) if v not in (None, 0)]
-    #         if steps:
-    #             self.prm.gridstep = float(min(steps))
-    #     except Exception as err:
-    #         print(f"\nWARNING: could not infer grid step from data: {err}.")
-
     def _print_summary(self) -> None:
         """Print a summary of the loaded data and parameters."""
         bl = self.prm.beamline or "N/A"
@@ -134,50 +117,56 @@ class DataReader:
 )
 
     def _blades_fetch(self) -> dict:
-        """Retrieve each blade's data and average over their values."""
+        """Retrieve each blade's data and average over their values.
+
+        The fetched data is cached for each beamline and stored in
+        self._blades_cache, as average and std dev, and in
+        self._rawblades_cache, as a dictionary of arrays of each blade's
+        raw values.
+
+        Returns:
+            Tuple of two dictionaries:
+            - data: {(bpm_x, bpm_y): np.array([(av, sd), ...])}
+            - rawblades: {(bpm_x, bpm_y): {'A': array, 'B': array, ...}}
+        """
         beamline = self.prm.beamline
 
         # If cached for current beamline, return from cache.
         cached = self._blades_cache.get(beamline)
-        if cached is not None:
-            return cached
+        rawcached = self._rawblades_cache.get(beamline)
+        if cached is not None and rawcached is not None:
+            return cached, rawcached
 
         data = dict()
+        rawblades = dict()
         for dt in self.rawdata:
             try:
                 xbpm = dt[0][beamline]
                 vals = list()
+                rawblade = dict()
                 for blade in Config.BLADEMAP[beamline].values():
-                    av, sd = self._blade_average(xbpm[f'{blade}_val'])
+                    blade_vals = xbpm.get(f'{blade}_val')
+                    av, sd, rawblade[blade] = self._blade_average(blade_vals)
                     vals.append((av, sd))
-                bpm_x = dt[2]['agx']
-                bpm_y = dt[2]['agy']
+                bpm_x = float(dt[2]['agx'])
+                bpm_y = float(dt[2]['agy'])
 
-                # DEBUG: print types and values
-                # print(f"[DEBUG] Entry {idx}: agx={bpm_x} ({type(bpm_x)}),"
-                #      f" agy={bpm_y} ({type(bpm_y)})")
-                # Validate both are floats or ints and not None
-                # if (bpm_x is None or bpm_y is None or
-                #    not isinstance(bpm_x, (float, int)) or
-                #    not isinstance(bpm_y, (float, int))):
-                #    print(f"[WARNING] Skipping entry {idx}:"
-                #          f" Invalid agx/agy: agx={bpm_x}, agy={bpm_y}")
-                #    continue
-                # END DEBUG
-                data[(float(bpm_x), float(bpm_y))] = np.array(vals)
+                data[(bpm_x, bpm_y)] = np.array(vals)
+                rawblades[(bpm_x, bpm_y)] = deepcopy(rawblade)
 
             except Exception as err:
                 print("\n WARNING: when fetching blades' values and averaging:"
                       f" {err}\n")
         self._blades_cache[beamline] = data
-        return data
+        self._rawblades_cache[beamline] = rawblades
+        return data, rawblades
 
     def _blade_average(self, blade):
         """Calculate the average of blades' values for current beamline."""
         if self.prm.beamline in ["MGN", "MNC"]:
-            return np.average(blade), np.std(blade)
+            return np.average(blade), np.std(blade), blade
 
         vals = np.array([
             vv * Config.AMPSUB[un] for vv, un in blade
         ])
-        return np.average(vals), np.std(vals)
+        return np.average(vals), np.std(vals), vals

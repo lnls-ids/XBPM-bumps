@@ -34,7 +34,7 @@ class XBPMApp:
         self.prm       = self.builder.from_cli(argv)
         self.reader    = DataReader(self.prm, self.builder)
         self.reader.read()
-        self.data      = self.reader._blades_fetch()
+        self.data, self.rawblades = self.reader._blades_fetch()
         self.processor = XBPMProcessor(self.data, self.prm)
         self.exporter  = Exporter(self.prm)
 
@@ -66,9 +66,18 @@ class XBPMApp:
     def _maybe_bpm_positions(self) -> None:
         if not self.prm.xbpmfrombpm:
             return
-        raw = (self.reader.rawdata
-               if self.reader.rawdata is not None
-               else self.data)
+        if self.prm.section is None:
+            print("### ERROR: section not defined for BPM analysis. Skipping.")
+            return
+        raw = (
+            self.reader.rawdata
+            if self.reader.rawdata is not None
+            else self.data
+            )
+        if raw is None:
+            print("### ERROR: no raw data available for BPM analysis."
+                  " Skipping.")
+            return
         bpm_processor = BPMProcessor(raw, self.prm)
         bpm_processor.calculate_positions()
 
@@ -107,9 +116,16 @@ class XBPMApp:
         # Use BPM measured positions as reference
         if self._bpm_reference is not None:
             return self._bpm_reference
+        if self.prm.section is None:
+            print("### ERROR: section not defined for BPM analysis. Skipping.")
+            return None
         raw = (self.reader.rawdata
                if self.reader.rawdata is not None
                else self.data)
+        if raw is None:
+            print("### ERROR: no raw data available for BPM analysis."
+                  " Skipping.")
+            return None
         bpm_processor = BPMProcessor(raw, self.prm)
         bpm_processor.calculate_positions()
         self._bpm_reference = (bpm_processor.xpos, bpm_processor.ypos)

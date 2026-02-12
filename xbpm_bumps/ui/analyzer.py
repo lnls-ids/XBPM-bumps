@@ -61,7 +61,7 @@ class XBPMAnalyzer(QObject):
             self.app.prm     = self.prm
             self.app.builder = self.builder
             self.app.reader  = self.reader
-            self.app.data = self.reader._blades_fetch()
+            self.app.data, self.app.rawblades = self.reader._blades_fetch()
 
             # Capture stdout/stderr for logging
             log_capture = StringIO()
@@ -123,7 +123,7 @@ class XBPMAnalyzer(QObject):
             self.app.prm = self.prm
             self.app.builder = self.builder
             self.app.reader = self.reader
-            self.app.data = self.reader._blades_fetch()
+            self.app.data, self.app.rawblades = self.reader._blades_fetch()
             # Beamline is now always set in canonical Prm
 
             # Capture stdout/stderr for logging
@@ -201,17 +201,18 @@ class XBPMAnalyzer(QObject):
         results = {
             'prm': self.app.prm,
             'data': self.app.data,
+            'rawblades': self.app.rawblades,
             'positions': {},
         }
 
         # Define analysis steps as a list of tuples: (condition, method)
         steps = [
-            (self.app.prm.xbpmfrombpm, self._step_bpm_positions),
-            (self.app.prm.showblademap, self._step_blade_map),
-            (self.app.prm.centralsweep, self._step_central_sweeps),
+            (self.app.prm.xbpmfrombpm,      self._step_bpm_positions),
+            (self.app.prm.showblademap,     self._step_blade_map),
+            (self.app.prm.centralsweep,     self._step_central_sweeps),
             (self.app.prm.showbladescenter, self._step_blades_center),
             (self.app.prm.xbpmpositionsraw, self._step_xbpm_raw),
-            (self.app.prm.xbpmpositions, self._step_xbpm_scaled),
+            (self.app.prm.xbpmpositions,    self._step_xbpm_scaled),
         ]
 
         for condition, step_method in steps:
@@ -227,11 +228,21 @@ class XBPMAnalyzer(QObject):
         """Calculate BPM positions."""
         self.analysisProgress.emit("Calculating BPM positions...")
         from ..core.processors import BPMProcessor
+
+        if self.app.prm.section is None:
+            print("### ERROR: section not defined for BPM analysis. Skipping.")
+            return
+
         raw = (
             self.app.reader.rawdata
             if self.app.reader.rawdata is not None
             else self.app.data
         )
+        if raw is None:
+            print("### ERROR: no raw data available for BPM analysis."
+                  " Skipping.")
+            return
+
         bpm_processor = BPMProcessor(raw, self.app.prm)
         measured, nominal = bpm_processor.calculate_positions()
         stats = getattr(bpm_processor, 'last_stats', None)
@@ -247,7 +258,7 @@ class XBPMAnalyzer(QObject):
         }
         if stats is not None:
             results['bpm_stats'] = stats
-        results['bpm_figure'] = bpm_processor.last_fig
+        results['bpm_figure'] = bpm_processor.fig
 
     def _compute_nominal_grid(self):
         """Compute nominal position grid from beam position pair.
