@@ -4,6 +4,7 @@ Includes HDF5 export with figures and derived results.
 """
 
 import numpy as np
+import os
 from dataclasses import asdict
 from datetime import datetime, timezone
 from io import BytesIO
@@ -142,6 +143,46 @@ class Exporter:
                 fp.write(f"  {val[0]} {val[1]}\n")
 
         outfilec = f"xbpm_positions_cross_{sup}_{self.prm.beamline}.dat"
+        print("\n Writing out cross-blade calculated positions to file"
+              f" {outfilec} ...", end='')
+        with open(outfilec, 'w') as fc:
+            for key, val in pos_cr.items():
+                fc.write(f"{key[0]}  {key[1]}")
+                fc.write(f"  {val[0]} {val[1]}\n")
+
+        print("done.\n")
+
+    def data_dump_with_prefix(self, prefix: str, data,
+                              positions, sup: str = "") -> None:
+        """Dump blades data and calculated positions using a file prefix."""
+        prefix = os.path.abspath(prefix)
+        base = os.path.basename(prefix)
+        outdir = os.path.dirname(prefix) or "."
+        os.makedirs(outdir, exist_ok=True)
+        outfile = os.path.join(outdir, f"{base}_blades_values.dat")
+        print(f"\n Writing out data to file {outfile} ...", end='')
+        with open(outfile, 'w') as df:
+            for key, val in data.items():
+                df.write(f"{key[0]}  {key[1]}")
+                for vv in val:
+                    df.write(f"  {vv[0]} {vv[1]}")
+                df.write("\n")
+
+        pos_pair, pos_cr = positions
+
+        outfilep = os.path.join(
+            outdir, f"{base}_positions_pair_{sup}.dat"
+        )
+        print("\n Writing out pairwise blade calculated positions to file"
+              f" {outfilep} ...", end='')
+        with open(outfilep, 'w') as fp:
+            for key, val in pos_pair.items():
+                fp.write(f"{key[0]}  {key[1]}")
+                fp.write(f"  {val[0]} {val[1]}\n")
+
+        outfilec = os.path.join(
+            outdir, f"{base}_positions_cross_{sup}.dat"
+        )
         print("\n Writing out cross-blade calculated positions to file"
               f" {outfilec} ...", end='')
         with open(outfilec, 'w') as fc:
@@ -738,6 +779,8 @@ class Exporter:
         - avg_<beamline>: averaged XBPM data (as currently stored)
         - bpm_data: dataset with columns orbx, orby; all simple metadata
             as attributes
+        - gap/phase: stored as attributes named '<beamline> gap'
+            (e.g., 'mnc gap', 'cat gap')
         """
         if not rawdata or raw_grp is None:
             return
@@ -759,6 +802,18 @@ class Exporter:
             for k in bpm_simple_keys:
                 if k in bpm_dict and bpm_dict[k] is not None:
                     sweep_grp.attrs[k] = bpm_dict[k]
+
+            # --- Write gap/phase information as attributes ---
+            # grid_data (entry[1]) contains gap_dict with beamline keys
+            if isinstance(grid_data, dict):
+                for beamline_key, gap_value in grid_data.items():
+                    if gap_value is not None:
+                        attr_name = f"{beamline_key} gap"
+                        try:
+                            sweep_grp.attrs[attr_name] = gap_value
+                        except (TypeError, ValueError):
+                            sweep_grp.attrs[attr_name] = str(gap_value)
+
             # Store orbx/orby as columns in bpm_data
             if all(k in bpm_dict and bpm_dict[k] is not None
                    for k in bpm_array_keys):

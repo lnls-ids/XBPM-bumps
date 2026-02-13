@@ -733,25 +733,6 @@ class BPMProcessor:
         Returns:
             Array of [x, y] coordinates or None if calculation fails.
         """
-        # Initialize figure with 1x3 subplots:
-        # full grid, roi closeup, differences
-        self.fig, (ax_all, ax_close, ax_color) = plt.subplots(
-            1, 3, figsize=(18, 6), constrained_layout=True
-        )
-
-        # Apply layout padding similar to PositionVisualizer for consistency
-        try:
-            engine = self.fig.get_layout_engine()
-            if engine is not None and hasattr(engine, "set"):
-                engine.set(
-                    w_pad=0.02,   # space figure edge / axes, horizontal
-                    h_pad=0.0,    # space figure edge / axes, vertical
-                    wspace=0.02,  # space between axes, horizontal
-                    hspace=0.0,   # space between axes, vertical
-                )
-        except Exception:
-            pass  # Ignore if layout engine unavailable
-
         sector_idx = self._sector_index()
         tangents = self._tangents_calc(sector_idx)
 
@@ -774,7 +755,32 @@ class BPMProcessor:
             )
 
         # Extract ROI data for closeup view
-        (xnom_roi, ynom_roi, xpos_roi, ypos_roi) = self._extract_roi_positions()
+        (xnom_roi, ynom_roi,
+         xpos_roi, ypos_roi) = self._extract_roi_positions()
+
+        # Initialize figure with 1x3 subplots:
+        # full grid, roi closeup, differences
+        is_1d = (self.bpm_roi_diffs.ndim == 1 or
+                 (self.bpm_roi_diffs.ndim == 2 and
+                  min(self.bpm_roi_diffs.shape) == 1))
+        gridspec = {'width_ratios': [1, 1, 0.1]} if is_1d else None
+        self.fig, (ax_all, ax_close, ax_color) = plt.subplots(
+            1, 3, figsize=(18, 6), constrained_layout=True,
+            gridspec_kw=gridspec
+        )
+
+        # Apply layout padding similar to PositionVisualizer for consistency
+        try:
+            engine = self.fig.get_layout_engine()
+            if engine is not None and hasattr(engine, "set"):
+                engine.set(
+                    w_pad=0.02,   # space figure edge / axes, horizontal
+                    h_pad=0.0,    # space figure edge / axes, vertical
+                    wspace=0.02,  # space between axes, horizontal
+                    hspace=0.0,   # space between axes, vertical
+                )
+        except Exception:
+            pass  # Ignore if layout engine unavailable
 
         # Plot full grid
         self._plot_position_scatter(
@@ -835,45 +841,41 @@ class BPMProcessor:
         roi_diffs = self.bpm_roi_diffs
 
         # Treat as 1-D if truly 1-D (shape = (n,)) or effectively 1-D (one
-        # dimension is 1, like (1, n) or (n, 1))
-        is_1d = roi_diffs.ndim == 1 or (roi_diffs.ndim == 2 and
-                                        min(roi_diffs.shape) == 1)
+        # dimension is 1, like (1, n) or (n, 1)), or if one nominal axis is
+        # constant (single-line sweep).
+        h_const = np.nanmax(pos_nom_h) == np.nanmin(pos_nom_h)
+        v_const = np.nanmax(pos_nom_v) == np.nanmin(pos_nom_v)
+        is_1d = (roi_diffs.ndim == 1 or
+             (roi_diffs.ndim == 2 and min(roi_diffs.shape) == 1) or
+             h_const or v_const)
 
         if is_1d:
-            # 1D scatter plot: use position arrays directly for better
-            # visualization of variations along one axis
-            x = np.ravel(pos_nom_h)
-            y = np.ravel(pos_nom_v)
-            cvals = np.ravel(roi_diffs)
-
-            # Align lengths if shapes are inconsistent
-            m = min(len(x), len(y), len(cvals))
-            x, y, cvals = x[:m], y[:m], cvals[:m]
-
-            scatter = axdiff.scatter(x, y, c=cvals, cmap='viridis', s=50)
-            cbar = self.fig.colorbar(scatter, ax=axdiff,
-                                      fraction=0.046, pad=0.04)
-            cbar.set_label(u"RMS differences (ROI)")
-
-            axdiff.set_xlabel(u"$x$ [$\\mu$m]")  # noqa: W605
-            axdiff.set_ylabel(u"$y$ [$\\mu$m]")
-            axdiff.set_title("Differences at ROI")
-
+            # 1D imshow: render as a thin band of square cells
             h_min = np.nanmin(pos_nom_h)
             h_max = np.nanmax(pos_nom_h)
-            v_min = np.nanmin(pos_nom_v)
-            v_max = np.nanmax(pos_nom_v)
-            h_range = h_max - h_min if h_max > h_min else 1
-            v_range = v_max - v_min if v_max > v_min else 1
-            total_range = max(h_range, v_range) * 1.3
-            h_center = (h_min + h_max) / 2
-            v_center = (v_min + v_max) / 2
-            axdiff.set_xlim(h_center - total_range / 2,
-                            h_center + total_range / 2)
-            axdiff.set_ylim(v_center - total_range / 2,
-                            v_center + total_range / 2)
-            axdiff.set_aspect('equal', adjustable='box')
-            axdiff.grid(True)
+
+            color_vals = np.ravel(roi_diffs).reshape(-1, 1)
+            extent = [0, 1, pos_nom_v.min(), pos_nom_v.max()]
+            aspect = 'auto'
+
+            # Make the single column visually wider
+            axdiff.set_box_aspect(10)
+            axdiff.set_anchor('C')
+            axdiff.set_xticks([])
+
+            im = axdiff.imshow(color_vals,
+                               cmap='viridis',
+                               extent=extent,
+                               aspect=aspect,
+                               origin='lower')
+            cbar = self.fig.colorbar(im, ax=axdiff,
+                                      fraction=0.4, pad=0.3)
+            cbar.set_label(u"Difference [$\\mu$m]")
+
+            axdiff.set_xlabel("")
+            axdiff.set_ylabel(u"$y$ [$\\mu$m]")
+            axdiff.set_title("Differences at ROI")
+            axdiff.grid(False)
         else:
             # 2D heatmap with extent mapping
             h_min = np.nanmin(pos_nom_h)
@@ -889,8 +891,8 @@ class BPMProcessor:
             h_extent = h_max - h_min
             v_extent = v_max - v_min
             # aspect = (physical_y_per_pixel) / (physical_x_per_pixel)
-            aspect = (v_extent / n_v) / (h_extent / n_h) if (h_extent > 0 and
-                                                              v_extent > 0) else 1
+            aspect = ((v_extent / n_v) / (h_extent / n_h)
+                      if (h_extent > 0 and v_extent > 0) else 1)
 
             # Use imshow for filled heatmap visualization
             im = axdiff.imshow(
@@ -899,14 +901,15 @@ class BPMProcessor:
             )
             cbar = self.fig.colorbar(im, ax=axdiff,
                                      fraction=0.046, pad=0.04)
-            cbar.set_label(u"RMS differences (ROI)")
+            cbar.set_label(u"Difference [$\\mu$m]")
 
             axdiff.set_xlabel(u"$x$ [$\\mu$m]")  # noqa: W605
             axdiff.set_ylabel(u"$y$ [$\\mu$m]")
             axdiff.set_title("Differences at ROI")
             axdiff.grid(False)
 
-    def _plot_position_scatter(self, ax, pos_nom_h, pos_nom_v, pos_h, pos_v, title):
+    def _plot_position_scatter(self, ax, pos_nom_h, pos_nom_v,
+                               pos_h, pos_v, title):
         """Plot measured vs nominal positions scatter plot.
 
         Args:

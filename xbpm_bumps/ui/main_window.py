@@ -504,6 +504,7 @@ class XBPMMainWindow(QMainWindow):
 
             # Export other analysis figures and data
             exported_any |= self._export_other_figures(prefix, params, results)
+            exported_any |= self._export_analysis_info(prefix)
 
             if not exported_any:
                 QMessageBox.information(
@@ -751,12 +752,16 @@ class XBPMMainWindow(QMainWindow):
             logger.exception("Failed to open Help dialog")
             self.show_error("Help", f"Could not open Help: {exc}")
 
-    def _compute_nominal_positions(self):
+    def _compute_nominal_positions(self, data=None):
         """Compute nominal grid positions from measurement data.
+
+        Args:
+            data: Optional legacy argument (unused).
 
         Returns:
             Tuple (pos_nom_h, pos_nom_v) - nominal position grids.
         """
+        _ = data
         processor = self.analyzer.app.processor
         prm = self.analyzer.app.prm
 
@@ -939,6 +944,24 @@ class XBPMMainWindow(QMainWindow):
 
         return True
 
+    def _export_analysis_info(self, prefix: str) -> bool:
+        """Export analysis info text shown in the read-only panel."""
+        if not hasattr(self, 'analysis_info') or self.analysis_info is None:
+            return False
+
+        text = (self.analysis_info.toPlainText() or "").strip()
+        if not text:
+            return False
+
+        info_path = os.path.join(
+            os.path.dirname(prefix),
+            f"{os.path.basename(prefix)}_analysis_info.txt"
+        )
+        with open(info_path, 'w') as fp:
+            fp.write(text + "\n")
+        logger.info("Analysis info saved to %s", info_path)
+        return True
+
     def _export_other_figures(self, prefix: str, params: dict,
                               results: dict) -> bool:
         """Export analysis figures (blade map, sweeps, etc) and sweeps data.
@@ -958,6 +981,7 @@ class XBPMMainWindow(QMainWindow):
             ('showblademap', 'blade_figure', 'blade_map.png'),
             ('showbladescenter', 'blades_center_figure',
              'blades_center.png'),
+            ('xbpmfrombpm', 'bpm_figure', 'bpm_positions.png'),
         ]
 
         for option_key, result_key, filename in figure_exports:
@@ -986,7 +1010,10 @@ class XBPMMainWindow(QMainWindow):
 
             sweeps_data = results.get('sweeps_data')
             if sweeps_data:
-                range_h, range_v, blades_h, blades_v = sweeps_data
+                if len(sweeps_data) < 4:
+                    logger.warning("Sweeps data missing expected arrays")
+                    return exported
+                range_h, range_v, blades_h, blades_v = sweeps_data[:4]
                 try:
                     # blades_h and blades_v are dicts keyed by blade labels
                     h_arrays = [blades_h.get(k)

@@ -181,9 +181,18 @@ class PositionVisualizer:
             diff_roi: RMS position differences in ROI.
             figsize: Figure size as (width, height) tuple.
         """
+        is_1d = (diff_roi.ndim == 1 or
+                 (diff_roi.ndim == 2 and min(diff_roi.shape) == 1))
+        if is_1d:
+            gridspec = {'width_ratios': [1, 1, 0.1]}
+        else:
+            gridspec = None
+
         self.fig, (ax_all, ax_close, ax_color) = plt.subplots(
-            1, 3, figsize=figsize, constrained_layout=True
+            1, 3, figsize=figsize, constrained_layout=True,
+            gridspec_kw=gridspec
         )
+
         # Reduce vertical/horizontal padding between subplots
         # and figure edges for a tighter layout.
         try:
@@ -269,43 +278,45 @@ class PositionVisualizer:
             ax.legend(handles, labels)
         ax.grid()
 
-    def _plot_position_differences(self, ax, diffroi, pos_nom_h=None,
-                                   pos_nom_v=None, title=""):
+    def _plot_position_differences(self, ax, diffroi,
+                                   pos_nom_h, pos_nom_v, title=""):
         """Plot position difference heatmap or scatter on given axis."""
         # Treat as 1-D if truly 1-D (shape = (n,)) or effectively 1-D (one
-        # dimension is 1, like (1, n) or (n, 1))
-        is_1d = diffroi.ndim == 1 or (diffroi.ndim == 2 and
-                                      min(diffroi.shape) == 1)
+        # dimension is 1, like (1, n) or (n, 1)), or if one nominal axis is
+        # constant (single-line sweep).
+
+        h_const = np.nanmax(pos_nom_h) == np.nanmin(pos_nom_h)
+        v_const = np.nanmax(pos_nom_v) == np.nanmin(pos_nom_v)
+        is_1d = (diffroi.ndim == 1 or
+                 (diffroi.ndim == 2 and min(diffroi.shape) == 1) or
+                 h_const or v_const)
 
         if is_1d:
-            # 1D scatter plot: use position arrays directly
-            x = np.ravel(pos_nom_h)
-            y = np.ravel(pos_nom_v)
-            cvals = np.ravel(diffroi)
-
-            # Align lengths if shapes are inconsistent
-            m = min(len(x), len(y), len(cvals))
-            x, y, cvals = x[:m], y[:m], cvals[:m]
-
-            scatter = ax.scatter(x, y, c=cvals, cmap='viridis', s=50)
-            cbar = self.fig.colorbar(scatter, ax=ax,
-                                     fraction=0.046, pad=0.04)
-            cbar.set_label(u"Difference [$\\mu$m]")
-
+            # 1D imshow: render as a thin band of square cells
             h_min = np.nanmin(pos_nom_h)
             h_max = np.nanmax(pos_nom_h)
-            v_min = np.nanmin(pos_nom_v)
-            v_max = np.nanmax(pos_nom_v)
-            h_range = h_max - h_min if h_max > h_min else 1
-            v_range = v_max - v_min if v_max > v_min else 1
-            total_range = max(h_range, v_range) * 1.3
-            h_center = (h_min + h_max) / 2
-            v_center = (v_min + v_max) / 2
-            ax.set_xlim(h_center - total_range / 2,
-                        h_center + total_range / 2)
-            ax.set_ylim(v_center - total_range / 2,
-                        v_center + total_range / 2)
-            ax.set_aspect('equal', adjustable='box')
+            # h_center = (h_min + h_max) / 2
+
+            color_vals = np.ravel(diffroi).reshape(-1, 1)
+            # extent = [h_center - 0.2, h_center + 0.2,
+            extent = [0, 1, pos_nom_v.min(), pos_nom_v.max()]
+            aspect = 'auto'
+            xlabel = ""
+
+            # Make the single column visually wider
+            ax.set_box_aspect(10)
+            ax.set_anchor('C')
+            ax.set_xticks([])
+
+            im = ax.imshow(color_vals,
+                            cmap='viridis',
+                            extent=extent,
+                            aspect=aspect,
+                            origin='lower')
+            cbar = self.fig.colorbar(im, ax=ax,
+                                      fraction=0.4, pad=0.3)
+            cbar.set_label(u"Difference [$\\mu$m]")
+
         else:
             # 2D heatmap: use extent to map array indices to actual coordinates
             h_min = np.nanmin(pos_nom_h)
@@ -324,14 +335,23 @@ class PositionVisualizer:
             # aspect = (physical_y_per_pixel) / (physical_x_per_pixel)
             aspect = ((v_extent / n_v) / (h_extent / n_h)
                       if (h_extent > 0 and v_extent > 0) else 1)
-            im = ax.imshow(diffroi, cmap='viridis', extent=extent,
-                          origin='lower', aspect=aspect)
+            color_vals = diffroi
+            xlabel = u"$x$ [$\\mu$m]"
+
+            im = ax.imshow(color_vals,
+                        cmap='viridis',
+                        origin='lower',
+                        aspect=aspect,
+                        extent=extent)
             cbar = self.fig.colorbar(im, ax=ax,
                                      fraction=0.046, pad=0.04)
-            cbar.set_label(u"RMS differences (ROI)")
+            cbar.set_label(u"Difference [$\\mu$m]")
 
+        # cbar = self.fig.colorbar(im, ax=ax,
+        #                          fraction=0.4, pad=0.3)
+        # cbar.set_label(u"Difference [$\\mu$m]")
         ax.set_title(title, pad=2)
-        ax.set_xlabel(u"$x$ [$\\mu$m]")
+        ax.set_xlabel(xlabel)
         ax.set_ylabel(u"$y$ [$\\mu$m]")
 
     def save_figure(self, filename: str) -> None:
