@@ -272,20 +272,12 @@ class PositionVisualizer:
     def _plot_position_differences(self, ax, diffroi, pos_nom_h=None,
                                    pos_nom_v=None, title=""):
         """Plot position difference heatmap or scatter on given axis."""
-        if len(diffroi.shape) > 1:
-            # 2D heatmap: use extent to map array indices to actual coordinates
-            h_min = np.nanmin(pos_nom_h)
-            h_max = np.nanmax(pos_nom_h)
-            v_min = np.nanmin(pos_nom_v)
-            v_max = np.nanmax(pos_nom_v)
-            # extent = [left, right, bottom, top]
-            extent = [h_min, h_max, v_min, v_max]
+        # Treat as 1-D if truly 1-D (shape = (n,)) or effectively 1-D (one
+        # dimension is 1, like (1, n) or (n, 1))
+        is_1d = diffroi.ndim == 1 or (diffroi.ndim == 2 and
+                                      min(diffroi.shape) == 1)
 
-            im = ax.imshow(diffroi, cmap='viridis', extent=extent,
-                          origin='lower', aspect='equal')
-            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            cbar.set_label(u"RMS differences (ROI)")
-        else:
+        if is_1d:
             # 1D scatter plot: use position arrays directly
             x = np.ravel(pos_nom_h)
             y = np.ravel(pos_nom_v)
@@ -296,7 +288,47 @@ class PositionVisualizer:
             x, y, cvals = x[:m], y[:m], cvals[:m]
 
             scatter = ax.scatter(x, y, c=cvals, cmap='viridis', s=50)
-            plt.colorbar(scatter, ax=ax, label='Difference [$\\mu$m]')
+            cbar = self.fig.colorbar(scatter, ax=ax,
+                                     fraction=0.046, pad=0.04)
+            cbar.set_label(u"Difference [$\\mu$m]")
+
+            h_min = np.nanmin(pos_nom_h)
+            h_max = np.nanmax(pos_nom_h)
+            v_min = np.nanmin(pos_nom_v)
+            v_max = np.nanmax(pos_nom_v)
+            h_range = h_max - h_min if h_max > h_min else 1
+            v_range = v_max - v_min if v_max > v_min else 1
+            total_range = max(h_range, v_range) * 1.3
+            h_center = (h_min + h_max) / 2
+            v_center = (v_min + v_max) / 2
+            ax.set_xlim(h_center - total_range / 2,
+                        h_center + total_range / 2)
+            ax.set_ylim(v_center - total_range / 2,
+                        v_center + total_range / 2)
+            ax.set_aspect('equal', adjustable='box')
+        else:
+            # 2D heatmap: use extent to map array indices to actual coordinates
+            h_min = np.nanmin(pos_nom_h)
+            h_max = np.nanmax(pos_nom_h)
+            v_min = np.nanmin(pos_nom_v)
+            v_max = np.nanmax(pos_nom_v)
+            # extent = [left, right, bottom, top]
+            extent = [h_min, h_max, v_min, v_max]
+
+            # Calculate aspect ratio to maintain proper physical proportions.
+            # Account for both physical extents and array shape to avoid
+            # distortion when physical x and y ranges differ significantly.
+            n_v, n_h = diffroi.shape
+            h_extent = h_max - h_min
+            v_extent = v_max - v_min
+            # aspect = (physical_y_per_pixel) / (physical_x_per_pixel)
+            aspect = ((v_extent / n_v) / (h_extent / n_h)
+                      if (h_extent > 0 and v_extent > 0) else 1)
+            im = ax.imshow(diffroi, cmap='viridis', extent=extent,
+                          origin='lower', aspect=aspect)
+            cbar = self.fig.colorbar(im, ax=ax,
+                                     fraction=0.046, pad=0.04)
+            cbar.set_label(u"RMS differences (ROI)")
 
         ax.set_title(title, pad=2)
         ax.set_xlabel(u"$x$ [$\\mu$m]")
