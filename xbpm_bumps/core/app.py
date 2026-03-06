@@ -155,7 +155,11 @@ class XBPMApp:
                 showmatrix=True,
             )
             if self.prm.outputfile:
-                self.exporter.data_dump(self.data, positions, sup="raw")
+                self.exporter.data_dump(self.data, positions['positions'],
+                                        sup="raw")
+                supmat = positions.get('supmat')
+                if supmat is not None:
+                    self.exporter.write_supmat(supmat, write_file=True)
 
         if self.prm.xbpmpositions:
             positions = self.processor.calculate_scaled_positions(
@@ -163,4 +167,8 @@ class XBPMApp:
                 showmatrix=True,
             )
             if self.prm.outputfile:
-                self.exporter.data_dump(self.data, positions, sup="scaled")
+                self.exporter.data_dump(self.data, positions['positions'],
+                                        sup="scaled")
+                supmat = positions.get('supmat')
+                if supmat is not None:
+                    self.exporter.write_supmat(supmat, write_file=True)

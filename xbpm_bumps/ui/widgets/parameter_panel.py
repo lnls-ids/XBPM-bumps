@@ -253,7 +253,7 @@ class ParameterPanel(QWidget):
             try:
                 self.roi_h_spin.setValue(int(params['roisize'][0]))
                 self.roi_v_spin.setValue(int(params['roisize'][1]))
-            except Exception:
+            except Exception:  # noqa: S110
                 pass
         if 'skip' in params:
             self.skip_spin.setValue(params['skip'])

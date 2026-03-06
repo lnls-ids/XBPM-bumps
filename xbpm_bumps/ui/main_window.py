@@ -498,6 +498,9 @@ class XBPMMainWindow(QMainWindow):
             results = getattr(self, '_last_results', {})
             exported_any = False
 
+            # Always export suppression matrices (independent of checkboxes)
+            exported_any |= self._export_suppression_matrices(prefix, results)
+
             # Export XBPM data and figures
             exported_any |= self._export_xbpm_raw(prefix, params)
             exported_any |= self._export_xbpm_scaled(prefix, params)
@@ -776,6 +779,56 @@ class XBPMMainWindow(QMainWindow):
         pos_nom_v *= prm.xbpmdist
 
         return pos_nom_h, pos_nom_v
+
+    def _export_suppression_matrices(self, prefix: str,
+                                      results: dict) -> bool:
+        """Export both suppression matrices unconditionally.
+
+        Writes:
+          * ``<prefix>_supmat_standard.dat``  – fixed 1/-1 matrix
+          * ``<prefix>_supmat_calculated.dat`` – matrix fitted from slopes
+
+        Args:
+            prefix: Export filename prefix.
+            results: Results dict from last analysis run.
+
+        Returns:
+            True if at least one matrix was written.
+        """
+        from ..core.processors import XBPMProcessor
+        from ..core.exporters import Exporter
+
+        exporter = Exporter(self.analyzer.app.prm)
+        outdir = os.path.dirname(prefix) or '.'
+        base = os.path.basename(prefix)
+        wrote_any = False
+
+        # --- Standard (1/-1) suppression matrix ---
+        supmat_std = XBPMProcessor.standard_suppression_matrix()
+        std_path = os.path.join(outdir, f"{base}_supmat_standard.dat")
+        exporter.write_supmat(supmat_std, write_file=True, outpath=std_path)
+        logger.info("Standard suppression matrix saved to %s", std_path)
+        wrote_any = True
+
+        # --- Calculated (slope-fitted) suppression matrix ---
+        supmat_calc = results.get('supmat')
+        if supmat_calc is None:
+            # Compute directly from processor if analysis was run
+            try:
+                supmat_calc = self.analyzer.app.processor.suppression_matrix(
+                    showmatrix=False, nosuppress=False
+                )
+            except Exception as exc:
+                logger.warning("Could not compute calculated supmat: %s", exc)
+
+        if supmat_calc is not None:
+            calc_path = os.path.join(outdir, f"{base}_supmat_calculated.dat")
+            exporter.write_supmat(supmat_calc, write_file=True,
+                                  outpath=calc_path)
+            logger.info("Calculated suppression matrix saved to %s",
+                        calc_path)
+
+        return wrote_any
 
     def _export_xbpm_raw(self, prefix: str, params: dict) -> bool:
         """Export raw XBPM positions and figures.

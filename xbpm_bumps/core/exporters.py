@@ -104,17 +104,20 @@ class Exporter:
         }
 
     def write_supmat(self, supmat: np.ndarray,
-                     write_file: bool = False) -> None:
+                     write_file: bool = False,
+                     outpath: str = None) -> None:
         """Write suppression matrix to disk.
 
         Args:
             supmat: Suppression matrix numpy array
             write_file: Whether to write to .dat file (default: False).
                        Supmat is always exported to HDF5 by write_hdf5().
+            outpath: Optional explicit output file path. When None, writes
+                     ``supmat_<beamline>.dat`` in the current directory.
         """
         if not write_file:
             return
-        outfile = f"supmat_{self.prm.beamline}.dat"
+        outfile = outpath if outpath else f"supmat_{self.prm.beamline}.dat"
         with open(outfile, 'w') as fs:
             for lin in supmat:
                 for col in lin:

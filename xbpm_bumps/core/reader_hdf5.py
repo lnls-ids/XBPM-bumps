@@ -319,7 +319,8 @@ class HDF5DataReader:
                         for attr_key, attr_val in sweep_grp.attrs.items()
                         if attr_key.endswith(' gap')}
 
-            # --- Third element: bpm_dict, patched to read bpm_data for orbx/orby ---
+            # --- Third element: bpm_dict, patched to read bpm_data
+            # for orbx/orby ---
             bpm_dict = {}
             bpm_data = None
             if 'bpm_data' in sweep_grp:

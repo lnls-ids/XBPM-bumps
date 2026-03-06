@@ -779,7 +779,7 @@ class BPMProcessor:
                     wspace=0.02,  # space between axes, horizontal
                     hspace=0.0,   # space between axes, vertical
                 )
-        except Exception:
+        except Exception:  # noqa: S110
             pass  # Ignore if layout engine unavailable
 
         # Plot full grid

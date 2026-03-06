@@ -13,16 +13,17 @@ import matplotlib.pyplot as plt
 # Distance from source (its center) to XBPM at each beamline.
 # Obtained from comissioning reports.
 XBPMDISTS = {
-    "CAT":  15.740,
-    "CAT1": 15.740,
-    "CAT2": 19.590,
-    "CNB1": 15.740,
-    "CNB2": 19.590,
-    "MGN1": 10.237,
-    "MGN2": 16.167,
-    "MNC1": 15.740,
-    "MNC2": 19.590,
-    "SIM" : 1.0      # Simulation case.
+    "CAT"  : 15.740,
+    "CAT1" : 15.740,
+    "CAT2" : 19.590,
+    "CNB"  : 15.740,
+    "CNB1" : 15.740,
+    "CNB2" : 19.590,
+    "MGN1" : 10.237,
+    "MGN2" : 16.167,
+    "MNC1" : 15.740,
+    "MNC2" : 19.590,
+    "SIM"  : 1.0      # Simulation case.
 }
 
 
