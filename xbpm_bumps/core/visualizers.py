@@ -58,7 +58,7 @@ class BladeMapVisualizer:
         fig, rx = plt.subplots(2, 2, figsize=(8, 5))
 
         # Calculate extent for proper axis labels
-        if to.shape[0] == 1 or to.shape[1] == 1:
+        if (to.ndim < 2 or to.shape[0] <= 1 or to.shape[1] <= 1):
             extent = None
         else:
             alist = np.array(list(self.data.keys()))
@@ -69,9 +69,12 @@ class BladeMapVisualizer:
                 # Some data are 1-D only
                 mlist = np.unique(alist)
                 klist = np.zeros(len(mlist))
-            minvalx, maxvalx = np.min(klist), np.max(klist)
-            minvaly, maxvaly = np.min(mlist), np.max(mlist)
-            extent = (minvalx, maxvalx, minvaly, maxvaly)
+            if klist.size == 0 or mlist.size == 0:
+                extent = None
+            else:
+                minvalx, maxvalx = np.min(klist), np.max(klist)
+                minvaly, maxvaly = np.min(mlist), np.max(mlist)
+                extent = (minvalx, maxvalx, minvaly, maxvaly)
 
         quad = [[ti, to], [bi, bo]]
         names = [["TI", "TO"], ["BI", "BO"]]
@@ -79,7 +82,11 @@ class BladeMapVisualizer:
         for idy in range(2):
             for idx in range(2):
                 rx[idy][idx].imshow(quad[idy][idx], extent=extent)
-                rx[idy][idx].set_xlabel(u"$x$ [$\\mu$rad]")
+                if extent is None:
+                    rx[idy][idx].set_xlabel('')
+                    rx[idy][idx].set_xticks([])
+                else:
+                    rx[idy][idx].set_xlabel(u"$x$ [$\\mu$rad]")
                 rx[idy][idx].set_ylabel(u"$y$ [$\\mu$rad]")
                 rx[idy][idx].set_title(names[idy][idx])
 

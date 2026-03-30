@@ -20,8 +20,9 @@ class Config:
     # TO, TI, BO, BI : top/bottom, in/out, relative to the storage ring;
     # A, B, C, D : names of respective P.V.s
     BLADEMAP = {
-        # "MNC"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-        "MNC1" : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+        "MNC"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+        "MNC1"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+        # "MNC1" : {"TO": 'B', "TI": 'D', "BI": 'A', "BO": 'C'},
         "MNC2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
         "CAT"  : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
         "CAT1" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},

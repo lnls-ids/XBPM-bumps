@@ -126,7 +126,7 @@ class Exporter:
 
     def data_dump(self, data, positions, sup: str = "") -> None:
         """Dump blades data and calculated positions to files."""
-        outfile = f"xbpm_blades_values_{self.prm.beamline}.dat"
+        outfile = f"xbpm_blades_{self.prm.beamline}.dat"
         print(f"\n Writing out data to file {outfile} ...", end='')
         with open(outfile, 'w') as df:
             for key, val in data.items():
@@ -159,10 +159,9 @@ class Exporter:
                               positions, sup: str = "") -> None:
         """Dump blades data and calculated positions using a file prefix."""
         prefix = os.path.abspath(prefix)
-        base = os.path.basename(prefix)
         outdir = os.path.dirname(prefix) or "."
         os.makedirs(outdir, exist_ok=True)
-        outfile = os.path.join(outdir, f"{base}_blades_values.dat")
+        outfile = os.path.join(outdir, f"xbpm_blades_{self.prm.beamline}.dat")
         print(f"\n Writing out data to file {outfile} ...", end='')
         with open(outfile, 'w') as df:
             for key, val in data.items():
@@ -174,7 +173,7 @@ class Exporter:
         pos_pair, pos_cr = positions
 
         outfilep = os.path.join(
-            outdir, f"{base}_positions_pair_{sup}.dat"
+            outdir, f"xbpm_positions_pair_{sup}_{self.prm.beamline}.dat"
         )
         print("\n Writing out pairwise blade calculated positions to file"
               f" {outfilep} ...", end='')
@@ -184,7 +183,7 @@ class Exporter:
                 fp.write(f"  {val[0]} {val[1]}\n")
 
         outfilec = os.path.join(
-            outdir, f"{base}_positions_cross_{sup}.dat"
+            outdir, f"xbpm_positions_cross_{sup}_{self.prm.beamline}.dat"
         )
         print("\n Writing out cross-blade calculated positions to file"
               f" {outfilec} ...", end='')
@@ -1383,6 +1382,15 @@ class Exporter:
             'Analysis results including positions, matrices, and sweep data'
         )
         analysis.attrs['beamline'] = beamline
+        xbpmdist = getattr(self.prm, 'xbpmdist', None)
+        if xbpmdist is not None:
+            analysis.attrs['xbpmdist'] = float(xbpmdist)
+            analysis.attrs['xbpmdist_description'] = (
+                self.PARAM_DESCRIPTIONS.get(
+                    'xbpmdist',
+                    'Distance from radiation source to XBPM detector (m)'
+                )
+            )
         for meta_key in ['meta', 'analysis_meta', 'metadata']:
             meta = results.get(meta_key)
             if isinstance(meta, dict):

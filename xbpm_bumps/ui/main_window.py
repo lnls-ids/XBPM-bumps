@@ -120,6 +120,7 @@ class XBPMMainWindow(QMainWindow):
         if hasattr(self, 'param_panel'):
             self.param_panel.set_beamline(chosen)
 
+        self._update_xbpmdist_from_beamline(chosen)
         return chosen
 
     def setup_ui(self):
@@ -278,12 +279,6 @@ class XBPMMainWindow(QMainWindow):
         if workdir and workdir != self._last_workdir:
             self._last_workdir = workdir
             # self._preselected_beamline removed
-
-        roisize = params.get('roisize')
-        if roisize is not None and roisize != self._last_roisize:
-            self._last_roisize = list(roisize)
-            if self.rawdata is not None and not self._analysis_running:
-                self._schedule_roi_rerun()
 
     def _schedule_roi_rerun(self):
         """Debounce ROI changes and re-run analysis if data is loaded."""
@@ -480,7 +475,7 @@ class XBPMMainWindow(QMainWindow):
 
             # Choose base filename prefix
             default_name = (
-                f"xbpm_export_{self.analyzer.app.prm.beamline}.dat"
+                f"xbpm_{self.analyzer.app.prm.beamline}.dat"
             )
             path, _ = QFileDialog.getSaveFileName(
                 self,
@@ -640,6 +635,8 @@ class XBPMMainWindow(QMainWindow):
                 f"Loading data from: {workdir} "
                 f"(beamline: {chosen_beamline})"
             )
+            self.analyzer.reader = self.reader
+            self.analyzer.rawdata = self.rawdata
             self.analyzer.load_data_only()
             # Assign analysis metadata for UI display
             self._last_hdf5_meta = getattr(self.reader, 'analysis_meta', {})
@@ -800,12 +797,14 @@ class XBPMMainWindow(QMainWindow):
 
         exporter = Exporter(self.analyzer.app.prm)
         outdir = os.path.dirname(prefix) or '.'
-        base = os.path.basename(prefix)
         wrote_any = False
 
         # --- Standard (1/-1) suppression matrix ---
         supmat_std = XBPMProcessor.standard_suppression_matrix()
-        std_path = os.path.join(outdir, f"{base}_supmat_standard.dat")
+        std_path = os.path.join(
+            outdir,
+            f"xbpm_supmat_standard_{self.analyzer.app.prm.beamline}.dat"
+        )
         exporter.write_supmat(supmat_std, write_file=True, outpath=std_path)
         logger.info("Standard suppression matrix saved to %s", std_path)
         wrote_any = True
@@ -822,13 +821,46 @@ class XBPMMainWindow(QMainWindow):
                 logger.warning("Could not compute calculated supmat: %s", exc)
 
         if supmat_calc is not None:
-            calc_path = os.path.join(outdir, f"{base}_supmat_calculated.dat")
+            calc_path = os.path.join(
+                outdir,
+                f"xbpm_supmat_calculated_{self.analyzer.app.prm.beamline}.dat"
+            )
             exporter.write_supmat(supmat_calc, write_file=True,
                                   outpath=calc_path)
             logger.info("Calculated suppression matrix saved to %s",
                         calc_path)
 
         return wrote_any
+
+    def _write_position_info_file(self, path: str, calc_type: str, sup: str,
+                                    scales: dict, stats: dict) -> None:
+        """Write scale coefficients and statistics to a labeled text file."""
+        beamline = self.analyzer.app.prm.beamline
+        with open(path, 'w') as fp:
+            fp.write("# Scaling coefficients and statistics\n")
+            fp.write(
+                f"# Beamline: {beamline}"
+                f" | Type: positions / {calc_type} / {sup}\n"
+            )
+            fp.write(f"kx           = {float(scales.get('kx', 1)):.6f}\n")
+            fp.write(f"dx           = {float(scales.get('dx', 0)):.6f}\n")
+            fp.write(f"ky           = {float(scales.get('ky', 1)):.6f}\n")
+            fp.write(f"dy           = {float(scales.get('dy', 0)):.6f}\n")
+            if stats:
+                fp.write("sigma_h      = "
+                         f"{float(stats.get('sigma_h', 0)):.6f}  um\n")
+                fp.write("sigma_v      = "
+                         f"{float(stats.get('sigma_v', 0)):.6f}  um\n")
+                fp.write("sigma_total  = "
+                         f"{float(stats.get('sigma_total', 0)):.6f}  um\n")
+                fp.write("diff_max_h   = "
+                         f"{float(stats.get('diff_max_h', 0)):.6f}  um\n")
+                fp.write("diff_max_v   = "
+                         f"{float(stats.get('diff_max_v', 0)):.6f}  um\n")
+                fp.write("diff_min_h   = "
+                         f"{float(stats.get('diff_min_h', 0)):.6f}  um\n")
+                fp.write("diff_min_v   = "
+                         f"{float(stats.get('diff_min_v', 0)):.6f}  um\n")
 
     def _export_xbpm_raw(self, prefix: str, params: dict) -> bool:
         """Export raw XBPM positions and figures.
@@ -868,7 +900,7 @@ class XBPMMainWindow(QMainWindow):
         if result_raw.get('pairwise_figure'):
             fig_pair = os.path.join(
                 os.path.dirname(prefix),
-                f"{os.path.basename(prefix)}_pair_raw.png"
+                f"xbpm_positions_pair_raw_{self.analyzer.app.prm.beamline}.png"
             )
             result_raw['pairwise_figure'].savefig(
                 fig_pair, dpi=FIGDPI, bbox_inches='tight'
@@ -878,30 +910,29 @@ class XBPMMainWindow(QMainWindow):
         if result_raw.get('cross_figure'):
             fig_cross = os.path.join(
                 os.path.dirname(prefix),
-                f"{os.path.basename(prefix)}_cross_raw.png"
+                f"xbpm_positions_cross_raw_{self.analyzer.app.prm.beamline}.png"
             )
             result_raw['cross_figure'].savefig(
                 fig_cross, dpi=FIGDPI, bbox_inches='tight'
             )
             logger.info("Cross figure saved to %s", fig_cross)
 
-        # Export scaling factors if available
+        # Export scaling factors and statistics
         scales = result_raw.get('scales') or {}
-        pair_scales = scales.get('pair')
-        if pair_scales:
-            scale_path = os.path.join(
-                os.path.dirname(prefix),
-                f"{os.path.basename(prefix)}_pair_raw_scales.dat"
-            )
-            with open(scale_path, 'w') as fp:
-                fp.write("kx ky dx dy\n")
-                fp.write(
-                    f"{pair_scales.get('kx', 0):.6f} "
-                    f"{pair_scales.get('ky', 0):.6f} "
-                    f"{pair_scales.get('dx', 0):.6f} "
-                    f"{pair_scales.get('dy', 0):.6f}\n"
+        stats = result_raw.get('xbpm_stats') or {}
+        bl = self.analyzer.app.prm.beamline
+        for calc_type, stats_key in (('pair', 'pairwise'), ('cross', 'cross')):
+            calc_scales = scales.get(calc_type)
+            if calc_scales:
+                info_path = os.path.join(
+                    os.path.dirname(prefix),
+                    f"xbpm_positions_{calc_type}_raw_{bl}_info.dat"
                 )
-            logger.info("Pairwise raw scales saved to %s", scale_path)
+                self._write_position_info_file(
+                    info_path, calc_type, 'raw',
+                    calc_scales, stats.get(stats_key) or {}
+                )
+                logger.info("Info file saved to %s", info_path)
 
         return True
 
@@ -943,7 +974,7 @@ class XBPMMainWindow(QMainWindow):
         if result_scaled.get('pairwise_figure'):
             fig_pair = os.path.join(
                 os.path.dirname(prefix),
-                f"{os.path.basename(prefix)}_pair_scaled.png"
+                f"xbpm_positions_pair_scaled_{self.analyzer.app.prm.beamline}.png"
             )
             result_scaled['pairwise_figure'].savefig(
                 fig_pair, dpi=FIGDPI, bbox_inches='tight'
@@ -953,47 +984,29 @@ class XBPMMainWindow(QMainWindow):
         if result_scaled.get('cross_figure'):
             fig_cross = os.path.join(
                 os.path.dirname(prefix),
-                f"{os.path.basename(prefix)}_cross_scaled.png"
+                f"xbpm_positions_cross_scaled_{self.analyzer.app.prm.beamline}.png"
             )
             result_scaled['cross_figure'].savefig(
                 fig_cross, dpi=FIGDPI, bbox_inches='tight'
             )
             logger.info("Cross figure saved to %s", fig_cross)
 
-        # Export scaling factors if available
+        # Export scaling factors and statistics
         scales = result_scaled.get('scales') or {}
-        pair_scales = scales.get('pair')
-        cross_scales = scales.get('cross')
-
-        if pair_scales:
-            scale_path = os.path.join(
-                os.path.dirname(prefix),
-                f"{os.path.basename(prefix)}_pair_scaled_scales.dat"
-            )
-            with open(scale_path, 'w') as fp:
-                fp.write("kx ky dx dy\n")
-                fp.write(
-                    f"{pair_scales.get('kx', 0):.6f} "
-                    f"{pair_scales.get('ky', 0):.6f} "
-                    f"{pair_scales.get('dx', 0):.6f} "
-                    f"{pair_scales.get('dy', 0):.6f}\n"
+        stats = result_scaled.get('xbpm_stats') or {}
+        bl = self.analyzer.app.prm.beamline
+        for calc_type, stats_key in (('pair', 'pairwise'), ('cross', 'cross')):
+            calc_scales = scales.get(calc_type)
+            if calc_scales:
+                info_path = os.path.join(
+                    os.path.dirname(prefix),
+                    f"xbpm_positions_{calc_type}_scaled_{bl}_info.dat"
                 )
-            logger.info("Pairwise scaled scales saved to %s", scale_path)
-
-        if cross_scales:
-            scale_path = os.path.join(
-                os.path.dirname(prefix),
-                f"{os.path.basename(prefix)}_cross_scaled_scales.dat"
-            )
-            with open(scale_path, 'w') as fp:
-                fp.write("kx ky dx dy\n")
-                fp.write(
-                    f"{cross_scales.get('kx', 0):.6f} "
-                    f"{cross_scales.get('ky', 0):.6f} "
-                    f"{cross_scales.get('dx', 0):.6f} "
-                    f"{cross_scales.get('dy', 0):.6f}\n"
+                self._write_position_info_file(
+                    info_path, calc_type, 'scaled',
+                    calc_scales, stats.get(stats_key) or {}
                 )
-            logger.info("Cross scaled scales saved to %s", scale_path)
+                logger.info("Info file saved to %s", info_path)
 
         return True
 
@@ -1008,7 +1021,7 @@ class XBPMMainWindow(QMainWindow):
 
         info_path = os.path.join(
             os.path.dirname(prefix),
-            f"{os.path.basename(prefix)}_analysis_info.txt"
+            f"xbpm_analysis_info_{self.analyzer.app.prm.beamline}.txt"
         )
         with open(info_path, 'w') as fp:
             fp.write(text + "\n")
@@ -1017,95 +1030,90 @@ class XBPMMainWindow(QMainWindow):
 
     def _export_other_figures(self, prefix: str, params: dict,
                               results: dict) -> bool:
-        """Export analysis figures (blade map, sweeps, etc) and sweeps data.
-
-        Args:
-            prefix: Export filename prefix.
-            params: Parameter dictionary from UI.
-            results: Results dictionary from last analysis.
-
-        Returns:
-            True if any export occurred, False otherwise.
-        """
-        exported = False
-
-        # Blade map and blades-at-center figures
-        figure_exports = [
-            ('showblademap', 'blade_figure', 'blade_map.png'),
-            ('showbladescenter', 'blades_center_figure',
-             'blades_center.png'),
-            ('xbpmfrombpm', 'bpm_figure', 'bpm_positions.png'),
-        ]
-
-        for option_key, result_key, filename in figure_exports:
-            if params.get(option_key) and result_key in results:
-                fig = results.get(result_key)
-                if fig is not None:
-                    fig_path = os.path.join(
-                        os.path.dirname(prefix), filename
-                    )
-                    fig.savefig(fig_path, dpi=FIGDPI, bbox_inches='tight')
-                    logger.info("Figure saved to %s", fig_path)
-                    exported = True
-
-        # Central sweeps: export figure and data when available
+        """Export analysis figures (blade map, sweeps, etc) and sweeps data."""
+        exported = self._export_simple_figures(prefix, params, results)
         if params.get('centralsweep'):
-            if ('sweeps_figure' in results and
-                results['sweeps_figure'] is not None):
-                fig_path = os.path.join(
-                    os.path.dirname(prefix), 'central_sweeps.png'
-                )
-                results['sweeps_figure'].savefig(
-                    fig_path, dpi=FIGDPI, bbox_inches='tight'
-                )
-                logger.info("Figure saved to %s", fig_path)
-                exported = True
-
-            sweeps_data = results.get('sweeps_data')
-            if sweeps_data:
-                if len(sweeps_data) < 4:
-                    logger.warning("Sweeps data missing expected arrays")
-                    return exported
-                range_h, range_v, blades_h, blades_v = sweeps_data[:4]
-                try:
-                    # blades_h and blades_v are dicts keyed by blade labels
-                    h_arrays = [blades_h.get(k)
-                                for k in ("to", "ti", "bi", "bo")]
-                    v_arrays = [blades_v.get(k)
-                                for k in ("to", "ti", "bi", "bo")]
-
-                    if all(arr is not None for arr in h_arrays):
-                        h_out = os.path.join(
-                            os.path.dirname(prefix),
-                            'central_sweeps_horizontal.dat'
-                        )
-                        h_cols = np.column_stack([range_h, *h_arrays])
-                        np.savetxt(
-                            h_out, h_cols,
-                            header="range_h to ti bi bo",
-                            fmt="%.6f"
-                        )
-                        logger.info("Horizontal sweeps data saved to %s",
-                                    h_out)
-                        exported = True
-
-                    if all(arr is not None for arr in v_arrays):
-                        v_out = os.path.join(
-                            os.path.dirname(prefix),
-                            'central_sweeps_vertical.dat'
-                        )
-                        v_cols = np.column_stack([range_v, *v_arrays])
-                        np.savetxt(
-                            v_out, v_cols,
-                            header="range_v to ti bi bo",
-                            fmt="%.6f"
-                        )
-                        logger.info("Vertical sweeps data saved to %s", v_out)
-                        exported = True
-                except Exception:
-                    logger.exception("Failed to save central sweeps data")
-
+            exported |= self._export_central_sweeps(prefix, results)
         return exported
+
+    def _export_simple_figures(self, prefix: str, params: dict,
+                               results: dict) -> bool:
+        """Save blade-map, blades-at-center, and BPM figures."""
+        exported = False
+        beamline = self.analyzer.app.prm.beamline
+        figure_exports = [
+            ('showblademap', 'blade_figure',
+             f'xbpm_blademap_{beamline}.png'),
+            ('showbladescenter', 'blades_center_figure',
+             f'xbpm_blades_center_{beamline}.png'),
+            ('xbpmfrombpm', 'bpm_figure',
+             f'xbpm_bpm_positions_{beamline}.png'),
+        ]
+        for option_key, result_key, filename in figure_exports:
+            if not params.get(option_key):
+                continue
+            fig = results.get(result_key)
+            if fig is None:
+                continue
+            fig_path = os.path.join(os.path.dirname(prefix), filename)
+            fig.savefig(fig_path, dpi=FIGDPI, bbox_inches='tight')
+            logger.info("Figure saved to %s", fig_path)
+            exported = True
+        return exported
+
+    def _export_central_sweeps(self, prefix: str, results: dict) -> bool:
+        """Save central-sweeps figure and blade-current .dat files."""
+        exported = False
+        beamline = self.analyzer.app.prm.beamline
+        outdir = os.path.dirname(prefix)
+
+        fig = results.get('sweeps_figure')
+        if fig is not None:
+            fig_path = os.path.join(
+                outdir, f'xbpm_central_sweeps_{beamline}.png'
+            )
+            fig.savefig(fig_path, dpi=FIGDPI, bbox_inches='tight')
+            logger.info("Figure saved to %s", fig_path)
+            exported = True
+
+        sweeps_data = results.get('sweeps_data')
+        if not sweeps_data or len(sweeps_data) < 4:
+            if sweeps_data:
+                logger.warning("Sweeps data missing expected arrays")
+            return exported
+
+        range_h, range_v, blades_h, blades_v = sweeps_data[:4]
+        try:
+            exported |= self._save_sweep_dat(
+                outdir, f'xbpm_central_sweeps_horizontal_{beamline}.dat',
+                range_h, blades_h, "range_h"
+            )
+            exported |= self._save_sweep_dat(
+                outdir, f'xbpm_central_sweeps_vertical_{beamline}.dat',
+                range_v, blades_v, "range_v"
+            )
+        except Exception:
+            logger.exception("Failed to save central sweeps data")
+        return exported
+
+    @staticmethod
+    def _save_sweep_dat(outdir: str, filename: str, axis_range,
+                        blades, range_label: str) -> bool:
+        """Write a single sweep axis to a .dat file; return True if written."""
+        if not isinstance(blades, dict):
+            return False
+        arrays = [blades.get(k) for k in ("to", "ti", "bi", "bo")]
+        if not all(arr is not None for arr in arrays):
+            return False
+        path = os.path.join(outdir, filename)
+        np.savetxt(
+            path,
+            np.column_stack([axis_range, *arrays]),
+            header=f"{range_label} to ti bi bo",
+            fmt="%.6f",
+        )
+        logger.info("Sweeps data saved to %s", path)
+        return True
 
     @pyqtSlot(str, str)
     def _on_analysis_error(self, title: str, message: str):
@@ -1524,7 +1532,7 @@ class XBPMMainWindow(QMainWindow):
             val = coeffs.get(key)
             if val is not None:
                 try:
-                    line1.append(f"{key:>10} = {float(val):.4g}")
+                    line1.append(f"{key:>10} = {float(val):.6f}")
                 except Exception:
                     line1.append(f"{key:>10} = {val}")
 
@@ -1532,7 +1540,7 @@ class XBPMMainWindow(QMainWindow):
             val = coeffs.get(key)
             if val is not None:
                 try:
-                    line2.append(f"{key:>10} = {float(val):.4g}")
+                    line2.append(f"{key:>10} = {float(val):.6f}")
                 except Exception:
                     line2.append(f"{key:>10} = {val}")
 
