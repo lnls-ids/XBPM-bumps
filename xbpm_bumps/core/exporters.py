@@ -1359,6 +1359,7 @@ class Exporter:
 
         positions = results.get('positions', {})
         supmat = results.get('supmat')
+        stddevmat = results.get('stddevmat')
         supmat_standard = results.get('supmat_standard')
         central_sweeps = results.get('sweeps_data')
         bpm_stats = results.get('bpm_stats')
@@ -1374,7 +1375,7 @@ class Exporter:
         analysis = h5file.create_group(analysis_name)
         self._write_analysis_attributes(analysis, beamline, results)
         self._write_positions_group(analysis, positions, bpm_stats, results)
-        self._write_analysis_datasets(analysis, supmat,
+        self._write_analysis_datasets(analysis, supmat, stddevmat,
                                       supmat_standard, central_sweeps)
 
     def _write_analysis_attributes(self, analysis, beamline, results):
@@ -1418,9 +1419,9 @@ class Exporter:
                                        raw_full, scaled_full)
         self._attach_roi_bounds_attrs(apos, bpm_stats)
 
-    def _write_analysis_datasets(self, analysis, supmat,
+    def _write_analysis_datasets(self, analysis, supmat, stddevmat,
                                  supmat_standard, central_sweeps):
-        self._write_supmat_dataset(analysis, supmat, supmat_standard)
+        self._write_supmat_dataset(analysis, supmat, stddevmat, supmat_standard)
         self._write_sweeps_group(analysis, central_sweeps)
 
     def _write_full_positions(self, apos, raw_full, scaled_full) -> None:
@@ -1526,7 +1527,7 @@ class Exporter:
         # Standard dict format (old tests)
         self._write_positions(apos, positions)
 
-    def _write_supmat_dataset(self, analysis, supmat,
+    def _write_supmat_dataset(self, analysis, supmat, stddevmat,
                              supmat_standard=None) -> None:
         """Write suppression matrices to HDF5 under analysis/matrices.
 
@@ -1535,7 +1536,8 @@ class Exporter:
               matrices/
                 standard    (#1)
                 calculated  (#2)
-                optimized   (#3 - placeholder for now)
+                stddev      (#3)
+                optimized   (#4 - placeholder for now)
         """
         # Ensure matrices group exists
         matrices = analysis.create_group('matrices')
@@ -1576,7 +1578,19 @@ class Exporter:
                     "Failed to set calculated matrix description",
                     exc_info=True,
                 )
-
+        # Write standard deviation matrix (#3)
+        if stddevmat is not None:
+            stddev_arr = np.asarray(stddevmat)
+            ds_stddev = matrices.create_dataset('stddev', data=stddev_arr)
+            try:
+                ds_stddev.attrs['description'] = (
+                    self.ANALYSIS_DESCRIPTIONS['matrices/stddev']
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to set stddev matrix description",
+                    exc_info=True,
+                )
             # Optimized placeholder (#3)
             opt_ds = matrices.create_dataset('optimized', data=supmat_arr)
             try:

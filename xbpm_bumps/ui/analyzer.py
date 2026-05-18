@@ -493,6 +493,11 @@ class XBPMAnalyzer(QObject):
                        if isinstance(result_data, dict) else None)
         if supmat_calc is not None:
             results['supmat'] = supmat_calc
+        # Capture calculated standard deviation matrix from scaled calculation
+        stddevmat_calc = (result_data.get('stddevmat')
+                          if isinstance(result_data, dict) else None)
+        if stddevmat_calc is not None:
+            results['stddevmat'] = stddevmat_calc
         # Capture XBPM statistics
         xbpm_stats = (result_data.get('xbpm_stats')
                       if isinstance(result_data, dict) else None)

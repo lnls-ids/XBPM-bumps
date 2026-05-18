@@ -336,7 +336,7 @@ class XBPMProcessor:
         }
 
     def _compile_results(self, pair_result, cross_result,
-                         supmat, nosuppress,
+                         supmat, stddevmat, nosuppress,
                          pos_nom_h, pos_nom_v):
         """Compile and save final results from pairwise and cross-blade."""
         pair_visualizer = pair_result['visualizer']
@@ -388,6 +388,7 @@ class XBPMProcessor:
                 },
             },
             'supmat': supmat,
+            'stddevmat': stddevmat,
             'xbpm_stats': {
                 'pairwise': pair_result['stats'],
                 'cross': cross_result['stats'],
@@ -404,7 +405,7 @@ class XBPMProcessor:
         """
         # Parse and compute core data
         blades, _ = self.data_parse()
-        supmat = self.suppression_matrix(showmatrix=showmatrix,
+        supmat, stddevmat = self.suppression_matrix(showmatrix=showmatrix,
                                          nosuppress=nosuppress)
 
         # Extract ROI bounds once
@@ -432,7 +433,7 @@ class XBPMProcessor:
         )
 
         # Compile and return results
-        return self._compile_results(pair_result, cross_result, supmat,
+        return self._compile_results(pair_result, cross_result, supmat, stddevmat,
                                      nosuppress, pos_nom_h, pos_nom_v)
 
     @staticmethod
@@ -444,13 +445,16 @@ class XBPMProcessor:
 
         Returns:
             np.ndarray: 4x4 standard suppression matrix
+            np.ndarray: 4x4 zero matrix for standard deviation (no fit)
         """
-        return np.array([
+        supmat =  np.array([
             [1, -1, -1,  1],
             [1,  1,  1,  1],
             [1,  1, -1, -1],
             [1,  1,  1,  1],
         ], dtype=float)
+        stddevmat = np.zeros_like(supmat)  # No standard deviation for fixed matrix
+        return supmat, stddevmat
 
     def suppression_matrix(self, showmatrix=False, nosuppress=False):
         """Calculate the suppression matrix from blade behavior.
@@ -463,17 +467,19 @@ class XBPMProcessor:
             return self.standard_suppression_matrix()
 
         # Calculate from blade slopes for scaled calculations
-        pch = XBPMProcessor.central_line_fit(self.blades_h,
+        pch, covs_h = XBPMProcessor.central_line_fit(self.blades_h,
                                              self.range_h, 'h')
-        pcv = XBPMProcessor.central_line_fit(self.blades_v,
+        pcv, covs_v = XBPMProcessor.central_line_fit(self.blades_v,
                                              self.range_v, 'v')
 
         if len(self.range_h) > 1:
+            sdevh = np.sqrt(covs_h) * pch[0, 0] / (pch[:, 0]**2)
             pch = pch[0] / np.abs(pch)
         else:
             pch = np.ones(8).reshape(4, 2)
 
         if len(self.range_v) > 1:
+            sdevv = np.sqrt(covs_v) * pcv[0, 0] / (pcv[:, 0]**2)
             pcv = pcv[0] / np.abs(pcv)
         else:
             pcv = np.ones(8).reshape(4, 2)
@@ -485,16 +491,23 @@ class XBPMProcessor:
             [pch[0, 0],  pch[1, 0],  pch[2, 0],  pch[3, 0]],
         ])
 
+        stddevmat = np.array([
+            [sdevv[0], sdevv[1], sdevv[2], sdevv[3]],
+            [sdevv[0], sdevv[1], sdevv[2], sdevv[3]],
+            [sdevh[0], sdevh[1], sdevh[2], sdevh[3]],
+            [sdevh[0], sdevh[1], sdevh[2], sdevh[3]],
+        ])
+
         if showmatrix:
-            print("\n Suppression matrix:")
-            for lin in supmat:
-                for col in lin:
-                    print(f" {col:12.6f}", end='')
+            print("\n Suppression matrix with standard deviations:")
+            for ii, lin in enumerate(supmat):
+                for jj, col in enumerate(lin):
+                    print(f" {col:12.6f} (±{stddevmat[ii, jj]:10.6f})", end='')
                 print()
             print()
 
         # Exporter(self.prm).write_supmat(supmat)
-        return supmat
+        return supmat, stddevmat
 
     @staticmethod
     def central_line_fit(blades, range_vals, direction):
@@ -506,19 +519,21 @@ class XBPMProcessor:
             return np.array([[1, 0] for _ in range(4)])
 
         pc = list()
+        covs = list()
         for blade in blades.values():
             weight = 1. / blade[:, 1]
 
             if np.isinf(weight).any():
                 weight = None
 
-            pc.append(np.polyfit(range_vals, blade[:, 0], deg=1, w=weight))
+            coefs, cov = np.polyfit(range_vals, blade[:, 0], deg=1, w=weight, cov=True)
+            pc.append(coefs)
+            covs.append(cov[0, 0])
         pc = np.array(pc)
 
         if np.isinf(pc).any() or (pc == 0).any():
-            pc = np.array([[1, 0] for _ in range(4)])
-
-        return pc
+            pc = np.array([[1, 0] for _ in range(4)]) 
+        return pc, covs
 
     def beam_position_pair(self, supmat):
         """Calculate beam position from blades' currents (pairwise)."""
