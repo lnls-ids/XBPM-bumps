@@ -13,25 +13,29 @@ import matplotlib.pyplot as plt
 # Distance from source (its center) to XBPM at each beamline.
 # Obtained from comissioning reports.
 XBPMDISTS = {
-    "CAT":  15.740,
-    "CAT1": 15.740,
-    "CAT2": 19.590,
-    "CNB1": 15.740,
-    "CNB2": 19.590,
-    "MGN1": 10.237,
-    "MGN2": 16.167,
-    "MNC1": 15.740,
-    "MNC2": 19.590,
-    "SIM" : 1.0      # Simulation case.
+    "CAT"  : 15.740,
+    "CAT1" : 15.740,
+    "CAT2" : 19.590,
+    "CNB"  : 15.740,
+    "CNB1" : 15.740,
+    "CNB2" : 19.590,
+    "MGN1" : 10.237,
+    "MGN2" : 16.167,
+    "MNC1" : 15.740,
+    "MNC2" : 19.590,
+    "SIM"  : 1.0      # Simulation case.
 }
 
 
 def datafiles(beamline="<BEAMLINE>"):
     """Define file names to be read."""
     return [
-        [f"xbpm_positions_pair_raw_sort_{beamline}.dat", "Pair, Raw Calc."],
-        [f"xbpm_positions_pair_scaled_sort_{beamline}.dat", "Pair, Simple"],
-        [f"rand_positions_sort_{beamline}.dat", "Pair, Random Walk"]
+        [f"xbpm_positions_pair_raw_sort_{beamline}.dat",
+         "Pairwise, Raw"],
+        [f"xbpm_positions_pair_scaled_sort_{beamline}.dat",
+         "Pairwise, Suppression Matrix"],
+        [f"xbpm_positions_rand_sort_{beamline}.dat",
+         "Pairwise, Annealing matrix"]
     ]
 
 
@@ -40,7 +44,7 @@ DATAFILENAMES = [f"{df[0]}" for df in datafiles()]
 FIGDPI = 300  # DPI
 
 
-def plot_graph(data, stype, dist, grname, beamline):
+def plot_graph(data, stype, dist, grname, beamline, roi=2):
     """."""
     print(f"##### Type of analysis: {stype} ")
 
@@ -58,7 +62,7 @@ def plot_graph(data, stype, dist, grname, beamline):
         yc = data[:, 3] * dist
 
     midpoint = int(len(xn) / 2)
-    fr, to = midpoint - 2, midpoint + 3
+    fr, to = midpoint - roi, midpoint + roi + 1
     fig, (axall, axroi, axcolor) = plt.subplots(1, 3, figsize=(15, 4))
     axall.plot(xc.ravel(), yc.ravel(), 'bo', label='Calc')
     axall.plot(xn.ravel(), yn.ravel(), 'r+', label='Nom')
@@ -75,9 +79,9 @@ def plot_graph(data, stype, dist, grname, beamline):
         ycroi = yc[fr:to, fr:to]
 
     axroi.plot(xcroi.ravel(),
-            ycroi.ravel(), 'bo', label='Calc')
+               ycroi.ravel(), 'bo', label='Calc')
     axroi.plot(xnroi.ravel(),
-            ynroi.ravel(), 'r+', label='Nom')
+               ynroi.ravel(), 'r+', label='Nom')
 
     for ax, tt in ([axall, "All sites"], [axroi, "Close up"]):
         ax.set_xlabel(u'$x$ [$\\mu$m]')
@@ -117,17 +121,32 @@ def plot_graph(data, stype, dist, grname, beamline):
     # axhist.set_title('Histogram of Differences')
 
     # alldiff = np.sqrt(((xn - xc) ** 2 + (yn - yc) ** 2))
-    # Use pcolormesh for 2D data or scatter plot for 1D data
+    # Use pcolormesh for 2D data or narrow rectangle for 1D data
     if len(diff.shape) > 1:
         im = axcolor.pcolormesh(xnroi, ynroi, diff,
                                 shading='auto', cmap='viridis')
         axcolor.set_title('Color Map of Differences')
         plt.colorbar(im, ax=axcolor, label='Difference [$\\mu$m]')
+        axcolor.set_xlabel(u'$x$ [$\\mu$m]')
     else:
-        scatter = axcolor.scatter(xnroi, ynroi, c=diff, cmap='viridis', s=50)
-        axcolor.set_title('Scatter Plot of Differences')
-        plt.colorbar(scatter, ax=axcolor, label='Difference [$\\mu$m]')
-    axcolor.set_xlabel(u'$x$ [$\\mu$m]')
+        # 1D imshow: render as a thin vertical band of square cells
+        color_vals = np.ravel(diff).reshape(-1, 1)
+        extent = [0, 1, ynroi.min(), ynroi.max()]
+
+        # Make the single column visually wider
+        axcolor.set_box_aspect(10)
+        axcolor.set_anchor('C')
+        axcolor.set_xticks([])
+
+        im = axcolor.imshow(color_vals,
+                           cmap='viridis',
+                           extent=extent,
+                           aspect='auto',
+                           origin='lower')
+        axcolor.set_title('Difference Heat Map')
+        plt.colorbar(im, ax=axcolor, fraction=0.4, pad=0.3,
+                    label='Difference [$\\mu$m]')
+        axcolor.set_xlabel('')
     axcolor.set_ylabel(u'$y$ [$\\mu$m]')
     # plt.colorbar(axcolor.images[0], ax=axcolor, label='Difference [$\\mu$m]')
     plt.grid(which="minor")
@@ -177,14 +196,20 @@ def cmd_options(argv=None):
         help='Multiply positions in rad by XBPM-to-source distance.'
         )
 
+    parser.add_argument(
+        '-r', '--roi', type=int, required=False,
+        dest="roi", default=2,
+        help='ROI size - number of points from the center.'
+        )
+
     args = parser.parse_args(argv)
-    return args.beamline, args.multiply
+    return args.beamline, args.multiply, args.roi
 
 
 def main():
     """The main function."""
     # Define beamline.
-    beamline, multiply = cmd_options()   # "MNC1"
+    beamline, multiply, roi = cmd_options()   # "MNC1"
 
     if beamline not in XBPMDISTS.keys():
         print(f" ERROR: {beamline} beamline not recognized. Aborting.")
@@ -206,7 +231,7 @@ def main():
             continue
 
         dist = XBPMDISTS[beamline] if multiply and num == 2 else 1.0
-        plot_graph(data, meastype, dist, grname, beamline)
+        plot_graph(data, meastype, dist, grname, beamline, roi)
 
         print("#######################\n")
     plt.show()

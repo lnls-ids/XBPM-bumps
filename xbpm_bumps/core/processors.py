@@ -1,0 +1,1201 @@
+"""XBPM and BPM data processors."""
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+from .parameters  import Prm                     # noqa: E272
+from .visualizers import PositionVisualizer
+from .constants   import ROI_SIZE_V, ROI_SIZE_H, FIGDPI    # noqa: E272
+# from .exporters import Exporter
+
+
+class XBPMProcessor:
+    """Processes XBPM data to calculate beam positions.
+
+    This class handles all calculation logic for XBPM position analysis:
+    - Central sweep analysis to determine suppression matrices
+    - Pairwise and cross-blade position calculations
+    - Raw (no suppression) and scaled (with suppression) positions
+    - Blade behavior analysis at central positions
+
+    Attributes:
+        data (dict): Measurement data dictionary.
+        prm (Prm): Parameters dataclass.
+        range_h (np.ndarray): Horizontal sweep range.
+        range_v (np.ndarray): Vertical sweep range.
+        blades_h (dict): Blade measurements along horizontal center line.
+        blades_v (dict): Blade measurements along vertical center line.
+        suppression_matrix_val: Calculated suppression matrix.
+    """
+
+    def __init__(self, data: dict, prm: Prm):
+        """Initialize processor with data and parameters.
+
+        Args:
+            data: Measurement data dictionary.
+            prm: Parameters dataclass instance.
+        """
+        self.data     = data
+        self.prm      = prm
+        self.range_h  = None
+        self.range_v  = None
+        self.blades_h = None
+        self.blades_v = None
+        self.suppression_matrix_val = None
+        self.roi_h_size = prm.roisize[0] if prm.roisize else ROI_SIZE_H
+        self.roi_v_size = prm.roisize[1] if prm.roisize else ROI_SIZE_V
+
+    def analyze_central_sweeps(self, show: bool = False) -> tuple:
+        """Analyze blade behavior at central sweep positions.
+
+        Examines blade measurements along central horizontal and vertical
+        lines to understand blade response and calculate suppression factors.
+
+        Args:
+            show: Whether to display sweep plots.
+
+        Returns:
+            Tuple of (range_h, range_v, blades_h, blades_v, pos_h, pos_v)
+            where pos_h and pos_v are the calculated positions.
+        """
+        keys = np.array(list(self.data.keys()))
+        self.range_h = np.unique(keys[:, 0])
+        self.range_v = np.unique(keys[:, 1])
+
+        # Run through central horizontal line if data is not just a point
+        if len(self.range_h) > 1:
+            (pos_ch_v, fit_ch_v,
+             self.blades_h) = self._central_sweep_horizontal()
+        else:
+            pos_ch_v = np.zeros(len(self.range_h))
+            fit_ch_v, self.blades_h = None, None
+
+        # Run through central vertical line if data is not just a point
+        if len(self.range_v) > 1:
+            pos_cv_h, fit_cv_h, self.blades_v = self._central_sweep_vertical()
+        else:
+            pos_cv_h = np.zeros(len(self.range_v))
+            fit_cv_h, self.blades_v = None, None
+
+        if show:
+            self._central_sweeps_show(pos_ch_v, fit_ch_v, pos_cv_h, fit_cv_h)
+
+        return (self.range_h, self.range_v, self.blades_h, self.blades_v,
+                pos_ch_v, pos_cv_h, fit_ch_v, fit_cv_h)
+
+    def _central_sweep_horizontal(self) -> tuple:
+        """Extract blade measurements along horizontal center line."""
+        try:
+            to_ch = np.array([self.data[jj, 0][0] for jj in self.range_h])
+            ti_ch = np.array([self.data[jj, 0][1] for jj in self.range_h])
+            bi_ch = np.array([self.data[jj, 0][2] for jj in self.range_h])
+            bo_ch = np.array([self.data[jj, 0][3] for jj in self.range_h])
+            blades_h = {"to": to_ch, "ti": ti_ch, "bi": bi_ch, "bo": bo_ch}
+        except Exception as err:
+            print("\n WARNING: horizontal sweeping interrupted,"
+                  f" data grid may be incomplete: {err}")
+            blades = {bl: np.array([[1., 0] for _ in self.range_h])
+                      for bl in ["to", "ti", "bi", "bo"]}
+            return None, None, blades
+
+        pos_to_ti_v = (to_ch + ti_ch)
+        pos_bi_bo_v = (bo_ch + bi_ch)
+        pos_ch_v = (pos_to_ti_v - pos_bi_bo_v) / (pos_to_ti_v + pos_bi_bo_v)
+        fit_ch_v = np.polyfit(self.range_h, pos_ch_v, deg=1)
+
+        return pos_ch_v, fit_ch_v, blades_h
+
+    def _central_sweep_vertical(self) -> tuple:
+        """Extract blade measurements along vertical center line."""
+        try:
+            to_cv = np.array([self.data[0, jj][0] for jj in self.range_v])
+            ti_cv = np.array([self.data[0, jj][1] for jj in self.range_v])
+            bi_cv = np.array([self.data[0, jj][2] for jj in self.range_v])
+            bo_cv = np.array([self.data[0, jj][3] for jj in self.range_v])
+            blades_v = {"to": to_cv, "ti": ti_cv, "bi": bi_cv, "bo": bo_cv}
+        except Exception as err:
+            print("\n WARNING: vertical sweeping interrupted,"
+                  f" data grid may be incomplete: {err}")
+            blades = {bl: np.array([[1., 0] for _ in self.range_v])
+                      for bl in ["to", "ti", "bi", "bo"]}
+            return None, None, blades
+
+        pos_to_bo_h = (to_cv + bo_cv)
+        pos_ti_bi_h = (ti_cv + bi_cv)
+        pos_cv_h = (pos_to_bo_h - pos_ti_bi_h) / (pos_to_bo_h + pos_ti_bi_h)
+        fit_cv_h = np.polyfit(self.range_v, pos_cv_h, deg=1)
+
+        return pos_cv_h, fit_cv_h, blades_v
+
+    def _central_sweeps_show(self, pos_ch_v, fit_ch_v, pos_cv_h, fit_cv_h):
+        """Plot results from fittings on central sweeps."""
+        from .visualizers import SweepVisualizer
+
+        # Extract fit coefficients if available
+        fit_h = fit_ch_v[:, 0] if fit_ch_v is not None else None
+        fit_v = fit_cv_h[:, 0] if fit_cv_h is not None else None
+
+        # Extract position values
+        pos_h = pos_ch_v[:, 0] if pos_ch_v is not None else None
+        pos_v = pos_cv_h[:, 0] if pos_cv_h is not None else None
+
+        fig = SweepVisualizer.plot_from_arrays(
+            self.range_h, self.range_v,
+            pos_h, pos_v,
+            fit_h, fit_v,
+            xbpm_dist=self.prm.xbpmdist
+        )
+
+        if self.prm.outputfile:
+            outfile = f"xbpm_sweeps_{self.prm.beamline}.png"
+            fig.savefig(outfile, dpi=FIGDPI)
+            print(f" Figure of central sweeps saved to file {outfile}.\n")
+
+    def show_blades_at_center(self) -> None:
+        """Display blade measurements along central sweeping points."""
+        from .visualizers import BladeCurrentVisualizer
+
+        # Ensure we have sweep data
+        if self.range_h is None or self.range_v is None:
+            self.analyze_central_sweeps(show=False)
+
+        if self.blades_h is None and self.blades_v is None:
+            print("\n WARNING: could not retrieve blades' currents,"
+                  " maybe there is insufficient data."
+                  " Skipping central analysis.")
+            return
+
+        fig = BladeCurrentVisualizer.plot_from_dicts(
+            self.blades_h, self.blades_v,
+            self.range_h, self.range_v,
+            beamline=self.prm.beamline
+        )
+
+        if self.prm.outputfile:
+            outfile = f"central_sweep_{self.prm.beamline}.png"
+            fig.savefig(outfile, dpi=FIGDPI)
+            print("\n Figure of blades behaviour at central sweeps"
+                  f" saved to file {outfile}.\n")
+
+    def calculate_scaled_positions(self, pos_nom_h, pos_nom_v,
+                                   showmatrix: bool = True) -> list:
+        """Calculate positions with suppression matrix correction.
+
+        Applies suppression matrices to correct for blade gain variations
+        and scales results to physical distances.
+
+        Args:
+            showmatrix: If True, display blade behavior matrices.
+            pos_nom_h: Nominal position grid (horizontal).
+            pos_nom_v: Nominal position grid (vertical).
+
+        Returns:
+            List of [pairwise_positions_dict, cross_positions_dict].
+        """
+        return self.calculate_positions(
+            rtitle="scaled XBPM positions",
+            nosuppress=False,
+            pos_nom_h=pos_nom_h,
+            pos_nom_v=pos_nom_v,
+            showmatrix=showmatrix,
+        )
+
+    def calculate_raw_positions(self, pos_nom_h, pos_nom_v,
+                                showmatrix: bool = True) -> list:
+        """Calculate positions without suppression (raw).
+
+        Args:
+            showmatrix: If True, display blade behavior matrices.
+            pos_nom_h: Nominal position grid (horizontal).
+            pos_nom_v: Nominal position grid (vertical).
+        """
+        return self.calculate_positions(
+            rtitle="raw XBPM positions",
+            nosuppress=True,
+            pos_nom_h=pos_nom_h,
+            pos_nom_v=pos_nom_v,
+            showmatrix=showmatrix,
+        )
+
+    def calculate_positions(self, rtitle: str,
+                             nosuppress: bool,
+                             pos_nom_h, pos_nom_v,
+                             showmatrix: bool = True) -> list:
+        """Orchestrate XBPM position calculations and visualization.
+
+        Ensures central sweeps are analyzed, then delegates to
+        `_xbpm_position_calc` to compute positions and plot results.
+
+        Args:
+            rtitle: Result title for visualization.
+            nosuppress: If True, skip suppression matrix (raw mode).
+            showmatrix: If True, display blade behavior matrices.
+            pos_nom_h: Nominal position grid (horizontal).
+            pos_nom_v: Nominal position grid (vertical).
+        """
+        # Ensure sweep data is available
+        if (self.range_h is None or self.range_v is None or
+                self.blades_h is None or self.blades_v is None):
+            self.analyze_central_sweeps(show=False)
+
+        return self._xbpm_position_calc(
+            rtitle=rtitle,
+            nosuppress=nosuppress,
+            showmatrix=showmatrix,
+            pos_nom_h=pos_nom_h,
+            pos_nom_v=pos_nom_v,
+        )
+
+    def _extract_roi_bounds(self, pos_nom_h, pos_nom_v):
+        """Calculate ROI (Region of Interest) slice boundaries.
+
+        Returns:
+            Tuple (frh, uph, frv, upv) - row/column slice indices.
+        """
+        nh = pos_nom_h.shape[1]
+        nv = pos_nom_v.shape[0]
+        roi_h = min(self.roi_h_size, nh)
+        roi_v = min(self.roi_v_size, nv)
+        frh = max(0, int((nh - roi_h) / 2))
+        uph = min(nh, frh + roi_h)
+        frv = max(0, int((nv - roi_v) / 2))
+        upv = min(nv, frv + roi_v)
+        return frh, uph, frv, upv
+
+    def _extract_roi_slice(self, array, frh, uph, frv, upv):
+        """Extract ROI slice from array, handling 1D/2D cases."""
+        if array.shape[0] == 1:
+            return array[0, frv:upv]
+        elif array.shape[1] == 1:
+            return array[frv:upv, 0]
+        else:
+            return array[frv:upv, frh:uph]
+
+    def _process_position_type(self, calc_type,  # noqa: D417
+                               pos_full_h, pos_full_v,
+                               pos_nom_h, pos_nom_v, pos_nom_h_roi,
+                               pos_nom_v_roi, frh, uph, frv, upv, rtitle):
+        """Process a single position type (pairwise or cross-blade).
+
+        Args:
+            calc_type: 'pairwise' or 'cross'
+            pos_full_h/v: Full position array (measured)
+            pos_nom_h/v: Nominal position array (reference)
+            pos_nom_h/v_roi: ROI slice of nominal positions
+            frh, uph, frv, upv: ROI boundaries
+            rtitle: Result title for visualization
+
+        Returns:
+            Dict with scaled positions, scales, stats, visualizer.
+        """
+        # Extract ROI from measured positions
+        pos_roi_h = self._extract_roi_slice(pos_full_h, frh, uph, frv, upv)
+        pos_roi_v = self._extract_roi_slice(pos_full_v, frh, uph, frv, upv)
+
+        # Perform scaling fit
+        label = "Pairwise" if calc_type == "pairwise" else "Cross"
+        (kx, deltax, ky, deltay) = XBPMProcessor.scaling_fit(
+            pos_roi_h, pos_roi_v,
+            pos_nom_h_roi, pos_nom_v_roi, label
+        )
+
+        # Scale full positions
+        pos_full_h_scaled = kx * pos_full_h + deltax
+        pos_full_v_scaled = ky * pos_full_v + deltay
+        pos_roi_h_scaled = kx * pos_roi_h + deltax
+        pos_roi_v_scaled = ky * pos_roi_v + deltay
+
+        # Compute statistics
+        diffx2 = (pos_roi_h_scaled - pos_nom_h_roi) ** 2
+        diffy2 = (pos_roi_v_scaled - pos_nom_v_roi) ** 2
+        diffroi = np.sqrt(diffx2 + diffy2)
+        stats = self._calculate_roi_stats(diffx2, diffy2)
+
+        # Visualize
+        visualizer = PositionVisualizer(self.prm, f"{label} {rtitle}")
+        visualizer.show_position_results(
+            pos_nom_h, pos_nom_v,
+            pos_full_h_scaled, pos_full_v_scaled,
+            pos_roi_h_scaled, pos_roi_v_scaled,
+            pos_nom_h_roi, pos_nom_v_roi,
+            diffroi
+        )
+
+        return {
+            'h_scaled': pos_full_h_scaled,
+            'v_scaled': pos_full_v_scaled,
+            'h_roi_scaled': pos_roi_h_scaled,
+            'v_roi_scaled': pos_roi_v_scaled,
+            'kx': kx,
+            'ky': ky,
+            'dx': deltax,
+            'dy': deltay,
+            'stats': stats,
+            'visualizer': visualizer,
+        }
+
+    def _compile_results(self, pair_result, cross_result,
+                         supmat, nosuppress,
+                         pos_nom_h, pos_nom_v):
+        """Compile and save final results from pairwise and cross-blade."""
+        pair_visualizer = pair_result['visualizer']
+        cross_visualizer = cross_result['visualizer']
+
+        # Save figures if requested
+        if self.prm.outputfile:
+            outdir = '.'
+            sup = "raw" if nosuppress else "scaled"
+            bl = self.prm.beamline
+
+            outfile_p = os.path.join(outdir, f"xbpm_pair_pos_{sup}_{bl}.png")
+            pair_visualizer.save_figure(outfile_p)
+
+            outfile_c = os.path.join(outdir, f"xbpm_cross_pos_{sup}_{bl}.png")
+            cross_visualizer.save_figure(outfile_c)
+
+        # Build position dictionaries for export
+        scaled_pos_pair = dict()
+        scaled_pos_cross = dict()
+        for ii, lin in enumerate(pos_nom_h):
+            for jj, xx in enumerate(lin):
+                yy = pos_nom_v[ii, jj]
+                scaled_pos_pair[xx, yy] = [
+                    pair_result['h_scaled'][ii, jj],
+                    pair_result['v_scaled'][ii, jj]
+                ]
+                scaled_pos_cross[xx, yy] = [
+                    cross_result['h_scaled'][ii, jj],
+                    cross_result['v_scaled'][ii, jj]
+                ]
+
+        return {
+            'positions': [scaled_pos_pair, scaled_pos_cross],
+            'pairwise_figure': pair_visualizer.fig,
+            'cross_figure': cross_visualizer.fig,
+            'scales': {
+                'pair': {
+                    'kx': pair_result['kx'],
+                    'ky': pair_result['ky'],
+                    'dx': pair_result['dx'],
+                    'dy': pair_result['dy'],
+                },
+                'cross': {
+                    'kx': cross_result['kx'],
+                    'ky': cross_result['ky'],
+                    'dx': cross_result['dx'],
+                    'dy': cross_result['dy'],
+                },
+            },
+            'supmat': supmat,
+            'xbpm_stats': {
+                'pairwise': pair_result['stats'],
+                'cross': cross_result['stats'],
+            },
+        }
+
+    def _xbpm_position_calc(self, rtitle: str, nosuppress: bool,
+                            showmatrix: bool,
+                            pos_nom_h, pos_nom_v) -> dict:
+        """Orchestrate position calculation for pairwise and cross-blade.
+
+        Delegates to helpers for reduced complexity while maintaining
+        full analysis pipeline.
+        """
+        # Parse and compute core data
+        blades, _ = self.data_parse()
+        supmat = self.suppression_matrix(showmatrix=showmatrix,
+                                         nosuppress=nosuppress)
+
+        # Extract ROI bounds once
+        frh, uph, frv, upv = self._extract_roi_bounds(pos_nom_h, pos_nom_v)
+
+        # Extract nominal ROI slices
+        pos_nom_h_roi = self._extract_roi_slice(pos_nom_h, frh, uph, frv, upv)
+        pos_nom_v_roi = self._extract_roi_slice(pos_nom_v, frh, uph, frv, upv)
+
+        # Process pairwise positions
+        pos_pair = self.beam_position_pair(supmat)
+        (_, _, pos_pair_h, pos_pair_v) = self.position_dict_parse(pos_pair)
+        pair_result = self._process_position_type(
+            'pairwise', pos_pair_h, pos_pair_v,
+            pos_nom_h, pos_nom_v, pos_nom_h_roi, pos_nom_v_roi,
+            frh, uph, frv, upv, rtitle
+        )
+
+        # Process cross-blade positions
+        pos_cr_h, pos_cr_v = XBPMProcessor.beam_position_cross(blades)
+        cross_result = self._process_position_type(
+            'cross', pos_cr_h, pos_cr_v,
+            pos_nom_h, pos_nom_v, pos_nom_h_roi, pos_nom_v_roi,
+            frh, uph, frv, upv, rtitle
+        )
+
+        # Compile and return results
+        return self._compile_results(pair_result, cross_result, supmat,
+                                     nosuppress, pos_nom_h, pos_nom_v)
+
+    @staticmethod
+    def standard_suppression_matrix():
+        """Return the standard suppression matrix with 1/-1 pattern.
+
+        This is the fixed pattern used for raw position calculations,
+        independent of blade behavior or data fitting.
+
+        Returns:
+            np.ndarray: 4x4 standard suppression matrix
+        """
+        return np.array([
+            [1, -1, -1,  1],
+            [1,  1,  1,  1],
+            [1,  1, -1, -1],
+            [1,  1,  1,  1],
+        ], dtype=float)
+
+    def suppression_matrix(self, showmatrix=False, nosuppress=False):
+        """Calculate the suppression matrix from blade behavior.
+
+        When nosuppress=True (raw), returns the standard 1/-1 matrix.
+        When nosuppress=False (scaled), calculates from fitted slopes.
+        """
+        if nosuppress:
+            # Return standard matrix for raw calculations
+            return self.standard_suppression_matrix()
+
+        # Calculate from blade slopes for scaled calculations
+        pch = XBPMProcessor.central_line_fit(self.blades_h,
+                                             self.range_h, 'h')
+        pcv = XBPMProcessor.central_line_fit(self.blades_v,
+                                             self.range_v, 'v')
+
+        if len(self.range_h) > 1:
+            pch = pch[0] / np.abs(pch)
+        else:
+            pch = np.ones(8).reshape(4, 2)
+
+        if len(self.range_v) > 1:
+            pcv = pcv[0] / np.abs(pcv)
+        else:
+            pcv = np.ones(8).reshape(4, 2)
+
+        supmat = np.array([
+            [pcv[0, 0], -pcv[1, 0], -pcv[2, 0],  pcv[3, 0]],
+            [pcv[0, 0],  pcv[1, 0],  pcv[2, 0],  pcv[3, 0]],
+            [pch[0, 0],  pch[1, 0], -pch[2, 0], -pch[3, 0]],
+            [pch[0, 0],  pch[1, 0],  pch[2, 0],  pch[3, 0]],
+        ])
+
+        if showmatrix:
+            print("\n Suppression matrix:")
+            for lin in supmat:
+                for col in lin:
+                    print(f" {col:12.6f}", end='')
+                print()
+            print()
+
+        # Exporter(self.prm).write_supmat(supmat)
+        return supmat
+
+    @staticmethod
+    def central_line_fit(blades, range_vals, direction):
+        """Linear fittings to each blade's data through central line."""
+        if blades is None:
+            dr = 'horizontal' if direction == 'h' else 'vertical'
+            print(f"\n WARNING: (central_line_fit) {dr} blades' values"
+                  " not defined. Seetting fitting values to [1, 0].")
+            return np.array([[1, 0] for _ in range(4)])
+
+        pc = list()
+        for blade in blades.values():
+            weight = 1. / blade[:, 1]
+
+            if np.isinf(weight).any():
+                weight = None
+
+            pc.append(np.polyfit(range_vals, blade[:, 0], deg=1, w=weight))
+        pc = np.array(pc)
+
+        if np.isinf(pc).any() or (pc == 0).any():
+            pc = np.array([[1, 0] for _ in range(4)])
+
+        return pc
+
+    def beam_position_pair(self, supmat):
+        """Calculate beam position from blades' currents (pairwise)."""
+        positions = dict()
+        for pos, bld in self.data.items():
+            dsps = supmat @ bld[:, 0]
+            positions[pos] = np.array([dsps[0] / dsps[1], dsps[2] / dsps[3]])
+        return positions
+
+    def position_dict_parse(self, data):
+        """Parse XBPM position dict into structured arrays."""
+        gridlist = np.array(list(data.keys()))
+
+        grid_lin = np.unique(gridlist[:, 1])
+        grid_col = np.unique(gridlist[:, 0])
+
+        gsh_lin = len(grid_lin)
+        gsh_col = len(grid_col)
+
+        xbpm_nom_h  = np.zeros((gsh_lin, gsh_col))
+        xbpm_nom_v  = np.zeros((gsh_lin, gsh_col))
+        xbpm_meas_h = np.zeros((gsh_lin, gsh_col))
+        xbpm_meas_v = np.zeros((gsh_lin, gsh_col))
+
+        for ii, y in enumerate(grid_lin):
+            for jj, x in enumerate(grid_col):
+                # key = (x, y) = (col, lin)
+                key = (x, y)
+                if key not in data.keys():
+                    print(f"\n WARNING: position {key} not found in data,"
+                        " Skipping.")
+                    continue
+
+                try:
+                    xbpm_nom_h[ii, jj]  = x
+                    xbpm_nom_v[ii, jj]  = y
+                    xbpm_meas_h[ii, jj] = data[key][0]
+                    xbpm_meas_v[ii, jj] = data[key][1]
+                except Exception as err:
+                    print(f"\n WARNING: failed when parsing positions"
+                          f" dictionary:\n{err}\n"
+                          f" lin, col = {y}, {x}, key = {key}")
+                    continue
+
+        return (xbpm_nom_h, xbpm_nom_v, xbpm_meas_h, xbpm_meas_v)
+
+    @staticmethod
+    def beam_position_cross(blades):
+        """Calculate beam position from blades' currents (cross-blade)."""
+        to, ti, bi, bo = blades
+        v1 = (to - bi) / (to + bi)
+        v2 = (ti - bo) / (ti + bo)
+        hpos = (v1 - v2)
+        vpos = (v1 + v2)
+        return [hpos, vpos]
+
+    @staticmethod
+    def scaling_fit(pos_h, pos_v, nom_h, nom_v, calctype=""):
+        """Calculate scaling coefficients from fitted positions."""
+        print(f"\n#### {calctype} blades:")
+
+        hfinitemask = np.isfinite(pos_h)
+        ph_cln = pos_h[hfinitemask]
+        nh_cln = nom_h[hfinitemask]
+
+        vfinitemask = np.isfinite(pos_v)
+        pv_cln = pos_v[vfinitemask]
+        nv_cln = nom_v[vfinitemask]
+
+        kx, deltax = 1., 0.
+        if len(set(nom_h.ravel())) > 1:
+            try:
+                kx, deltax = np.polyfit(ph_cln, nh_cln, deg=1)
+            except Exception as err:
+                print(f"\n WARNING: when calculating horizontal scaling"
+                      f" coefficients:\n{err}\n Setting to default values.")
+
+        ky, deltay = 1., 0.
+        if len(set(nom_v.ravel())) > 1:
+            try:
+                ky, deltay = np.polyfit(pv_cln, nv_cln, deg=1)
+            except Exception as err:
+                print(f"\n WARNING: when calculating vertical scaling"
+                      f" coefficients:\n{err}\n Setting to default values.")
+
+        print(f"kx = {kx:12.4f},   deltax = {deltax:12.4f}")
+        print(f"ky = {ky:12.4f},   deltay = {deltay:12.4f}\n")
+        return kx, deltax, ky, deltay
+
+    @staticmethod
+    def _estimate_spreaded_std_dev(pos_h_scaled, pos_v_scaled,
+                                   rawblades):
+        """Estimate standard deviations in ROI between scaled and nominal.
+
+        Args:
+            pos_h_scaled: Scaled horizontal positions array.
+            pos_v_scaled: Scaled vertical positions array.
+            rawblades: Dictionary of raw blade measurements in ROI.
+
+        Returns:
+            diffx2: Squared horizontal differences in ROI.
+            diffy2: Squared vertical differences in ROI.
+        """
+        # Calculate squared differences
+        # for key, val in rawblades.items():
+        #     to = val['to']
+        #     ti = val['ti']
+        #     bo = val['bo']
+        #     bi = val['bi']
+
+        # diffx2 = (pos_h_scaled - pos_nom_h) ** 2
+        # diffy2 = (pos_v_scaled - pos_nom_v) ** 2
+        # return diffx2, diffy2
+        pass
+
+    @staticmethod
+    def _calculate_roi_stats(diffx2, diffy2):
+        """Calculate RMS statistics from squared position differences in ROI.
+
+        Args:
+            diffx2: Squared horizontal differences array.
+            diffy2: Squared vertical differences array.
+
+        Returns:
+            dict: Statistics with sigma_h, sigma_v, sigma_total,
+                  diff_max_h, diff_min_h, diff_max_v, diff_min_v.
+        """
+        n = diffx2.size
+        sigma_h = np.sqrt(np.sum(diffx2) / n)
+        sigma_v = np.sqrt(np.sum(diffy2) / n)
+        sigma_total = np.sqrt((np.sum(diffx2) + np.sum(diffy2)) / n)
+
+        diff_max_h = np.sqrt(np.max(diffx2))
+        diff_min_h = np.sqrt(np.min(diffx2))
+        diff_max_v = np.sqrt(np.max(diffy2))
+        diff_min_v = np.sqrt(np.min(diffy2))
+
+        return {
+            'sigma_h'     : sigma_h,
+            'sigma_v'     : sigma_v,
+            'sigma_total' : sigma_total,
+            'diff_max_h'  : diff_max_h,
+            'diff_min_h'  : diff_min_h,
+            'diff_max_v'  : diff_max_v,
+            'diff_min_v'  : diff_min_v,
+        }
+
+    def data_parse(self):
+        """Extract each blade's data from whole data dict into arrays."""
+        dk = np.array(list(self.data.keys()))
+
+        try:
+            nh = np.unique(dk[:, 0])
+            nv = np.unique(dk[:, 1])
+        except:  # noqa: E722
+            # Some data are 1-D only
+            nh = np.zeros(len(dk))
+            nv = np.unique(dk)
+
+        ngrid = (nv.shape[0], nh.shape[0])
+        to,  ti  = np.zeros(ngrid), np.zeros(ngrid)
+        bo,  bi  = np.zeros(ngrid), np.zeros(ngrid)
+        sto, sti = np.zeros(ngrid), np.zeros(ngrid)
+        sbo, sbi = np.zeros(ngrid), np.zeros(ngrid)
+
+        for ii, nl in enumerate(nv):
+            for jj, nc in enumerate(nh):
+                key = (nc, nl)
+                ilin = ngrid[0] - ii - 1
+                icol = jj
+
+                if key not in self.data.keys():
+                    break
+
+                try:
+                    to[ilin, icol]  = self.data[key][0, 0]
+                    ti[ilin, icol]  = self.data[key][1, 0]
+                    bi[ilin, icol]  = self.data[key][2, 0]
+                    bo[ilin, icol]  = self.data[key][3, 0]
+
+                    sto[ilin, icol] = self.data[key][0, 1]
+                    sti[ilin, icol] = self.data[key][1, 1]
+                    sbi[ilin, icol] = self.data[key][2, 1]
+                    sbo[ilin, icol] = self.data[key][3, 1]
+                except Exception as err:
+                    print(f"\n WARNING, when trying to parse blade data: {err}"
+                          f"\n nominal position: {err},"
+                          f" array index: {ilin}, {icol}"
+                          "\n Maybe data grid is incomplete?")
+
+        return [to, ti, bi, bo], [sto, sti, sbi, sbo]
+
+
+class BPMProcessor:
+    """Processes BPM-only data to estimate XBPM positions.
+
+    Encapsulates the legacy BPM calculation flow so orchestration can
+    call a single entry point instead of standalone functions.
+    """
+
+    def __init__(self, rawdata, prm: Prm):
+        """Store raw BPM/XBPM dataset and parameters for later processing."""
+        self.rawdata = rawdata
+        self.prm     = prm
+
+        self.roi_h_size = prm.roisize[0] if prm.roisize else ROI_SIZE_H
+        self.roi_v_size = prm.roisize[1] if prm.roisize else ROI_SIZE_V
+
+    def calculate_positions(self):
+        """Calculate and plot XBPM positions derived from BPM data.
+
+        Returns:
+            Array of [x, y] coordinates or None if calculation fails.
+        """
+        sector_idx = self._sector_index()
+        tangents = self._tangents_calc(sector_idx)
+
+        print("\n# Distance between BPMs            ="
+              f" {self.prm.bpmdist:8.4f}  m")
+        print("# Distance between source and XBPM ="
+              f" {self.prm.xbpmdist:8.4f} m\n")
+
+        # Calculate positions at XBPM from BPM tangents and distances.
+        self.xbpm_pos = self._positions_from_tangents(
+            tangents, self.prm.xbpmdist
+            )
+
+        # Assemble position data into structured grid arrays.
+        self._position_grid_assemble()
+
+        # Estimate standard deviations.
+        self.last_stats, self.bpm_roi_diffs = self._std_dev_estimate(
+            self.xnom, self.ynom, self.xpos, self.ypos
+            )
+
+        # Extract ROI data for closeup view
+        (xnom_roi, ynom_roi,
+         xpos_roi, ypos_roi) = self._extract_roi_positions()
+
+        # Initialize figure with 1x3 subplots:
+        # full grid, roi closeup, differences
+        is_1d = (self.bpm_roi_diffs.ndim == 1 or
+                 (self.bpm_roi_diffs.ndim == 2 and
+                  min(self.bpm_roi_diffs.shape) == 1))
+        gridspec = {'width_ratios': [1, 1, 0.1]} if is_1d else None
+        self.fig, (ax_all, ax_close, ax_color) = plt.subplots(
+            1, 3, figsize=(18, 6), constrained_layout=True,
+            gridspec_kw=gridspec
+        )
+
+        # Apply layout padding similar to PositionVisualizer for consistency
+        try:
+            engine = self.fig.get_layout_engine()
+            if engine is not None and hasattr(engine, "set"):
+                engine.set(
+                    w_pad=0.02,   # space figure edge / axes, horizontal
+                    h_pad=0.0,    # space figure edge / axes, vertical
+                    wspace=0.02,  # space between axes, horizontal
+                    hspace=0.0,   # space between axes, vertical
+                )
+        except Exception:  # noqa: S110
+            pass  # Ignore if layout engine unavailable
+
+        # Plot full grid
+        self._plot_position_scatter(
+            ax_all, self.xnom, self.ynom, self.xpos, self.ypos,
+            f"BPM positions @ {self.prm.beamline}"
+        )
+
+        # Plot ROI closeup
+        self._plot_position_scatter(
+            ax_close, xnom_roi, ynom_roi, xpos_roi, ypos_roi,
+            f"BPM positions @ {self.prm.beamline} closeup"
+        )
+
+        # Plot differences heatmap with extent mapping
+        self._plot_roi_differences(ax_color, xnom_roi, ynom_roi)
+
+        if self.prm.outputfile:
+            outfile = f"bpm_positions_{self.prm.beamline}.png"
+            self.fig.savefig(outfile, dpi=FIGDPI)
+            print(" Figure of positions calculated by BPM measurements "
+                  f"saved to file {outfile}.\n")
+
+        return self._compile_measurement_results()
+
+    def _extract_roi_positions(self):
+        """Extract ROI positions from full grid for closeup view.
+
+        Returns:
+            Tuple (xnom_roi, ynom_roi, xpos_roi, ypos_roi) of ROI arrays.
+        """
+        xnom_cut, ynom_cut = self._roi_cut(self.xnom, self.ynom)
+        xpos_cut, ypos_cut = self._roi_cut(self.xpos, self.ypos)
+        return xnom_cut, ynom_cut, xpos_cut, ypos_cut
+
+    def _compile_measurement_results(self):
+        """Compile measured and nominal coordinates into return format.
+
+        Returns:
+            Tuple (measured, nominal) where each is a 2-column array or None.
+        """
+        measured = (np.column_stack((self.xpos, self.ypos))
+                    if self.xpos.size else None)
+        nominal = (np.column_stack((self.xnom, self.ynom))
+                   if self.xnom.size else None)
+        return measured, nominal
+
+    def _plot_roi_differences(self, axdiff, pos_nom_h, pos_nom_v):
+        """Plot ROI differences as scatter (1D) or heatmap (2D).
+
+        Args:
+            axdiff: Matplotlib axis for ROI differences visualization.
+            pos_nom_h: Nominal horizontal positions for extent mapping.
+            pos_nom_v: Nominal vertical positions for extent mapping.
+        """
+        if self.bpm_roi_diffs is None:
+            return
+
+        roi_diffs = self.bpm_roi_diffs
+
+        # Treat as 1-D if truly 1-D (shape = (n,)) or effectively 1-D (one
+        # dimension is 1, like (1, n) or (n, 1)), or if one nominal axis is
+        # constant (single-line sweep).
+        h_const = np.nanmax(pos_nom_h) == np.nanmin(pos_nom_h)
+        v_const = np.nanmax(pos_nom_v) == np.nanmin(pos_nom_v)
+        is_1d = (roi_diffs.ndim == 1 or
+             (roi_diffs.ndim == 2 and min(roi_diffs.shape) == 1) or
+             h_const or v_const)
+
+        if is_1d:
+            # 1D imshow: render as a thin band of square cells
+            h_min = np.nanmin(pos_nom_h)
+            h_max = np.nanmax(pos_nom_h)
+
+            color_vals = np.ravel(roi_diffs).reshape(-1, 1)
+            extent = [0, 1, pos_nom_v.min(), pos_nom_v.max()]
+            aspect = 'auto'
+
+            # Make the single column visually wider
+            axdiff.set_box_aspect(10)
+            axdiff.set_anchor('C')
+            axdiff.set_xticks([])
+
+            im = axdiff.imshow(color_vals,
+                               cmap='viridis',
+                               extent=extent,
+                               aspect=aspect,
+                               origin='lower')
+            cbar = self.fig.colorbar(im, ax=axdiff,
+                                      fraction=0.4, pad=0.3)
+            cbar.set_label(u"Difference [$\\mu$m]")
+
+            axdiff.set_xlabel("")
+            axdiff.set_ylabel(u"$y$ [$\\mu$m]")
+            axdiff.set_title("Differences at ROI")
+            axdiff.grid(False)
+        else:
+            # 2D heatmap with extent mapping
+            h_min = np.nanmin(pos_nom_h)
+            h_max = np.nanmax(pos_nom_h)
+            v_min = np.nanmin(pos_nom_v)
+            v_max = np.nanmax(pos_nom_v)
+            extent = [h_min, h_max, v_min, v_max]
+
+            # Calculate aspect ratio to maintain proper physical proportions.
+            # Account for both physical extents and array shape to avoid
+            # distortion when physical x and y ranges differ significantly.
+            n_v, n_h = roi_diffs.shape
+            h_extent = h_max - h_min
+            v_extent = v_max - v_min
+            # aspect = (physical_y_per_pixel) / (physical_x_per_pixel)
+            aspect = ((v_extent / n_v) / (h_extent / n_h)
+                      if (h_extent > 0 and v_extent > 0) else 1)
+
+            # Use imshow for filled heatmap visualization
+            im = axdiff.imshow(
+                roi_diffs, cmap='viridis', extent=extent,
+                aspect=aspect, origin='lower'
+            )
+            cbar = self.fig.colorbar(im, ax=axdiff,
+                                     fraction=0.046, pad=0.04)
+            cbar.set_label(u"Difference [$\\mu$m]")
+
+            axdiff.set_xlabel(u"$x$ [$\\mu$m]")  # noqa: W605
+            axdiff.set_ylabel(u"$y$ [$\\mu$m]")
+            axdiff.set_title("Differences at ROI")
+            axdiff.grid(False)
+
+    def _plot_position_scatter(self, ax, pos_nom_h, pos_nom_v,
+                               pos_h, pos_v, title):
+        """Plot measured vs nominal positions scatter plot.
+
+        Args:
+            ax: Matplotlib axis for plotting.
+            pos_nom_h: Nominal horizontal positions.
+            pos_nom_v: Nominal vertical positions.
+            pos_h: Calculated horizontal positions.
+            pos_v: Calculated vertical positions.
+            title: Plot title.
+        """
+        ax.set_title(title, pad=2)
+        pos = ax.plot(pos_h, pos_v, 'bo')
+        nom = ax.plot(pos_nom_h, pos_nom_v, 'r+')
+        ax.set_xlabel(u"$x$ [$\\mu$m]")  # noqa: W605
+        ax.set_ylabel(u"$y$ [$\\mu$m]")
+
+        # Compute common limits to ensure equal aspect ratio with margin
+        all_h = np.concatenate([np.ravel(pos_h), np.ravel(pos_nom_h)])
+        all_v = np.concatenate([np.ravel(pos_v), np.ravel(pos_nom_v)])
+
+        h_min, h_max = np.min(all_h), np.max(all_h)
+        v_min, v_max = np.min(all_v), np.max(all_v)
+
+        h_range = h_max - h_min if h_max > h_min else 1
+        v_range = v_max - v_min if v_max > v_min else 1
+
+        # Add 15% margin (30% total: 15% on each side)
+        total_range = max(h_range, v_range) * 1.3
+
+        # Center the limits and expand to match max range
+        h_center = (h_min + h_max) / 2
+        v_center = (v_min + v_max) / 2
+
+        ax.set_xlim(h_center - total_range / 2, h_center + total_range / 2)
+        ax.set_ylim(v_center - total_range / 2, v_center + total_range / 2)
+
+        # Force 1:1 aspect ratio after setting limits
+        ax.set_aspect('equal', adjustable='box')
+
+        handles, labels = [], []
+        if len(nom) > 0:
+            handles.append(nom[0])
+            labels.append("Nominal")
+        if len(pos) > 0:
+            handles.append(pos[0])
+            labels.append("Calculated")
+        if handles:
+            ax.legend(handles, labels)
+        ax.grid()
+
+    def _position_grid_assemble(self):
+        """Assemble position data into structured grid numpy arrays."""
+        # Get unique sorted indices for x and y from the position keys.
+        xidx = sorted(set([key[0] for key in self.xbpm_pos.keys()]))
+        yidx = sorted(set([key[1] for key in self.xbpm_pos.keys()]))
+        nx, ny = len(xidx), len(yidx)
+
+        # Initialize numpy arrays for nominal and measured positions.
+        self.xnom = np.zeros((ny, nx))
+        self.ynom = np.zeros((ny, nx))
+        self.xpos = np.zeros((ny, nx))
+        self.ypos = np.zeros((ny, nx))
+
+        # Fill the arrays.
+        for iy in range(ny):
+            for ix in range(nx):
+                key = (xidx[ix], yidx[iy])
+                self.xnom[iy, ix] = key[0]
+                self.ynom[iy, ix] = key[1]
+                self.xpos[iy, ix] = self.xbpm_pos[key][0]
+                self.ypos[iy, ix] = self.xbpm_pos[key][1]
+
+    def _roi_cut(self, xnom, ynom):
+        """Return ROI slices of nominal coordinate grids."""
+        nv, nh = xnom.shape[0], xnom.shape[1]
+        roi_h = min(self.roi_h_size, nh)
+        roi_v = min(self.roi_v_size, nv)
+        fromh = max(0, int((nh - roi_h) / 2))
+        uptoh = min(nh, fromh + roi_h)
+        fromv = max(0, int((nv - roi_v) / 2))
+        uptov = min(nv, fromv + roi_v)
+
+        if nh == 1 or nv == 1:
+            return xnom[fromv:uptov], ynom[fromv:uptov]
+
+        return xnom[fromv:uptov, fromh:uptoh], ynom[fromv:uptov, fromh:uptoh]
+
+    def _sector_index(self) -> int:
+        sector = int(self.prm.section.split(':')[1][:2])
+        return 8 * (sector - 1) - 1
+
+    def _tangents_calc(self, idx):
+        """Calculate tangents of beam angles between neighbour BPMs."""
+        nextidx = idx + 1
+        offset_x_sect, offset_y_sect = 0, 0
+        offset_x_next, offset_y_next = 0, 0
+        offsetfound = False
+
+        # Search for zero-angle reference orbit to define the offset.
+        for dt in self.rawdata:
+            if dt[2]['agx'] == 0 and dt[2]['agy'] == 0:
+                offset_x_sect = dt[2]['orbx'][idx]
+                offset_y_sect = dt[2]['orby'][idx]
+                offset_x_next = dt[2]['orbx'][nextidx]
+                offset_y_next = dt[2]['orby'][nextidx]
+                offsetfound = True
+                break
+
+        # Try and guess offsets by extrapolation if not found.
+        if not offsetfound:
+            (offset_x_sect, offset_x_next,
+             offset_y_sect, offset_y_next) = self._offset_search(idx)
+
+        # Calculate tangents for all angles.
+        tangents = dict()
+        bdist = self.prm.bpmdist
+        for dt in self.rawdata:
+            tx = (((dt[2]['orbx'][nextidx] - offset_x_next)) -
+                  (dt[2]['orbx'][idx]     - offset_x_sect)) / bdist
+            ty = (((dt[2]['orby'][nextidx] - offset_y_next)) -
+                  (dt[2]['orby'][idx]     - offset_y_sect)) / bdist
+            agx, agy = dt[2]['agx'], dt[2]['agy']
+            tangents[agx, agy] = np.array([tx, ty])
+        return tangents
+
+    def _offset_search(self, idx):
+        """Extrapolate offsets when reference orbit is missing."""
+        nextidx = idx + 1
+        agx    = np.array([dt[2]['agx']
+                           for dt in self.rawdata])
+        orbx   = np.array([dt[2]['orbx'][idx]
+                           for dt in self.rawdata])
+        n_orbx = np.array([dt[2]['orbx'][nextidx]
+                           for dt in self.rawdata])
+
+        agxmax = np.max(agx)
+        agxmin = np.min(agx)
+
+        osx = np.array(sorted(list(set(orbx))))
+        oxmin, oxmax = osx[0], osx[-1]
+        offset_x_sect = ((oxmin * agxmax - oxmax * agxmin) /
+                         (agxmax - agxmin))
+
+        onx = np.array(sorted(list(set(n_orbx))))
+        onxmin, onxmax = onx[0], onx[-1]
+        offset_x_next = ((onxmin * agxmax - onxmax * agxmin) /
+                         (agxmax - agxmin))
+
+        agy    = np.array([dt[2]['agy']
+                           for dt in self.rawdata])
+        orby   = np.array([dt[2]['orby'][idx]
+                           for dt in self.rawdata])
+        n_orby = np.array([dt[2]['orby'][nextidx]
+                           for dt in self.rawdata])
+
+        agymax = np.max(agy)
+        agymin = np.min(agy)
+
+        osy = np.array(sorted(list(set(orby))))
+        oymin, oymax = osy[0], osy[-1]
+        offset_y_sect = ((oymin * agymax - oymax * agymin) /
+                         (agymax - agymin))
+
+        ony = np.array(sorted(list(set(n_orby))))
+        onymin, onymax = ony[0], ony[-1]
+        offset_y_next = ((onymin * agymax - onymax * agymin) /
+                         (agymax - agymin))
+
+        return (offset_x_sect, offset_x_next, offset_y_sect, offset_y_next)
+
+    def _positions_from_tangents(self, tangents, xbpm_dist):
+        """Calculate beam positions from tangents at BPMs."""
+        positions = dict()
+        for key, tg in tangents.items():
+            newkey = (key[0] * xbpm_dist, key[1] * xbpm_dist)
+            positions[newkey] = tg * xbpm_dist
+        return positions
+
+    def _std_dev_estimate(self, xnom, ynom, xpos, ypos):
+        """Estimate RMS deviations between measured and nominal positions."""
+        # Total differences (all sites).
+        nv, nh = xnom.shape[0], xnom.shape[1]
+        nsites = nv * nh
+
+        diff_h = xnom - xpos
+        diff_h_min = np.abs(np.min(diff_h))
+        diff_h_max = np.abs(np.max(diff_h))
+        sig2_h = np.sum(diff_h**2) / nsites
+
+        diff_v = ynom - ypos
+        diff_v_min = np.abs(np.min(diff_v))
+        diff_v_max = np.abs(np.max(diff_v))
+        sig2_v = np.sum(diff_v**2) / nsites
+
+        sig_h = np.sqrt(sig2_h)
+        sig_v = np.sqrt(sig2_v)
+        sig_tot = np.sqrt(sig2_h + sig2_v)
+
+        print("Sigmas:\n"
+              f"   (all sites)     H = {sig_h:.4f}\n"
+              f"   (all sites)     V = {sig_v:.4f},\n"
+              f"   (all sites) total = {sig_tot:.4f}\n"
+              "\n  Maximum difference:\n"
+              f"   (all sites) H = {diff_h_max:.4f}\n"
+              f"   (all sites) V = {diff_v_max:.4f},\n"
+              "\n  Minimum difference:\n"
+              f"   (all sites) H = {diff_h_min:.4f}\n"
+              f"   (all sites) V = {diff_v_min:.4f},\n"
+              )
+
+        # Check whether the sweeping is complete.
+        # nmax = len(set(list(xnom.ravel()))) * len(set(list(ynom.ravel())))
+        nmax = (np.unique(xnom.ravel()).shape[0] *
+                np.unique(ynom.ravel()).shape[0])
+        if nmax < nsites:
+            print("\n WARNING: sweeping looks incomplete, no ROI was defined"
+                  f" ({nmax} sites measured at most, out of {nsites}"
+                  " in total). Skipping ROI analysis.")
+            rms_stats = {
+                'sigma_h'       : sig_h,
+                'sigma_v'       : sig_v,
+                'sigma_total'   : sig_tot,
+                'diff_min_h'    : diff_h_min,
+                'diff_min_v'    : diff_v_min,
+                'diff_max_h'    : diff_h_max,
+                'diff_max_v'    : diff_v_max,
+                'roi_available' : False,
+            }
+            return rms_stats, None
+
+        # Differences at ROI.
+        roi_h = min(self.roi_h_size, nh)
+        roi_v = min(self.roi_v_size, nv)
+        fromh = max(0, int((nh - roi_h) / 2))
+        uptoh = min(nh, fromh + roi_h)
+        fromv = max(0, int((nv - roi_v) / 2))
+        uptov = min(nv, fromv + roi_v)
+        nroi = (uptov - fromv) * (uptoh - fromh)
+
+        if nh == 1 or nv == 1:
+            xnom_cut = xnom[fromv:uptov]
+            ynom_cut = ynom[fromv:uptov]
+            xpos_cut = xpos[fromv:uptov]
+            ypos_cut = ypos[fromv:uptov]
+        else:
+            xnom_cut = xnom[fromv:uptov, fromh:uptoh]
+            ynom_cut = ynom[fromv:uptov, fromh:uptoh]
+            xpos_cut = xpos[fromv:uptov, fromh:uptoh]
+            ypos_cut = ypos[fromv:uptov, fromh:uptoh]
+
+        diff_h_cut = np.abs(xnom_cut - xpos_cut)
+        diff_v_cut = np.abs(ynom_cut - ypos_cut)
+        diff_cut = np.sqrt(diff_h_cut**2 + diff_v_cut**2)
+
+        sig2_v_roi = np.sum(diff_v_cut**2) / nroi
+        sig2_h_roi = np.sum(diff_h_cut**2) / nroi
+
+        roi_sig_h = np.sqrt(sig2_h_roi)
+        roi_sig_v = np.sqrt(sig2_v_roi)
+        roi_sig_tot = np.sqrt(sig2_h_roi + sig2_v_roi)
+
+        print("  Differences in ROI\n"
+              f"   (x in [{np.min(xnom_cut)}, {np.max(xnom_cut)}];"
+              f"  y in [{np.min(ynom_cut)}, {np.max(ynom_cut)}])\n"
+              f"       H = {roi_sig_h:.4f}\n"
+              f"       V = {roi_sig_v:.4f},\n"
+              f"   total = {roi_sig_tot:.4f}")
+
+        rms_stats = {
+            'sigma_h'         : sig_h,
+            'sigma_v'         : sig_v,
+            'sigma_total'     : sig_tot,
+            'diff_min_h'      : diff_h_min,
+            'diff_min_v'      : diff_v_min,
+            'diff_max_h'      : diff_h_max,
+            'diff_max_v'      : diff_v_max,
+            'roi_available'   : True,
+            'roi_sigma_h'     : roi_sig_h,
+            'roi_sigma_v'     : roi_sig_v,
+            'roi_sigma_total' : roi_sig_tot,
+            'roi_bounds'      : {
+                'x_min' : float(np.min(xnom_cut)),
+                'x_max' : float(np.max(xnom_cut)),
+                'y_min' : float(np.min(ynom_cut)),
+                'y_max' : float(np.max(ynom_cut)),
+            },
+        }
+
+        return rms_stats, diff_cut
