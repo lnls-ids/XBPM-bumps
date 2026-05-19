@@ -389,6 +389,7 @@ class XBPMProcessor:
             },
             'supmat': supmat,
             'stddevmat': stddevmat,
+            'phaseorgap': self.prm.phaseorgap,
             'xbpm_stats': {
                 'pairwise': pair_result['stats'],
                 'cross': cross_result['stats'],
@@ -499,6 +500,7 @@ class XBPMProcessor:
         ])
 
         if showmatrix:
+            print(f'Undulator phase or gap: {self.prm.phaseorgap}')
             print("\n Suppression matrix with standard deviations:")
             for ii, lin in enumerate(supmat):
                 for jj, col in enumerate(lin):

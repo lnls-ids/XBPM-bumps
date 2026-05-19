@@ -56,23 +56,3 @@ def extract_beamlines(rawdata):
         return list(beamlines)
     except Exception:
         return []
-
-
-def extract_undulator_gaps(rawdata, beamline):
-    """Extract unique undulator gaps from pickle raw data headers."""
-    beamline = str(beamline)[:3].lower() #Remove XBPM number
-    try:
-        gaps = set()
-        for record in rawdata or []:
-            if not (isinstance(record, (list, tuple)) and len(record) > 0):
-                continue
-            header = record[1]
-            if isinstance(header, dict) and beamline in header:
-                gaps.add(header[beamline])
-            elif isinstance(header, (list, tuple)):
-                for item in header:
-                    if isinstance(item, str):
-                        gaps.add(item)
-        return list(gaps)
-    except Exception:
-        return []
