@@ -83,20 +83,21 @@ if __name__ == "__main__":
 
     # Read HDF5 files containing the suppression matrixes
     xbpm_data = dict()
+    idx = 0
     _check_file_path(f"{args.path}")
     for file in glob.glob(f"{args.path}/*.h5"):
         print(f"Found file: {file}")
         _check_hdf5_structure(file)
         with h5py.File(file, "r") as f:
-            idx = int(file.split("_")[-1].split(".")[0])
             xbpm_data[idx] = {}
             xbpm_data[idx]['supmat'] = f[f"/analysis_{args.xbpm}/matrices/calculated"][:]
             xbpm_data[idx]['stddev'] = f[f"/analysis_{args.xbpm}/matrices/stddev"][:]
             gap = f["/raw_data/sweep_0000"].attrs[f'{args.xbpm[:3].lower()} gap']
             xbpm_data[idx]['gap'] = round(gap, 4)
+            idx += 1
 
     xbpm_data = dict(sorted(xbpm_data.items(), key=lambda item: item[1]['gap']))
-    print(f"{args.xbpm} data: {xbpm_data}")
+    print(f"{args.xbpm} data sorted by phase/gap:\n {xbpm_data}")
 
     # Plot coeffitiens vs phase with linear fit
     fig, ax = plt.subplots(nrows=2, ncols=3, figsize=(15, 10))
@@ -105,9 +106,9 @@ if __name__ == "__main__":
         for j in range(1, 4):
             print(f"\nCoefficient a[{i}{j}]")
             coef = _get_matrixes_coefs(xbpm_data, i, j)
-            print(f"Coefficients for each phase: {coef}")
+            print(f"Coefficients for each phase/gap: {coef}")
             errors = _get_matrixes_errors(xbpm_data, i, j)
-            print(f"Standard deviations for each phase: {errors}")
+            print(f"Standard deviations for each phase/gap: {errors}")
             fitted_curve_1 = _fit_coef_curve([xbpm_data[idx]['gap'] for idx in xbpm_data], coef, degree=1)
             fitted_curve_2 = _fit_coef_curve([xbpm_data[idx]['gap'] for idx in xbpm_data], coef, degree=2)
             if (i//2) < 1:
