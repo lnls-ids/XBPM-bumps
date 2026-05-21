@@ -1,10 +1,12 @@
 #!/bin/env python3
 
-"""Get relationships between XBPM suppression matrixes.
+"""
+Get relationships between XBPM suppression matrices.
 
-This script uses the suppression matrixes obtained by the XBPM analisys
-to calculate and check if there is a significant relationship between matrixes
-given they were acquired with different gaps for the same beamline undulator.
+This script uses the suppression matrices obtained from the XBPM analisys
+to fit curves, check standard deviations, and plot the results to check if 
+there is a significant relationship between matrices calculated for different 
+gaps/phases from the acquisitions of the same beamline undulator.
 """
 
 import glob
@@ -13,9 +15,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import argparse
 
-desc = """This script uses the suppression matrixes obtained by the XBPM analisys
-to calculate and check if there is a significant relationship between matrixes
-given they were acquired with different gaps for the same beamline undulator."""
+desc = """This script uses the suppression matrices obtained from the XBPM analisys
+to fit curves, check standard deviations, and plot the results to check if 
+there is a significant relationship between matrices calculated for different 
+gaps/phases from the acquisitions of the same beamline undulator."""
 coefs = ['B', 'C', 'D']
 
 def _check_file_path(path):
@@ -81,7 +84,7 @@ if __name__ == "__main__":
     parser.add_argument("-p", "--path", required=True, help="Path to XBPM HDF5 processed data files")
     args = parser.parse_args()
 
-    # Read HDF5 files containing the suppression matrixes
+    # Read HDF5 files containing the suppression matrices
     xbpm_data = dict()
     idx = 0
     _check_file_path(f"{args.path}")
