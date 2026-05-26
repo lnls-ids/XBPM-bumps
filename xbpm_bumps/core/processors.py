@@ -478,12 +478,14 @@ class XBPMProcessor:
             pch = pch[0] / np.abs(pch)
         else:
             pch = np.ones(8).reshape(4, 2)
+            sdevh = np.zeros(4)
 
         if len(self.range_v) > 1:
             sdevv = np.sqrt(covs_v) * pcv[0, 0] / (pcv[:, 0]**2)
             pcv = pcv[0] / np.abs(pcv)
         else:
             pcv = np.ones(8).reshape(4, 2)
+            sdevv = np.zeros(4)
 
         supmat = np.array([
             [pcv[0, 0], -pcv[1, 0], -pcv[2, 0],  pcv[3, 0]],
@@ -518,7 +520,9 @@ class XBPMProcessor:
             dr = 'horizontal' if direction == 'h' else 'vertical'
             print(f"\n WARNING: (central_line_fit) {dr} blades' values"
                   " not defined. Seetting fitting values to [1, 0].")
-            return np.array([[1, 0] for _ in range(4)])
+            pc = np.array([[1, 0] for _ in range(4)])
+            covs = np.zeros(4)
+            return pc, covs
 
         pc = list()
         covs = list()
