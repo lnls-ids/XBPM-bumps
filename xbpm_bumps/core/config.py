@@ -19,11 +19,27 @@ class Config:
     # Map of blades positions in each XBPM.
     # TO, TI, BO, BI : top/bottom, in/out, relative to the storage ring;
     # A, B, C, D : names of respective P.V.s
+    #
+    # CAVEAT: the map is based on the current configuration of the beamlines, 
+    # based on the the machine studies. The aim is to reassign the cables in
+    # the XBPMs so the blades sequence correspond directly to the
+    # PVs (A, B, C, D). The following map corrects the configuration and helps 
+    # in finding the correct wiring.
+    #
     BLADEMAP = {
-        "MNC"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-        "MNC1"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-        # "MNC1" : {"TO": 'B', "TI": 'D', "BI": 'A', "BO": 'C'},
-        "MNC2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+        #"MNC"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+        #"MNC1"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+        ##"MNC1" : {"TO": 'B', "TI": 'D', "BI": 'A', "BO": 'C'},
+        #"MNC2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+        #"MGN1" : {"TO": 'B', "TI": 'C', "BI": 'A', "BO": 'D'},
+        #"MGN2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+
+        #"MNC"  : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+        "MNC1" : {"TO": 'D', "TI": 'C', "BI": 'B', "BO": 'A'},
+        "MNC2" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+        "MGN1" : {"TO": 'A', "TI": 'C', "BI": 'B', "BO": 'D'},
+        "MGN2" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+
         "CAT"  : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
         "CAT1" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
 
@@ -31,14 +47,14 @@ class Config:
         # "CAT2": {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
         "CNB"  : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
         "CNB1" : {"TO": 'B', "TI": 'A', "BI": 'D', "BO": 'C'},
+        
         # "CNB"  : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         # "CNB1" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         # "CNB2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-        "MGN1" : {"TO": 'B', "TI": 'C', "BI": 'A', "BO": 'D'},
-        "MGN2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
         # "MGN"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
         # "MGN1" : {"TO": 'A', "TI": 'D', "BI": 'B', "BO": 'C'},
         # "MGN2" : {"TO": 'A', "TI": 'B', "BI": 'D', "BO": 'C'},
+
         "SIMUL": {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
     }
 
