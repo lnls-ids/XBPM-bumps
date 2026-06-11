@@ -1,11 +1,24 @@
 """Visualization classes for blade maps and positions."""
 
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 import logging
 
 from .parameters import Prm
 from .constants import FIGDPI
+
+# Use Computer Modern (standard LaTeX math font) for all math text,
+# so symbols like Δ/Σ in titles render in serif academic style.
+# Also set the regular text font to serif so titles and labels
+# match the math font family throughout.
+matplotlib.rcParams['mathtext.fontset'] = 'cm'
+matplotlib.rcParams['mathtext.rm'] = 'serif'
+matplotlib.rcParams['font.family'] = 'serif'
+matplotlib.rcParams['axes.labelsize'] = 14
+matplotlib.rcParams['xtick.labelsize'] = 12
+matplotlib.rcParams['ytick.labelsize'] = 12
+matplotlib.rcParams['legend.fontsize'] = 12
 
 
 # Module logger
@@ -86,8 +99,8 @@ class BladeMapVisualizer:
                     rx[idy][idx].set_xlabel('')
                     rx[idy][idx].set_xticks([])
                 else:
-                    rx[idy][idx].set_xlabel(u"$x$ [$\\mu$rad]")
-                rx[idy][idx].set_ylabel(u"$y$ [$\\mu$rad]")
+                    rx[idy][idx].set_xlabel(u"$x$ [$\\mu$rad]", fontsize=14)
+                rx[idy][idx].set_ylabel(u"$y$ [$\\mu$rad]", fontsize=14)
                 rx[idy][idx].set_title(names[idy][idx])
 
         fig.tight_layout(pad=0., w_pad=-10., h_pad=2.)
@@ -130,8 +143,10 @@ class BladeMapVisualizer:
                 ax = axes[row][col]
                 # Use the same orientation as live plots
                 ax.imshow(quad[row][col], extent=extent, origin='lower')
-                ax.set_xlabel(blade_grp.attrs.get('xlabel', 'x [μrad]'))
-                ax.set_ylabel(blade_grp.attrs.get('ylabel', 'y [μrad]'))
+                ax.set_xlabel(blade_grp.attrs.get('xlabel', 'x [μrad]'),
+                              fontsize=14)
+                ax.set_ylabel(blade_grp.attrs.get('ylabel', 'y [μrad]'),
+                              fontsize=14)
                 ax.set_title(names[row][col])
 
         fig.tight_layout(pad=0., w_pad=-10., h_pad=2.)
@@ -226,20 +241,20 @@ class PositionVisualizer:
         # Full grid view
         self._plot_scaled_positions(
             ax_all, pos_nom_h, pos_nom_v, pos_h, pos_v,
-            f"{self.title} @ {self.prm.beamline}"
+            f"XBPM @ {self.prm.beamline} : {self.title}"
         )
 
         # ROI closeup
         self._plot_scaled_positions(
             ax_close, pos_nom_h_roi, pos_nom_v_roi,
             pos_roi_h, pos_roi_v,
-            f"{self.title} @ {self.prm.beamline} closeup"
+            f"XBPM @ {self.prm.beamline} : {self.title} (ROI)"
         )
 
         # Difference heatmap
         self._plot_position_differences(
             ax_color, diff_roi, pos_nom_h_roi, pos_nom_v_roi,
-            f"{self.title} @ {self.prm.beamline}"
+            f"XBPM @ {self.prm.beamline} : {self.title}"
         )
 
         # constrained_layout handles spacing; avoid mixing with tight_layout
@@ -250,8 +265,8 @@ class PositionVisualizer:
         ax.set_title(title, pad=2)
         pos = ax.plot(pos_h, pos_v, 'bo')
         nom = ax.plot(pos_nom_h, pos_nom_v, 'r+')
-        ax.set_xlabel(u"$x$ [$\\mu$m]")
-        ax.set_ylabel(u"$y$ [$\\mu$m]")
+        ax.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)
+        ax.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
 
         # Compute common limits to ensure equal aspect ratio with margin.
         # Filter non-finite values to avoid NaN/Inf axis-limit failures.
@@ -291,10 +306,10 @@ class PositionVisualizer:
         handles, labels = [], []
         if len(nom) > 0:
             handles.append(nom[0])
-            labels.append("Nominal")
+            labels.append("Nom.")
         if len(pos) > 0:
             handles.append(pos[0])
-            labels.append("Calculated")
+            labels.append("Calc.")
         if handles:
             ax.legend(handles, labels)
         ax.grid()
@@ -305,7 +320,7 @@ class PositionVisualizer:
         if diffroi is None:
             ax.set_title(title, pad=2)
             ax.set_xlabel("")
-            ax.set_ylabel(u"$y$ [$\\mu$m]")
+            ax.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
             ax.text(0.5, 0.5, "ROI unavailable", ha='center', va='center',
                 transform=ax.transAxes)
             ax.grid(False)
@@ -345,7 +360,7 @@ class PositionVisualizer:
                             origin='lower')
             cbar = self.fig.colorbar(im, ax=ax,
                                       fraction=0.4, pad=0.3)
-            cbar.set_label(u"Difference [$\\mu$m]")
+            cbar.set_label(u"Difference [$\\mu$m]", fontsize=14)
 
         else:
             # 2D heatmap: use extent to map array indices to actual coordinates
@@ -375,14 +390,14 @@ class PositionVisualizer:
                         extent=extent)
             cbar = self.fig.colorbar(im, ax=ax,
                                      fraction=0.046, pad=0.04)
-            cbar.set_label(u"Difference [$\\mu$m]")
+            cbar.set_label(u"Difference [$\\mu$m]", fontsize=14)
 
         # cbar = self.fig.colorbar(im, ax=ax,
         #                          fraction=0.4, pad=0.3)
         # cbar.set_label(u"Difference [$\\mu$m]")
         ax.set_title(title, pad=2)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(u"$y$ [$\\mu$m]")
+        ax.set_xlabel(xlabel, fontsize=14)
+        ax.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
 
     def save_figure(self, filename: str) -> None:
         """Save the figure to a file.
@@ -438,10 +453,10 @@ class PositionVisualizer:
         )
 
         # Plot 1: All positions on full grid
-        ax1.plot(meas_x, meas_y, 'bo', label='Calculated')
-        ax1.plot(nom_x, nom_y, 'r+', label='Nominal', markersize=8)
-        ax1.set_xlabel(pos_data.attrs.get('xlabel', 'x [μm]'))
-        ax1.set_ylabel(pos_data.attrs.get('ylabel', 'y [μm]'))
+        ax1.plot(meas_x, meas_y, 'bo', label='Calc.')
+        ax1.plot(nom_x, nom_y, 'r+', label='Nom.', markersize=8)
+        ax1.set_xlabel(pos_data.attrs.get('xlabel', 'x [μm]'), fontsize=14)
+        ax1.set_ylabel(pos_data.attrs.get('ylabel', 'y [μm]'), fontsize=14)
         ax1.set_title('Full Grid')
         ax1.legend()
         ax1.grid(True, alpha=0.3)
@@ -464,14 +479,14 @@ class PositionVisualizer:
         roi_nom_y = nom_y[roi_mask]
 
         if len(roi_meas_x) > 0:
-            ax2.plot(roi_meas_x, roi_meas_y, 'bo', label='Calculated')
-            ax2.plot(roi_nom_x, roi_nom_y, 'r+', label='Nominal', markersize=8)
+            ax2.plot(roi_meas_x, roi_meas_y, 'bo', label='Calc.')
+            ax2.plot(roi_nom_x, roi_nom_y, 'r+', label='Nom.', markersize=8)
         else:
-            ax2.plot(meas_x, meas_y, 'bo', label='Calculated')
-            ax2.plot(nom_x, nom_y, 'r+', label='Nominal', markersize=8)
+            ax2.plot(meas_x, meas_y, 'bo', label='Calc.')
+            ax2.plot(nom_x, nom_y, 'r+', label='Nom.', markersize=8)
 
-        ax2.set_xlabel(pos_data.attrs.get('xlabel', 'x [μm]'))
-        ax2.set_ylabel(pos_data.attrs.get('ylabel', 'y [μm]'))
+        ax2.set_xlabel(pos_data.attrs.get('xlabel', 'x [μm]'), fontsize=14)
+        ax2.set_ylabel(pos_data.attrs.get('ylabel', 'y [μm]'), fontsize=14)
         ax2.set_title('ROI Closeup')
         ax2.legend()
         ax2.grid(True, alpha=0.3)
@@ -498,12 +513,13 @@ class PositionVisualizer:
 
         # No grid for heatmaps, and set aspect ratio to match data
         ax3.set_aspect('equal', adjustable='box')
-        plt.colorbar(
+        cbar = plt.colorbar(
             im, ax=ax3, label='RMS Difference [μm]',
             fraction=0.046, pad=0.04
         )
-        ax3.set_xlabel(pos_data.attrs.get('xlabel', 'x [μm]'))
-        ax3.set_ylabel(pos_data.attrs.get('ylabel', 'y [μm]'))
+        cbar.set_label('RMS Difference [μm]', fontsize=14)
+        ax3.set_xlabel(pos_data.attrs.get('xlabel', 'x [μm]'), fontsize=14)
+        ax3.set_ylabel(pos_data.attrs.get('ylabel', 'y [μm]'), fontsize=14)
         ax3.set_title('Position Differences')
 
         # Extract title from attrs or use default
@@ -529,7 +545,6 @@ class SweepVisualizer:
     and readers._reconstruct_sweeps().
     """
 
-    @staticmethod
     def plot_from_arrays(range_h, range_v, pos_h, pos_v,
                          fit_h=None, fit_v=None,
                          xbpm_dist=1.0, figsize=(12, 5)):
@@ -555,37 +570,43 @@ class SweepVisualizer:
             x_vals = range_h * xbpm_dist
             y_vals = pos_h * xbpm_dist
 
-            axh.plot(x_vals, y_vals, 'o-', label="H sweep")
+            axh.plot(x_vals, y_vals, 'o-', color='C0', label="H sweep",
+                     zorder=2)
 
             if fit_h is not None:
                 fit_line = (fit_h[0] * range_h + fit_h[1]) * xbpm_dist
-                axh.plot(x_vals, fit_line, '^-', label="H fit")
+                axh.plot(x_vals, fit_line, '^-', color='C1', label="H fit",
+                         zorder=3)
 
-            axh.set_xlabel(u"$x$ [$\\mu$m]")
-            axh.set_ylabel(u"$y$ [$\\mu$m]")
+            axh.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)
+            axh.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
             axh.set_title("Horizontal Sweeps")
+            axh.tick_params(labelsize=12)
             axh.grid(True)
-            axh.legend()
+            axh.legend(fontsize=12)
 
         # Vertical sweep plot
         if range_v is not None and pos_v is not None:
             x_vals = pos_v * xbpm_dist
             y_vals = range_v * xbpm_dist
 
-            axv.plot(x_vals, y_vals, 'o-', label="V sweep")
+            axv.plot(x_vals, y_vals, 'o-', color='C0', label="V sweep",
+                     zorder=2)
 
             if fit_v is not None:
                 fit_line = (fit_v[0] * range_v + fit_v[1]) * xbpm_dist
-                axv.plot(fit_line, y_vals, '^-', label="V fit")
+                axv.plot(fit_line, y_vals, '^-', color='C1', label="V fit",
+                         zorder=3)
 
-            axv.set_xlabel(u"$x$ [$\\mu$m]")
-            axv.set_ylabel(u"$y$ [$\\mu$m]")
+            axv.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)
+            axv.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
             axv.set_title("Vertical Sweeps")
+            axv.tick_params(labelsize=12)
             axv.grid(True)
-            axv.legend()
+            axv.legend(fontsize=12)
 
         fig.suptitle(
-            'Central Sweeps Analysis', fontsize=12, fontweight='bold'
+            'Central Sweep Analysis', fontsize=12, fontweight='bold'
         )
         fig.tight_layout()
         return fig
@@ -618,27 +639,33 @@ class SweepVisualizer:
                     and np.all(np.isfinite(pos_h_err))):
                 axh.errorbar(
                     range_h, pos_h, yerr=pos_h_err,
-                    fmt='o-', label="H sweep"
+                    fmt='o-', color='C0', label="H sweep", zorder=2
                 )
             else:
-                axh.plot(range_h, pos_h, 'o-', label="H sweep")
+                axh.plot(range_h, pos_h, 'o-', color='C0',
+                         label="H sweep", zorder=2)
 
             # Plot fit line from stored column if available,
             # else calculate from attrs
             if 'y_fit' in h_data.dtype.names:
                 fit_line = h_data['y_fit'][:]
-                axh.plot(range_h, fit_line, '^-', label="H fit")
+                axh.plot(range_h, fit_line, '^-', color='C1',
+                         label="H fit", zorder=3)
             elif 'k' in h_data.attrs and 'delta' in h_data.attrs:
                 fit_line = (
                     h_data.attrs['k'] * range_h + h_data.attrs['delta']
                 )
-                axh.plot(range_h, fit_line, '^-', label="H fit")
+                axh.plot(range_h, fit_line, '^-', color='C1',
+                         label="H fit", zorder=3)
 
-            axh.set_xlabel(h_data.attrs.get('xlabel', 'x [μm]'))
-            axh.set_ylabel(h_data.attrs.get('ylabel', 'y [μm]'))
+            axh.set_xlabel(h_data.attrs.get('xlabel', 'x [μm]'),
+                           fontsize=14)
+            axh.set_ylabel(h_data.attrs.get('ylabel', 'y [μm]'),
+                           fontsize=14)
             axh.set_title(h_data.attrs.get('title', 'Horizontal Sweeps'))
+            axh.tick_params(labelsize=12)
             axh.grid(True)
-            axh.legend()
+            axh.legend(fontsize=12)
 
         # Vertical sweep
         if v_data is not None:
@@ -654,30 +681,36 @@ class SweepVisualizer:
                     and np.all(np.isfinite(pos_v_err))):
                 axv.errorbar(
                     pos_v, range_v, xerr=pos_v_err,
-                    fmt='o-', label="V sweep"
+                    fmt='o-', color='C0', label="V sweep", zorder=2
                 )
             else:
-                axv.plot(pos_v, range_v, 'o-', label="V sweep")
+                axv.plot(pos_v, range_v, 'o-', color='C0',
+                         label="V sweep", zorder=2)
 
             # Plot fit line from stored column if available,
             # else calculate from attrs
             if 'x_fit' in v_data.dtype.names:
                 fit_line = v_data['x_fit'][:]
-                axv.plot(fit_line, range_v, '^-', label="V fit")
+                axv.plot(fit_line, range_v, '^-', color='C1',
+                         label="V fit", zorder=3)
             elif 'k' in v_data.attrs and 'delta' in v_data.attrs:
                 fit_line = (
                     v_data.attrs['k'] * range_v + v_data.attrs['delta']
                 )
-                axv.plot(fit_line, range_v, '^-', label="V fit")
+                axv.plot(fit_line, range_v, '^-', color='C1',
+                         label="V fit", zorder=3)
 
-            axv.set_xlabel(v_data.attrs.get('xlabel', 'y [μm]'))
-            axv.set_ylabel(v_data.attrs.get('ylabel', 'x [μm]'))
+            axv.set_xlabel(v_data.attrs.get('xlabel', 'y [μm]'),
+                           fontsize=14)
+            axv.set_ylabel(v_data.attrs.get('ylabel', 'x [μm]'),
+                           fontsize=14)
             axv.set_title(v_data.attrs.get('title', 'Vertical Sweeps'))
+            axv.tick_params(labelsize=12)
             axv.grid(True)
-            axv.legend()
+            axv.legend(fontsize=12)
 
         fig.suptitle(
-            'Central Sweeps Analysis', fontsize=12, fontweight='bold'
+            'Central Sweep Analysis', fontsize=12, fontweight='bold'
         )
         fig.tight_layout()
         return fig
@@ -697,9 +730,13 @@ class BladeCurrentVisualizer:
     @staticmethod
     def _plot_blade(ax, rng, y, yerr, marker, blade_name):
         if yerr is not None:
-            ax.errorbar(rng, y, yerr=yerr, fmt=marker, label=blade_name)
+            container = ax.errorbar(
+                rng, y, yerr=yerr, fmt=marker, label=blade_name, zorder=2
+            )
+            return container.lines[0] if container.lines else None
         else:
-            ax.plot(rng, y, marker, label=blade_name)
+            line, = ax.plot(rng, y, marker, label=blade_name, zorder=2)
+            return line
 
     @staticmethod
     def _fit_blade(rng, y, yerr, attrs, blade_name):
@@ -804,8 +841,9 @@ class BladeCurrentVisualizer:
                 y = arr
                 yerr = None
 
-            BladeCurrentVisualizer._plot_blade(ax, rng, y, yerr,
-                                                marker, blade_name)
+            data_line = BladeCurrentVisualizer._plot_blade(
+                ax, rng, y, yerr, marker, blade_name
+            )
 
             # Fit only if variation exists
             if (np.any(np.isfinite(y)) and
@@ -817,6 +855,8 @@ class BladeCurrentVisualizer:
                                                         attrs, blade_name)
                     )
                     style = dict(fit_style)
+                    if data_line is not None:
+                        style['color'] = data_line.get_color()
                     ax.plot(rng, coef[0] * rng + coef[1],
                             label=f"{blade_name} fit", **style)
                 except Exception:
@@ -829,21 +869,22 @@ class BladeCurrentVisualizer:
                     )
                     pass
 
-        ax.set_xlabel(xlab_default)
-        ax.set_ylabel('I')
+        ax.set_xlabel(xlab_default, fontsize=16)
+        ax.set_ylabel('I', fontsize=16)
+        ax.tick_params(labelsize=12)
         ax.grid()
-        ax.legend()
+        ax.legend(fontsize=12)
 
     @staticmethod
     def _plot_blades_common(blades_h, blades_v, range_h, range_v,
                             attrs_h=None, attrs_v=None,
                             beamline="", figsize=(10, 5)):
         """Shared plotting path for blade currents (live and HDF5)."""
-        # Keep fit lines consistent (solid) for both live and HDF5 paths
-        fit_style = {"linestyle": "-",
-                     "linewidth": 1.4,
-                     "alpha": 0.8,
-                     "zorder": 5}
+        # Keep fit lines consistent and visually overlaid on data.
+        fit_style = {"linestyle": "--",
+                 "linewidth": 2.0,
+                 "alpha": 1.0,
+                 "zorder": 6}
 
         fig, (axh, axv) = plt.subplots(1, 2, figsize=figsize)
 
@@ -860,8 +901,8 @@ class BladeCurrentVisualizer:
 
         ylabel = (u"$I$ [# counts]" if beamline[:3] in ["MGN", "MNC"]
                  else u"$I$ [A]")
-        axh.set_ylabel(ylabel)
-        axv.set_ylabel(ylabel)
+        axh.set_ylabel(ylabel, fontsize=16)
+        axv.set_ylabel(ylabel, fontsize=16)
         axh.set_title('Horizontal')
         axv.set_title('Vertical')
 

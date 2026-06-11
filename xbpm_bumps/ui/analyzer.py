@@ -412,8 +412,9 @@ class XBPMAnalyzer(QObject):
         """Calculate raw XBPM positions."""
         self.analysisProgress.emit("Calculating raw XBPM positions...")
         pos_nom_h, pos_nom_v = self._resolve_reference_positions(results)
-        result_data = self.app.processor.calculate_raw_positions(
+        result_data = self.app.processor.calculate_positions(
             pos_nom_h, pos_nom_v,
+            nosuppress=True,
             showmatrix=True,
         )
         # Handle both dict and list returns for backward compatibility
@@ -462,8 +463,9 @@ class XBPMAnalyzer(QObject):
         """Calculate scaled XBPM positions."""
         self.analysisProgress.emit("Calculating scaled XBPM positions...")
         pos_nom_h, pos_nom_v = self._resolve_reference_positions(results)
-        result_data = self.app.processor.calculate_scaled_positions(
+        result_data = self.app.processor.calculate_positions(
             pos_nom_h, pos_nom_v,
+            nosuppress=False,
             showmatrix=True,
         )
         # Handle both dict and list returns for backward compatibility
@@ -554,11 +556,11 @@ class XBPMAnalyzer(QObject):
         if fit_ch_v is not None:
             hline = ((fit_ch_v[0, 0] * range_h + fit_ch_v[1, 0])
                      * self.app.prm.xbpmdist)
+            axh.plot(range_h * self.app.prm.xbpmdist,
+                     pos_ch_v[:, 0] * self.app.prm.xbpmdist, 'o-',
+                     label="H sweep")
             axh.plot(range_h * self.app.prm.xbpmdist, hline,
                      '^-', label="H fit")
-            axh.plot(range_h * self.app.prm.xbpmdist,
-                    pos_ch_v[:, 0] * self.app.prm.xbpmdist, 'o-',
-                    label="H sweep")
             axh.set_xlabel("$x$ [$\\mu$m]")
             axh.set_ylabel("$y$ [$\\mu$m]")
             axh.set_title("Central Horizontal Sweeps")
@@ -615,9 +617,11 @@ class XBPMAnalyzer(QObject):
                 wval = blval[:, 1]
                 weight = 1. / wval if not np.isinf(1. / wval).any() else None
                 (acoef, bcoef) = np.polyfit(range_h, val, deg=1, w=weight)
-                axh.plot(range_h, range_h * acoef + bcoef, "o-",
-                         label=f"{key} fit")
-                axh.errorbar(range_h, val, wval, fmt='^-', label=key)
+                k = f"{key.upper()}"
+                axh.errorbar(range_h, val, wval, fmt='o-', label=k,
+                             zorder=1)
+                axh.plot(range_h, range_h * acoef + bcoef,
+                         "^-", label=f"{k} fit", zorder=2)
 
         if blades_v is not None:
             for key, blval in blades_v.items():
@@ -625,9 +629,11 @@ class XBPMAnalyzer(QObject):
                 wval = blval[:, 1]
                 weight = 1. / wval if not np.isinf(1. / wval).any() else None
                 (acoef, bcoef) = np.polyfit(range_v, val, deg=1, w=weight)
-                axv.plot(range_v, range_v * acoef + bcoef, "o-",
-                         label=f"{key} fit")
-                axv.errorbar(range_v, val, wval, fmt='^-', label=key)
+                k = f"{key.upper()}"
+                axv.errorbar(range_v, val, wval, fmt='o-', label=k,
+                             zorder=1)
+                axv.plot(range_v, range_v * acoef + bcoef,
+                         "^-", label=f"{k} fit", zorder=2)
 
         axh.set_title("Horizontal")
         axv.set_title("Vertical")

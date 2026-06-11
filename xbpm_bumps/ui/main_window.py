@@ -256,7 +256,7 @@ class XBPMMainWindow(QMainWindow):
 
         # Visualization tabs (ordered to match analysis options)
         bpm_tab, bpm_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(bpm_tab, "BPM Positions")
+        self.results_tabs.addTab(bpm_tab, "BPM")
         self.canvases["bpm"] = bpm_canvas
 
         blade_tab, blade_canvas = self._create_canvas_tab()
@@ -273,19 +273,19 @@ class XBPMMainWindow(QMainWindow):
         self.canvases["sweeps"] = sweep_canvas
 
         xbpm_raw_pw_tab, xbpm_raw_pw_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(xbpm_raw_pw_tab, "XBPM Raw Pairwise")
+        self.results_tabs.addTab(xbpm_raw_pw_tab, "XBPM Δ/Σ raw")
         self.canvases["xbpm_raw_pairwise"] = xbpm_raw_pw_canvas
 
         xbpm_scaled_pw_tab, xbpm_scaled_pw_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(xbpm_scaled_pw_tab, "XBPM Scaled Pairwise")
+        self.results_tabs.addTab(xbpm_scaled_pw_tab, "XBPM Δ/Σ Tr")
         self.canvases["xbpm_scaled_pairwise"] = xbpm_scaled_pw_canvas
 
         xbpm_raw_cr_tab, xbpm_raw_cr_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(xbpm_raw_cr_tab, "XBPM Raw Cross")
+        self.results_tabs.addTab(xbpm_raw_cr_tab, "XBPM part. Δ/Σ - raw")
         self.canvases["xbpm_raw_cross"] = xbpm_raw_cr_canvas
 
         xbpm_scaled_cr_tab, xbpm_scaled_cr_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(xbpm_scaled_cr_tab, "XBPM Scaled Cross")
+        self.results_tabs.addTab(xbpm_scaled_cr_tab, "XBPM part. Δ/Σ - Tr")
         self.canvases["xbpm_scaled_cross"] = xbpm_scaled_cr_canvas
 
         return self.results_tabs
@@ -976,9 +976,10 @@ class XBPMMainWindow(QMainWindow):
         # Compute nominal grid positions from data
         pos_nom_h, pos_nom_v = self._compute_nominal_positions(data)
 
-        result_raw = processor.calculate_raw_positions(
+        result_raw = processor.calculate_positions(
             pos_nom_h=pos_nom_h,
             pos_nom_v=pos_nom_v,
+            nosuppress=True,
             showmatrix=True
         )
         exporter.data_dump_with_prefix(
@@ -1046,9 +1047,10 @@ class XBPMMainWindow(QMainWindow):
         # Compute nominal grid positions from data
         pos_nom_h, pos_nom_v = self._compute_nominal_positions(data)
 
-        result_scaled = processor.calculate_scaled_positions(
+        result_scaled = processor.calculate_positions(
             pos_nom_h=pos_nom_h,
             pos_nom_v=pos_nom_v,
+            nosuppress=False,
             showmatrix=True
         )
         exporter.data_dump_with_prefix(
