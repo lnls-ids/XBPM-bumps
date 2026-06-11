@@ -74,6 +74,7 @@ class ParameterPanel(QWidget):
         """Create the numerical parameters group."""
         group = QGroupBox("Parameters")
         layout = QFormLayout()
+        layout.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
 
         # XBPM distance
         self.xbpmdist_spin = QDoubleSpinBox()
@@ -82,6 +83,7 @@ class ParameterPanel(QWidget):
         self.xbpmdist_spin.setDecimals(3)
         self.xbpmdist_spin.setSuffix(" m")
         self.xbpmdist_spin.setSpecialValueText("Auto (from beamline)")
+        self.xbpmdist_spin.setMaximumWidth(115)
         self.xbpmdist_spin.valueChanged.connect(self.parametersChanged.emit)
         layout.addRow("XBPM Distance:", self.xbpmdist_spin)
 
@@ -90,6 +92,7 @@ class ParameterPanel(QWidget):
         self.roi_h_spin.setRange(1, 999)
         self.roi_h_spin.setValue(int(ROI_SIZE_H))
         self.roi_h_spin.setSuffix(" pts")
+        self.roi_h_spin.setMaximumWidth(115)
         self.roi_h_spin.valueChanged.connect(self.parametersChanged.emit)
         layout.addRow("ROI Size H:", self.roi_h_spin)
 
@@ -97,6 +100,7 @@ class ParameterPanel(QWidget):
         self.roi_v_spin.setRange(1, 999)
         self.roi_v_spin.setValue(int(ROI_SIZE_V))
         self.roi_v_spin.setSuffix(" pts")
+        self.roi_v_spin.setMaximumWidth(115)
         self.roi_v_spin.valueChanged.connect(self.parametersChanged.emit)
         layout.addRow("ROI Size V:", self.roi_v_spin)
 
@@ -105,6 +109,7 @@ class ParameterPanel(QWidget):
         self.skip_spin.setRange(0, 1000)
         self.skip_spin.setValue(0)
         self.skip_spin.setSuffix(" points")
+        self.skip_spin.setMaximumWidth(115)
         self.skip_spin.valueChanged.connect(self.parametersChanged.emit)
         layout.addRow("Skip Initial:", self.skip_spin)
 
@@ -204,6 +209,17 @@ class ParameterPanel(QWidget):
         display = path if path else ""
         self.workdir_field.setText(display)
         self.workdir_field.setToolTip(display)
+
+    def set_roi_defaults_from_grid(self, points_h: int, points_v: int) -> None:
+        """Set ROI defaults from available grid points in each axis."""
+        try:
+            nh = max(1, int(points_h))
+            nv = max(1, int(points_v))
+        except Exception:  # noqa: S110
+            return
+
+        self.roi_h_spin.setValue(nh)
+        self.roi_v_spin.setValue(nv)
 
     def get_parameters(self) -> dict:
         """Extract current parameter values as a dictionary.

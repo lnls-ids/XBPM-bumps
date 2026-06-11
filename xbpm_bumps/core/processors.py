@@ -194,7 +194,7 @@ class XBPMProcessor:
             List of [pairwise_positions_dict, cross_positions_dict].
         """
         return self.calculate_positions(
-            rtitle="scaled XBPM positions",
+            rtitle="scaled XBPM",
             nosuppress=False,
             pos_nom_h=pos_nom_h,
             pos_nom_v=pos_nom_v,
@@ -211,7 +211,7 @@ class XBPMProcessor:
             pos_nom_v: Nominal position grid (vertical).
         """
         return self.calculate_positions(
-            rtitle="raw XBPM positions",
+            rtitle="raw XBPM",
             nosuppress=True,
             pos_nom_h=pos_nom_h,
             pos_nom_v=pos_nom_v,
@@ -760,9 +760,13 @@ class BPMProcessor:
 
         # Initialize figure with 1x3 subplots:
         # full grid, roi closeup, differences
-        is_1d = (self.bpm_roi_diffs.ndim == 1 or
-                 (self.bpm_roi_diffs.ndim == 2 and
-                  min(self.bpm_roi_diffs.shape) == 1))
+        if self.bpm_roi_diffs is None:
+            # ROI can be unavailable for sparse/incomplete scans.
+            is_1d = True
+        else:
+            is_1d = (self.bpm_roi_diffs.ndim == 1 or
+                     (self.bpm_roi_diffs.ndim == 2 and
+                      min(self.bpm_roi_diffs.shape) == 1))
         gridspec = {'width_ratios': [1, 1, 0.1]} if is_1d else None
         self.fig, (ax_all, ax_close, ax_color) = plt.subplots(
             1, 3, figsize=(18, 6), constrained_layout=True,
@@ -926,9 +930,21 @@ class BPMProcessor:
         ax.set_xlabel(u"$x$ [$\\mu$m]")  # noqa: W605
         ax.set_ylabel(u"$y$ [$\\mu$m]")
 
-        # Compute common limits to ensure equal aspect ratio with margin
+        # Compute common limits to ensure equal aspect ratio with margin.
+        # Use only finite values to avoid NaN/Inf axis-limit failures.
         all_h = np.concatenate([np.ravel(pos_h), np.ravel(pos_nom_h)])
         all_v = np.concatenate([np.ravel(pos_v), np.ravel(pos_nom_v)])
+        all_h = all_h[np.isfinite(all_h)]
+        all_v = all_v[np.isfinite(all_v)]
+
+        if all_h.size == 0 or all_v.size == 0:
+            print("\n WARNING: no finite position data available for plotting;"
+                  " using default axis limits.")
+            ax.set_xlim(-1, 1)
+            ax.set_ylim(-1, 1)
+            ax.set_aspect('equal', adjustable='box')
+            ax.grid()
+            return
 
         h_min, h_max = np.min(all_h), np.max(all_h)
         v_min, v_max = np.min(all_v), np.max(all_v)
@@ -970,17 +986,26 @@ class BPMProcessor:
         # Initialize numpy arrays for nominal and measured positions.
         self.xnom = np.zeros((ny, nx))
         self.ynom = np.zeros((ny, nx))
-        self.xpos = np.zeros((ny, nx))
-        self.ypos = np.zeros((ny, nx))
+        self.xpos = np.full((ny, nx), np.nan)
+        self.ypos = np.full((ny, nx), np.nan)
 
         # Fill the arrays.
+        missing = 0
         for iy in range(ny):
             for ix in range(nx):
                 key = (xidx[ix], yidx[iy])
                 self.xnom[iy, ix] = key[0]
                 self.ynom[iy, ix] = key[1]
-                self.xpos[iy, ix] = self.xbpm_pos[key][0]
-                self.ypos[iy, ix] = self.xbpm_pos[key][1]
+                if key in self.xbpm_pos:
+                    self.xpos[iy, ix] = self.xbpm_pos[key][0]
+                    self.ypos[iy, ix] = self.xbpm_pos[key][1]
+                else:
+                    missing += 1
+
+        if missing > 0:
+            print("\n WARNING: sparse BPM grid detected:"
+                  f" {missing} points missing from nominal mesh."
+                  " Missing points were set to NaN.")
 
     def _roi_cut(self, xnom, ynom):
         """Return ROI slices of nominal coordinate grids."""
@@ -1047,6 +1072,11 @@ class BPMProcessor:
 
         agxmax = np.max(agx)
         agxmin = np.min(agx)
+        if np.isclose(agxmax, agxmin):
+            raise ValueError(
+                "Cannot infer BPM x-offset from data without agx variation "
+                "or explicit (agx=0, agy=0) reference point."
+            )
 
         osx = np.array(sorted(list(set(orbx))))
         oxmin, oxmax = osx[0], osx[-1]
@@ -1067,6 +1097,11 @@ class BPMProcessor:
 
         agymax = np.max(agy)
         agymin = np.min(agy)
+        if np.isclose(agymax, agymin):
+            raise ValueError(
+                "Cannot infer BPM y-offset from data without agy variation "
+                "or explicit (agx=0, agy=0) reference point."
+            )
 
         osy = np.array(sorted(list(set(orby))))
         oymin, oymax = osy[0], osy[-1]
@@ -1089,20 +1124,56 @@ class BPMProcessor:
         return positions
 
     def _std_dev_estimate(self, xnom, ynom, xpos, ypos):
-        """Estimate RMS deviations between measured and nominal positions."""
+        """Estimate RMS deviations between measured and nominal positions.
+        
+        Args:
+            xnom: Nominal horizontal positions grid.
+            ynom: Nominal vertical positions grid.
+            xpos: Measured horizontal positions grid.
+            ypos: Measured vertical positions grid.
+
+        Returns:
+            Tuple (rms_stats, roi_diffs) where:
+            rms_stats: Dictionary with overall RMS statistics for all sites.
+            roi_diffs: 2D array of differences at ROI or None if ROI
+                unavailable.
+        """
         # Total differences (all sites).
         nv, nh = xnom.shape[0], xnom.shape[1]
-        nsites = nv * nh
+        nsites_total = nv * nh
 
+        # Calculate differences and filter valid (finite) points.
         diff_h = xnom - xpos
-        diff_h_min = np.abs(np.min(diff_h))
-        diff_h_max = np.abs(np.max(diff_h))
-        sig2_h = np.sum(diff_h**2) / nsites
-
         diff_v = ynom - ypos
-        diff_v_min = np.abs(np.min(diff_v))
-        diff_v_max = np.abs(np.max(diff_v))
-        sig2_v = np.sum(diff_v**2) / nsites
+        valid = np.isfinite(diff_h) & np.isfinite(diff_v)
+        nsites = int(np.count_nonzero(valid))
+
+        # Check if any valid points are available for RMS estimation.
+        if nsites == 0:
+            print("\n WARNING: no valid BPM points found for RMS estimation.")
+            rms_stats = {
+                'sigma_h'       : np.nan,
+                'sigma_v'       : np.nan,
+                'sigma_total'   : np.nan,
+                'diff_min_h'    : np.nan,
+                'diff_min_v'    : np.nan,
+                'diff_max_h'    : np.nan,
+                'diff_max_v'    : np.nan,
+                'roi_available' : False,
+            }
+            return rms_stats, None
+
+        # Calculate statistics using only valid points to avoid NaN/Inf issues.
+        diff_h_valid = diff_h[valid]
+        diff_v_valid = diff_v[valid]
+
+        diff_h_min = np.abs(np.min(diff_h_valid))
+        diff_h_max = np.abs(np.max(diff_h_valid))
+        sig2_h = np.mean(diff_h_valid**2)
+
+        diff_v_min = np.abs(np.min(diff_v_valid))
+        diff_v_max = np.abs(np.max(diff_v_valid))
+        sig2_v = np.mean(diff_v_valid**2)
 
         sig_h = np.sqrt(sig2_h)
         sig_v = np.sqrt(sig2_v)
@@ -1121,12 +1192,9 @@ class BPMProcessor:
               )
 
         # Check whether the sweeping is complete.
-        # nmax = len(set(list(xnom.ravel()))) * len(set(list(ynom.ravel())))
-        nmax = (np.unique(xnom.ravel()).shape[0] *
-                np.unique(ynom.ravel()).shape[0])
-        if nmax < nsites:
+        if nsites < nsites_total:
             print("\n WARNING: sweeping looks incomplete, no ROI was defined"
-                  f" ({nmax} sites measured at most, out of {nsites}"
+              f" ({nsites} valid sites, out of {nsites_total}"
                   " in total). Skipping ROI analysis.")
             rms_stats = {
                 'sigma_h'       : sig_h,
@@ -1147,8 +1215,8 @@ class BPMProcessor:
         uptoh = min(nh, fromh + roi_h)
         fromv = max(0, int((nv - roi_v) / 2))
         uptov = min(nv, fromv + roi_v)
-        nroi = (uptov - fromv) * (uptoh - fromh)
 
+        # Extract ROI slices, handling 1D cases.
         if nh == 1 or nv == 1:
             xnom_cut = xnom[fromv:uptov]
             ynom_cut = ynom[fromv:uptov]
@@ -1160,15 +1228,32 @@ class BPMProcessor:
             xpos_cut = xpos[fromv:uptov, fromh:uptoh]
             ypos_cut = ypos[fromv:uptov, fromh:uptoh]
 
+        # Calculate differences and filter valid (finite) points in ROI.
         diff_h_cut = np.abs(xnom_cut - xpos_cut)
         diff_v_cut = np.abs(ynom_cut - ypos_cut)
-        diff_cut = np.sqrt(diff_h_cut**2 + diff_v_cut**2)
+        valid_roi  = np.isfinite(diff_h_cut) & np.isfinite(diff_v_cut)
+        nroi_valid = int(np.count_nonzero(valid_roi))
+        if nroi_valid == 0:
+            print("\n WARNING: no valid ROI points found."
+                  " Skipping ROI analysis.")
+            rms_stats = {
+                'sigma_h'       : sig_h,
+                'sigma_v'       : sig_v,
+                'sigma_total'   : sig_tot,
+                'diff_min_h'    : diff_h_min,
+                'diff_min_v'    : diff_v_min,
+                'diff_max_h'    : diff_h_max,
+                'diff_max_v'    : diff_v_max,
+                'roi_available' : False,
+            }
+            return rms_stats, None
 
-        sig2_v_roi = np.sum(diff_v_cut**2) / nroi
-        sig2_h_roi = np.sum(diff_h_cut**2) / nroi
-
-        roi_sig_h = np.sqrt(sig2_h_roi)
-        roi_sig_v = np.sqrt(sig2_v_roi)
+        # Calculate total differences in ROI for visualization.
+        diff_cut    = np.sqrt(diff_h_cut**2 + diff_v_cut**2)
+        sig2_v_roi  = np.mean((diff_v_cut[valid_roi])**2)
+        sig2_h_roi  = np.mean((diff_h_cut[valid_roi])**2)
+        roi_sig_h   = np.sqrt(sig2_h_roi)
+        roi_sig_v   = np.sqrt(sig2_v_roi)
         roi_sig_tot = np.sqrt(sig2_h_roi + sig2_v_roi)
 
         print("  Differences in ROI\n"

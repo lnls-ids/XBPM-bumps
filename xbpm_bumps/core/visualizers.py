@@ -188,8 +188,11 @@ class PositionVisualizer:
             diff_roi: RMS position differences in ROI.
             figsize: Figure size as (width, height) tuple.
         """
-        is_1d = (diff_roi.ndim == 1 or
-                 (diff_roi.ndim == 2 and min(diff_roi.shape) == 1))
+        if diff_roi is None:
+            is_1d = True
+        else:
+            is_1d = (diff_roi.ndim == 1 or
+                     (diff_roi.ndim == 2 and min(diff_roi.shape) == 1))
         if is_1d:
             gridspec = {'width_ratios': [1, 1, 0.1]}
         else:
@@ -250,10 +253,21 @@ class PositionVisualizer:
         ax.set_xlabel(u"$x$ [$\\mu$m]")
         ax.set_ylabel(u"$y$ [$\\mu$m]")
 
-        # Compute common limits to ensure equal aspect ratio with margin
-        # Flatten all data to find overall min/max
+        # Compute common limits to ensure equal aspect ratio with margin.
+        # Filter non-finite values to avoid NaN/Inf axis-limit failures.
         all_h = np.concatenate([np.ravel(pos_h), np.ravel(pos_nom_h)])
         all_v = np.concatenate([np.ravel(pos_v), np.ravel(pos_nom_v)])
+        all_h = all_h[np.isfinite(all_h)]
+        all_v = all_v[np.isfinite(all_v)]
+
+        if all_h.size == 0 or all_v.size == 0:
+            logger.warning("No finite position data available for '%s'; "
+                           "using default axis limits.", title)
+            ax.set_xlim(-1, 1)
+            ax.set_ylim(-1, 1)
+            ax.set_aspect('equal', adjustable='box')
+            ax.grid()
+            return
 
         h_min, h_max = np.min(all_h), np.max(all_h)
         v_min, v_max = np.min(all_v), np.max(all_v)
@@ -288,6 +302,15 @@ class PositionVisualizer:
     def _plot_position_differences(self, ax, diffroi,
                                    pos_nom_h, pos_nom_v, title=""):
         """Plot position difference heatmap or scatter on given axis."""
+        if diffroi is None:
+            ax.set_title(title, pad=2)
+            ax.set_xlabel("")
+            ax.set_ylabel(u"$y$ [$\\mu$m]")
+            ax.text(0.5, 0.5, "ROI unavailable", ha='center', va='center',
+                transform=ax.transAxes)
+            ax.grid(False)
+            return
+
         # Treat as 1-D if truly 1-D (shape = (n,)) or effectively 1-D (one
         # dimension is 1, like (1, n) or (n, 1)), or if one nominal axis is
         # constant (single-line sweep).
@@ -306,7 +329,7 @@ class PositionVisualizer:
 
             color_vals = np.ravel(diffroi).reshape(-1, 1)
             # extent = [h_center - 0.2, h_center + 0.2,
-            extent = [0, 1, pos_nom_v.min(), pos_nom_v.max()]
+            extent = [0, 1, np.nanmin(pos_nom_v), np.nanmax(pos_nom_v)]
             aspect = 'auto'
             xlabel = ""
 

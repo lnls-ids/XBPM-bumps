@@ -34,9 +34,11 @@ class Config:
         #"MGN1" : {"TO": 'B', "TI": 'C', "BI": 'A', "BO": 'D'},
         #"MGN2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
 
-        #"MNC"  : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+        # "MNC1"  : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         "MNC1" : {"TO": 'D', "TI": 'C', "BI": 'B', "BO": 'A'},
         "MNC2" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+
+        # "MGN1" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         "MGN1" : {"TO": 'A', "TI": 'C', "BI": 'B', "BO": 'D'},
         "MGN2" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
 
@@ -47,7 +49,7 @@ class Config:
         # "CAT2": {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
         "CNB"  : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
         "CNB1" : {"TO": 'B', "TI": 'A', "BI": 'D', "BO": 'C'},
-        
+
         # "CNB"  : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         # "CNB1" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         # "CNB2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},

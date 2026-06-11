@@ -120,6 +120,24 @@ class XBPMMainWindow(QMainWindow):
         if hasattr(self, 'param_panel'):
             self.param_panel.set_beamline(chosen)
 
+        # Set ROI defaults to the maximum available points in each direction.
+        # This keeps defaults aligned with the actual loaded measurement grid.
+        try:
+            self.prm.beamline = chosen
+            fetched = self.reader._blades_fetch()
+            data = fetched[0] if isinstance(fetched, tuple) else fetched
+            keys = np.array(list(data.keys())) if data else np.array([])
+            if keys.size > 0 and keys.ndim == 2 and keys.shape[1] >= 2:
+                n_h = np.unique(keys[:, 0]).shape[0]
+                n_v = np.unique(keys[:, 1]).shape[0]
+                self.param_panel.set_roi_defaults_from_grid(n_h, n_v)
+                self.log_message(
+                    "ROI defaults set from loaded grid:"
+                    f" H={n_h}, V={n_v}"
+                )
+        except Exception as exc:  # pragma: no cover - defensive
+            self.log_message(f"Could not set ROI defaults from grid: {exc}")
+
         self._update_xbpmdist_from_beamline(chosen)
         return chosen
 
@@ -862,6 +880,80 @@ class XBPMMainWindow(QMainWindow):
                 fp.write("diff_min_v   = "
                          f"{float(stats.get('diff_min_v', 0)):.6f}  um\n")
 
+    def _save_figure_for_export(self, fig, path: str) -> None:
+        """Save figure with print-friendly typography without changing UI use.
+
+        The live app keeps its current figure sizing. Export applies a
+        temporary font boost and slightly more compact figure width so labels
+        remain legible when placed on A4 pages.
+        """
+        original_size = fig.get_size_inches().copy()
+        axes = fig.get_axes()
+        axis_state = []
+        legend_state = []
+        text_state = []
+
+        width, height = original_size
+        target_width = min(width, 10.0)
+        target_height = height * (target_width / width) if width > 0 else height
+        fig.set_size_inches(target_width, target_height, forward=False)
+
+        for ax in axes:
+            axis_state.append({
+                'title': ax.title.get_fontsize(),
+                'xlabel': ax.xaxis.label.get_fontsize(),
+                'ylabel': ax.yaxis.label.get_fontsize(),
+                'xtick': ax.xaxis.get_ticklabels()[0].get_fontsize()
+                if ax.xaxis.get_ticklabels() else None,
+                'ytick': ax.yaxis.get_ticklabels()[0].get_fontsize()
+                if ax.yaxis.get_ticklabels() else None,
+            })
+
+            ax.title.set_fontsize(max(ax.title.get_fontsize() * 1.35, 14))
+            ax.xaxis.label.set_fontsize(
+                max(ax.xaxis.label.get_fontsize() * 1.35, 13)
+            )
+            ax.yaxis.label.set_fontsize(
+                max(ax.yaxis.label.get_fontsize() * 1.35, 13)
+            )
+            ax.tick_params(axis='both', which='major', labelsize=11)
+
+            legend = ax.get_legend()
+            if legend is not None:
+                sizes = [text.get_fontsize() for text in legend.get_texts()]
+                legend_state.append((legend, sizes))
+                for text in legend.get_texts():
+                    text.set_fontsize(max(text.get_fontsize() * 1.25, 11))
+
+        for text in fig.findobj(match=lambda obj: hasattr(obj, 'get_text')):
+            try:
+                label = text.get_text()
+            except Exception:  # noqa: S110
+                continue
+            if label == "Difference [$\\mu$m]":
+                text_state.append((text, text.get_fontsize()))
+                text.set_fontsize(max(text.get_fontsize() * 1.25, 11))
+
+        fig.savefig(path, dpi=FIGDPI, bbox_inches='tight')
+
+        for ax, state in zip(axes, axis_state):
+            ax.title.set_fontsize(state['title'])
+            ax.xaxis.label.set_fontsize(state['xlabel'])
+            ax.yaxis.label.set_fontsize(state['ylabel'])
+            if state['xtick'] is not None:
+                ax.tick_params(axis='x', which='major', labelsize=state['xtick'])
+            if state['ytick'] is not None:
+                ax.tick_params(axis='y', which='major', labelsize=state['ytick'])
+
+        for legend, sizes in legend_state:
+            for text, size in zip(legend.get_texts(), sizes):
+                text.set_fontsize(size)
+
+        for text, size in text_state:
+            text.set_fontsize(size)
+
+        fig.set_size_inches(original_size[0], original_size[1], forward=False)
+
     def _export_xbpm_raw(self, prefix: str, params: dict) -> bool:
         """Export raw XBPM positions and figures.
 
@@ -902,9 +994,7 @@ class XBPMMainWindow(QMainWindow):
                 os.path.dirname(prefix),
                 f"xbpm_positions_pair_raw_{self.analyzer.app.prm.beamline}.png"
             )
-            result_raw['pairwise_figure'].savefig(
-                fig_pair, dpi=FIGDPI, bbox_inches='tight'
-            )
+            self._save_figure_for_export(result_raw['pairwise_figure'], fig_pair)
             logger.info("Pairwise figure saved to %s", fig_pair)
 
         if result_raw.get('cross_figure'):
@@ -912,9 +1002,7 @@ class XBPMMainWindow(QMainWindow):
                 os.path.dirname(prefix),
                 f"xbpm_positions_cross_raw_{self.analyzer.app.prm.beamline}.png"
             )
-            result_raw['cross_figure'].savefig(
-                fig_cross, dpi=FIGDPI, bbox_inches='tight'
-            )
+            self._save_figure_for_export(result_raw['cross_figure'], fig_cross)
             logger.info("Cross figure saved to %s", fig_cross)
 
         # Export scaling factors and statistics
@@ -976,9 +1064,7 @@ class XBPMMainWindow(QMainWindow):
                 os.path.dirname(prefix),
                 f"xbpm_positions_pair_scaled_{self.analyzer.app.prm.beamline}.png"
             )
-            result_scaled['pairwise_figure'].savefig(
-                fig_pair, dpi=FIGDPI, bbox_inches='tight'
-            )
+            self._save_figure_for_export(result_scaled['pairwise_figure'], fig_pair)
             logger.info("Pairwise figure saved to %s", fig_pair)
 
         if result_scaled.get('cross_figure'):
@@ -986,9 +1072,7 @@ class XBPMMainWindow(QMainWindow):
                 os.path.dirname(prefix),
                 f"xbpm_positions_cross_scaled_{self.analyzer.app.prm.beamline}.png"
             )
-            result_scaled['cross_figure'].savefig(
-                fig_cross, dpi=FIGDPI, bbox_inches='tight'
-            )
+            self._save_figure_for_export(result_scaled['cross_figure'], fig_cross)
             logger.info("Cross figure saved to %s", fig_cross)
 
         # Export scaling factors and statistics
@@ -1056,7 +1140,7 @@ class XBPMMainWindow(QMainWindow):
             if fig is None:
                 continue
             fig_path = os.path.join(os.path.dirname(prefix), filename)
-            fig.savefig(fig_path, dpi=FIGDPI, bbox_inches='tight')
+            self._save_figure_for_export(fig, fig_path)
             logger.info("Figure saved to %s", fig_path)
             exported = True
         return exported
@@ -1072,7 +1156,7 @@ class XBPMMainWindow(QMainWindow):
             fig_path = os.path.join(
                 outdir, f'xbpm_central_sweeps_{beamline}.png'
             )
-            fig.savefig(fig_path, dpi=FIGDPI, bbox_inches='tight')
+            self._save_figure_for_export(fig, fig_path)
             logger.info("Figure saved to %s", fig_path)
             exported = True
 
