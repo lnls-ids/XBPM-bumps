@@ -111,7 +111,7 @@ class Config:
         "bpm": {
             "total"   : "BPM @ {beamline}",
             "roi"     : "BPM @ {beamline} (ROI)",
-            "heatmap" : "Differences at ROI",
+            "heatmap" : "RMS Differences at ROI",
         },
 
         # "Blade Map" tab

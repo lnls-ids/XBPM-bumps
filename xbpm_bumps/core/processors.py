@@ -833,7 +833,7 @@ class BPMProcessor:
                                origin='lower')
             cbar = self.fig.colorbar(im, ax=axdiff,
                                       fraction=0.4, pad=0.3)
-            cbar.set_label(u"Difference [$\\mu$m]", fontsize=14)
+            cbar.set_label(u"RMS Difference [$\\mu$m]", fontsize=14)
 
             axdiff.set_xlabel("")
             axdiff.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
@@ -866,7 +866,7 @@ class BPMProcessor:
             )
             cbar = self.fig.colorbar(im, ax=axdiff,
                                      fraction=0.046, pad=0.04)
-            cbar.set_label(u"Difference [$\\mu$m]", fontsize=14)
+            cbar.set_label(u"RMS Difference [$\\mu$m]", fontsize=14)
 
             axdiff.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)  # noqa: W605
             axdiff.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)

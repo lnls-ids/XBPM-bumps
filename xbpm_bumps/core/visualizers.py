@@ -18,6 +18,11 @@ _Title = Config.get_plot_title   # shorthand used throughout this module
 matplotlib.rcParams['mathtext.fontset']     = 'cm'
 matplotlib.rcParams['mathtext.rm']          = 'serif'
 matplotlib.rcParams['font.family']          = 'serif'
+matplotlib.rcParams['font.serif']           = [
+    'cmr10', 'Computer Modern Roman', 'DejaVu Serif'
+]
+matplotlib.rcParams['axes.formatter.use_mathtext'] = True
+matplotlib.rcParams['axes.unicode_minus'] = False
 matplotlib.rcParams['axes.labelsize']       = 14
 matplotlib.rcParams['axes.labelpad']        = 2
 matplotlib.rcParams['xtick.labelsize']      = 12
@@ -108,7 +113,7 @@ class BladeMapVisualizer:
                 rx[idy][idx].set_ylabel(u"$y$ [$\\mu$rad]", fontsize=14)
                 rx[idy][idx].set_title(names[idy][idx])
 
-        fig.tight_layout(pad=0., w_pad=-20., h_pad=2.)
+        fig.tight_layout(pad=0., w_pad=-17., h_pad=2.)
 
         if self.prm.outputfile:
             outfile = f"blade_map_{self.prm.beamline}.png"
@@ -146,15 +151,13 @@ class BladeMapVisualizer:
         for row in range(2):
             for col in range(2):
                 ax = axes[row][col]
-                # Use the same orientation as live plots
-                ax.imshow(quad[row][col], extent=extent, origin='lower')
-                ax.set_xlabel(blade_grp.attrs.get('xlabel', 'x [μrad]'),
-                              fontsize=14)
-                ax.set_ylabel(blade_grp.attrs.get('ylabel', 'y [μrad]'),
-                              fontsize=14)
+                # Keep orientation consistent with live plotting path.
+                ax.imshow(quad[row][col], extent=extent)
+                ax.set_xlabel(u"$x$ [$\\mu$rad]", fontsize=14)
+                ax.set_ylabel(u"$y$ [$\\mu$rad]", fontsize=14)
                 ax.set_title(names[row][col])
 
-        fig.tight_layout(pad=0., w_pad=-10., h_pad=2.)
+        fig.tight_layout(pad=0., w_pad=-17., h_pad=2.)
         return fig
 
 
@@ -377,7 +380,7 @@ class PositionVisualizer:
                             origin='lower')
             cbar = self.fig.colorbar(im, ax=ax,
                                       fraction=0.4, pad=0.3)
-            cbar.set_label(u"Difference [$\\mu$m]", fontsize=14)
+            cbar.set_label(u"RMS Difference [$\\mu$m]", fontsize=14)
 
         else:
             # 2D heatmap: use extent to map array indices to actual coordinates
@@ -407,11 +410,11 @@ class PositionVisualizer:
                         extent=extent)
             cbar = self.fig.colorbar(im, ax=ax,
                                      fraction=0.046, pad=0.04)
-            cbar.set_label(u"Difference [$\\mu$m]", fontsize=14)
+            cbar.set_label(u"RMS Difference [$\\mu$m]", fontsize=14)
 
         # cbar = self.fig.colorbar(im, ax=ax,
         #                          fraction=0.4, pad=0.3)
-        # cbar.set_label(u"Difference [$\\mu$m]")
+        # cbar.set_label(u"RMS Difference [$\\mu$m]")
         ax.set_title(title, pad=2)
         ax.set_xlabel(xlabel, fontsize=14)
         ax.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
@@ -428,7 +431,9 @@ class PositionVisualizer:
 
     @staticmethod
     def plot_from_hdf5(pos_data, beamline: str = "",
-                       rort: str = "", calc: str = ""):
+                       rort: str = "", calc: str = "",
+                       roi_bounds: dict = None,
+                       roi_size: tuple = None):
         """Create position comparison figure from HDF5 dataset.
 
         Args:
@@ -481,28 +486,77 @@ class PositionVisualizer:
         # Plot 1: All positions on full grid
         ax1.plot(meas_x, meas_y, 'bo', label='Calc.')
         ax1.plot(nom_x, nom_y, 'r+', label='Nom.', markersize=8)
-        ax1.set_xlabel(pos_data.attrs.get('xlabel', 'x [μm]'), fontsize=14)
-        ax1.set_ylabel(pos_data.attrs.get('ylabel', 'y [μm]'), fontsize=14)
+        ax1.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)
+        ax1.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
         ax1.set_title(t_total or _Title('xbpm_positions', 'total'))
         ax1.legend()
         ax1.grid(True, alpha=0.3)
-        ax1.set_aspect('equal')
-
-        # Plot 2: ROI closeup (center 50% of data)
-        h_center = (np.min(nom_x) + np.max(nom_x)) / 2
-        v_center = (np.min(nom_y) + np.max(nom_y)) / 2
-        h_range  = (np.max(nom_x) - np.min(nom_x)) / 4
-        v_range  = (np.max(nom_y) - np.min(nom_y)) / 4
-
-        roi_mask = (
-            (np.abs(nom_x - h_center) <= h_range) &
-            (np.abs(nom_y - v_center) <= v_range)
+        PositionVisualizer._apply_equal_limits(
+            ax1, meas_x, meas_y, nom_x, nom_y
         )
 
-        roi_meas_x = meas_x[roi_mask]
-        roi_meas_y = meas_y[roi_mask]
-        roi_nom_x  = nom_x[roi_mask]
-        roi_nom_y  = nom_y[roi_mask]
+        # Reconstruct ROI and heatmap using index-based square-grid recovery
+        # when possible. This matches live plotting behavior better than
+        # coordinate masking for XBPM exports.
+        roi_meas_x = np.array([])
+        roi_meas_y = np.array([])
+        roi_nom_x = np.array([])
+        roi_nom_y = np.array([])
+        roi_diff_2d = None
+        roi_extent = None
+
+        n_pts = int(len(nom_x))
+        n_side = int(round(np.sqrt(n_pts)))
+        use_square_grid = (n_pts > 0 and n_side * n_side == n_pts)
+
+        if use_square_grid and (calc or rort):
+            nom_x_2d = np.asarray(nom_x, dtype=float).reshape(n_side, n_side)
+            nom_y_2d = np.asarray(nom_y, dtype=float).reshape(n_side, n_side)
+            meas_x_2d = np.asarray(meas_x, dtype=float).reshape(n_side, n_side)
+            meas_y_2d = np.asarray(meas_y, dtype=float).reshape(n_side, n_side)
+            diff_2d_full = np.asarray(diff_rms, dtype=float).reshape(n_side,
+                                                                     n_side)
+
+            # Priority 1: use explicitly stored roi_size from HDF5 attrs.
+            if roi_size is not None:
+                roi_h, roi_v = roi_size
+                roi_side = min(int(roi_h), int(roi_v), n_side)
+            else:
+                # Priority 2: infer from coordinate bounds.
+                roi_side = PositionVisualizer._infer_roi_side_from_bounds(
+                    nom_x_2d, nom_y_2d, roi_bounds
+                )
+            # Priority 3: fall back to half the grid.
+            if roi_side is None or roi_side <= 0:
+                roi_side = max(1, n_side // 2)
+
+            sl = PositionVisualizer._center_slice(n_side, roi_side)
+
+            roi_nom_x_2d = nom_x_2d[sl, sl]
+            roi_nom_y_2d = nom_y_2d[sl, sl]
+            roi_meas_x_2d = meas_x_2d[sl, sl]
+            roi_meas_y_2d = meas_y_2d[sl, sl]
+            roi_diff_2d = diff_2d_full[sl, sl]
+
+            roi_nom_x = roi_nom_x_2d.ravel()
+            roi_nom_y = roi_nom_y_2d.ravel()
+            roi_meas_x = roi_meas_x_2d.ravel()
+            roi_meas_y = roi_meas_y_2d.ravel()
+
+            roi_extent = [
+                float(np.nanmin(roi_nom_x_2d)),
+                float(np.nanmax(roi_nom_x_2d)),
+                float(np.nanmin(roi_nom_y_2d)),
+                float(np.nanmax(roi_nom_y_2d)),
+            ]
+        else:
+            roi_mask = PositionVisualizer._build_roi_mask(
+                nom_x, nom_y, roi_bounds
+            )
+            roi_meas_x = meas_x[roi_mask]
+            roi_meas_y = meas_y[roi_mask]
+            roi_nom_x = nom_x[roi_mask]
+            roi_nom_y = nom_y[roi_mask]
 
         if len(roi_meas_x) > 0:
             ax2.plot(roi_meas_x, roi_meas_y, 'bo', label='Calc.')
@@ -511,57 +565,144 @@ class PositionVisualizer:
             ax2.plot(meas_x, meas_y, 'bo', label='Calc.')
             ax2.plot(nom_x, nom_y, 'r+', label='Nom.', markersize=8)
 
-        ax2.set_xlabel(pos_data.attrs.get('xlabel', 'x [μm]'), fontsize=14)
-        ax2.set_ylabel(pos_data.attrs.get('ylabel', 'y [μm]'), fontsize=14)
+        ax2.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)
+        ax2.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
         ax2.set_title(t_roi or _Title('xbpm_positions', 'roi'))
         ax2.legend()
         ax2.grid(True, alpha=0.3)
-        ax2.set_aspect('equal')
+        PositionVisualizer._apply_equal_limits(
+            ax2,
+            roi_meas_x if len(roi_meas_x) > 0 else meas_x,
+            roi_meas_y if len(roi_meas_y) > 0 else meas_y,
+            roi_nom_x if len(roi_nom_x) > 0 else nom_x,
+            roi_nom_y if len(roi_nom_y) > 0 else nom_y,
+        )
 
-        # Plot 3: RMS differences as 2D heatmap
-        try:
-            n_unique_x = len(np.unique(nom_x))
-            n_unique_y = len(np.unique(nom_y))
-            if len(nom_x) == n_unique_x * n_unique_y:
-                diff_2d = diff_rms.reshape(n_unique_y, n_unique_x)
-                x_grid  = np.unique(nom_x)
-                y_grid  = np.unique(nom_y)
-                im = ax3.pcolormesh(
-                    x_grid, y_grid, diff_2d, cmap='viridis', shading='auto'
-                )
-            else:
-                raise ValueError("Data not gridded")
-        except (ValueError, RuntimeError):
-            im = ax3.scatter(
-                nom_x, nom_y, c=diff_rms, cmap='viridis', s=50,
-                edgecolors='k', linewidth=0.5
+        # Plot 3: RMS differences in ROI, matching live plots.
+        if roi_diff_2d is not None and roi_extent is not None:
+            im = ax3.imshow(
+                roi_diff_2d,
+                cmap='viridis',
+                origin='lower',
+                extent=roi_extent,
+                aspect='auto',
             )
+        else:
+            hm_nom_x = roi_nom_x if len(roi_nom_x) > 0 else nom_x
+            hm_nom_y = roi_nom_y if len(roi_nom_y) > 0 else nom_y
+            hm_diff = diff_rms[roi_mask] if len(roi_meas_x) > 0 else diff_rms
+
+            x_grid, y_grid, diff_2d = PositionVisualizer._grid_from_points(
+                hm_nom_x, hm_nom_y, hm_diff
+            )
+            im = ax3.pcolormesh(x_grid, y_grid, diff_2d,
+                                cmap='viridis', shading='auto')
 
         # No grid for heatmaps, and set aspect ratio to match data
         ax3.set_aspect('equal', adjustable='box')
         cbar = plt.colorbar(
-            im, ax=ax3, label='RMS Difference [μm]',
+            im, ax=ax3, label='RMS Difference [$\\mu$m]',
             fraction=0.046, pad=0.04
         )
-        cbar.set_label('RMS Difference [μm]', fontsize=14)
-        ax3.set_xlabel(pos_data.attrs.get('xlabel', 'x [μm]'), fontsize=14)
-        ax3.set_ylabel(pos_data.attrs.get('ylabel', 'y [μm]'), fontsize=14)
+        cbar.set_label('RMS Difference [$\\mu$m]', fontsize=14)
+        ax3.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)
+        ax3.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
         ax3.set_title(t_heat or _Title('xbpm_positions', 'heatmap'))
 
-        # Extract title from attrs or use default
-        pos_type = (
-            pos_data.name.split('/')[-1]
-            if hasattr(pos_data, 'name') else 'Position'
-        )
-        title_default = pos_type.replace('_', ' ').title() + ' Positions'
-        title         = pos_data.attrs.get('title', title_default)
-        title_cfg     = _Title('xbpm_positions', 'suptitle',
-                                beamline_ctx, rort, calc)
-        if title_cfg:
-            title = title_cfg
-        fig.suptitle(title, fontsize=12, fontweight='bold')
-
         return fig
+
+    @staticmethod
+    def _build_roi_mask(nom_x, nom_y, roi_bounds=None):
+        """Build ROI mask from saved bounds or central fallback."""
+        if isinstance(roi_bounds, dict):
+            try:
+                x_min = float(roi_bounds['x_min'])
+                x_max = float(roi_bounds['x_max'])
+                y_min = float(roi_bounds['y_min'])
+                y_max = float(roi_bounds['y_max'])
+                return ((nom_x >= x_min) & (nom_x <= x_max) &
+                        (nom_y >= y_min) & (nom_y <= y_max))
+            except Exception:
+                pass
+
+        h_center = (np.min(nom_x) + np.max(nom_x)) / 2
+        v_center = (np.min(nom_y) + np.max(nom_y)) / 2
+        h_range = (np.max(nom_x) - np.min(nom_x)) / 4
+        v_range = (np.max(nom_y) - np.min(nom_y)) / 4
+        return ((np.abs(nom_x - h_center) <= h_range) &
+                (np.abs(nom_y - v_center) <= v_range))
+
+    @staticmethod
+    def _apply_equal_limits(ax, pos_h, pos_v, nom_h, nom_v):
+        """Apply the same centered equal-aspect limits used in live plots."""
+        all_h = np.concatenate([np.ravel(pos_h), np.ravel(nom_h)])
+        all_v = np.concatenate([np.ravel(pos_v), np.ravel(nom_v)])
+        all_h = all_h[np.isfinite(all_h)]
+        all_v = all_v[np.isfinite(all_v)]
+        if all_h.size == 0 or all_v.size == 0:
+            ax.set_xlim(-1, 1)
+            ax.set_ylim(-1, 1)
+            ax.set_aspect('equal', adjustable='box')
+            return
+
+        h_min, h_max = np.min(all_h), np.max(all_h)
+        v_min, v_max = np.min(all_v), np.max(all_v)
+        h_range = h_max - h_min if h_max > h_min else 1
+        v_range = v_max - v_min if v_max > v_min else 1
+        total_range = max(h_range, v_range) * 1.3
+        h_center = (h_min + h_max) / 2
+        v_center = (v_min + v_max) / 2
+        ax.set_xlim(h_center - total_range / 2, h_center + total_range / 2)
+        ax.set_ylim(v_center - total_range / 2, v_center + total_range / 2)
+        ax.set_aspect('equal', adjustable='box')
+
+    @staticmethod
+    def _grid_from_points(nom_x, nom_y, values, rounding_digits=6):
+        """Create dense 2D grid from point cloud with float-stable binning."""
+        x_key = np.round(nom_x.astype(float), rounding_digits)
+        y_key = np.round(nom_y.astype(float), rounding_digits)
+        x_grid = np.unique(x_key)
+        y_grid = np.unique(y_key)
+
+        x_map = {val: idx for idx, val in enumerate(x_grid)}
+        y_map = {val: idx for idx, val in enumerate(y_grid)}
+        grid = np.full((len(y_grid), len(x_grid)), np.nan, dtype=float)
+
+        for xx, yy, vv in zip(x_key, y_key, values):
+            ix = x_map.get(xx)
+            iy = y_map.get(yy)
+            if ix is not None and iy is not None:
+                grid[iy, ix] = vv
+
+        return x_grid, y_grid, grid
+
+    @staticmethod
+    def _center_slice(n_side: int, roi_side: int) -> slice:
+        """Return central square slice of size roi_side within n_side."""
+        roi_side = int(max(1, min(roi_side, n_side)))
+        start = max(0, (n_side - roi_side) // 2)
+        end = min(n_side, start + roi_side)
+        return slice(start, end)
+
+    @staticmethod
+    def _infer_roi_side_from_bounds(nom_x_2d, nom_y_2d, roi_bounds=None):
+        """Infer square ROI side length from bounds and structured grid."""
+        if not isinstance(roi_bounds, dict):
+            return None
+        try:
+            x_min = float(roi_bounds['x_min'])
+            x_max = float(roi_bounds['x_max'])
+            y_min = float(roi_bounds['y_min'])
+            y_max = float(roi_bounds['y_max'])
+        except Exception:
+            return None
+
+        x_line = np.nanmedian(np.asarray(nom_x_2d, dtype=float), axis=0)
+        y_line = np.nanmedian(np.asarray(nom_y_2d, dtype=float), axis=1)
+        nx = int(np.count_nonzero((x_line >= x_min) & (x_line <= x_max)))
+        ny = int(np.count_nonzero((y_line >= y_min) & (y_line <= y_max)))
+        roi_side = min(nx, ny)
+        return roi_side if roi_side > 0 else None
 
 
 class SweepVisualizer:
@@ -577,6 +718,7 @@ class SweepVisualizer:
 
     def plot_from_arrays(range_h, range_v, pos_h, pos_v,
                          fit_h=None, fit_v=None,
+                         fit_h_line=None, fit_v_line=None,
                          xbpm_dist=1.0, figsize=(12, 5)):
         """Create sweep figure from numpy arrays (position reconstruction path).
 
@@ -605,7 +747,10 @@ class SweepVisualizer:
 
             axh.plot(x_vals, y_vals, 'o-', label="H sweep", zorder=2)
 
-            if fit_h is not None:
+            if fit_h_line is not None:
+                fit_line = fit_h_line * xbpm_dist
+                axh.plot(x_vals, fit_line, '^-', label="H fit", zorder=3)
+            elif fit_h is not None:
                 fit_line = (fit_h[0] * range_h + fit_h[1]) * xbpm_dist
                 axh.plot(x_vals, fit_line, '^-', label="H fit", zorder=3)
 
@@ -622,7 +767,10 @@ class SweepVisualizer:
 
             axv.plot(x_vals, y_vals, 'o-', label="V sweep", zorder=2)
 
-            if fit_v is not None:
+            if fit_v_line is not None:
+                fit_line = fit_v_line * xbpm_dist
+                axv.plot(fit_line, y_vals, '^-', label="V fit", zorder=3)
+            elif fit_v is not None:
                 fit_line = (fit_v[0] * range_v + fit_v[1]) * xbpm_dist
                 axv.plot(fit_line, y_vals, '^-', label="V fit", zorder=3)
 
@@ -650,56 +798,42 @@ class SweepVisualizer:
         Returns:
             matplotlib.figure.Figure
         """
-        fig, (axh, axv) = plt.subplots(1, 2, figsize=figsize)
+        range_h = h_data['x_index'][:] if h_data is not None else None
+        range_v = v_data['y_index'][:] if v_data is not None else None
+        pos_h = h_data['y_calc'][:] if h_data is not None else None
+        pos_v = v_data['x_calc'][:] if v_data is not None else None
 
-        # Horizontal sweep
+        fit_h_line = (h_data['y_fit'][:] if (h_data is not None and
+                      'y_fit' in h_data.dtype.names) else None)
+        fit_v_line = (v_data['x_fit'][:] if (v_data is not None and
+                      'x_fit' in v_data.dtype.names) else None)
+
+        fit_h = None
         if h_data is not None:
-            range_h = h_data['x_index'][:]
-            pos_h = h_data['y_calc'][:]
+            if fit_h_line is None and 'k' in h_data.attrs and 'delta' in h_data.attrs:
+                fit_h = np.array([h_data.attrs['k'], h_data.attrs['delta']])
+            elif fit_h_line is None and range_h is not None and 'y_fit' in h_data.dtype.names:
+                try:
+                    fit_h = np.polyfit(range_h, h_data['y_fit'][:], deg=1)
+                except Exception:
+                    fit_h = None
 
-            axh.plot(range_h, pos_h, 'o-', label="H sweep", zorder=2)
-
-            # Plot fit line from stored column if available
-            if 'y_fit' in h_data.dtype.names:
-                fit_line = h_data['y_fit'][:]
-                axh.plot(range_h, fit_line, '^-', label="H fit", zorder=3)
-            elif 'k' in h_data.attrs and 'delta' in h_data.attrs:
-                fit_line = (
-                    h_data.attrs['k'] * range_h + h_data.attrs['delta']
-                )
-                axh.plot(range_h, fit_line, '^-', label="H fit", zorder=3)
-
-            axh.set_xlabel("$x$ [$\\mu$m]")
-            axh.set_ylabel("$y$ [$\\mu$m]")
-            axh.set_title(_Title('sweeps', 'h'))
-            axh.grid(True)
-            axh.legend()
-
-        # Vertical sweep
+        fit_v = None
         if v_data is not None:
-            range_v = v_data['y_index'][:]
-            pos_v = v_data['x_calc'][:]
+            if fit_v_line is None and 'k' in v_data.attrs and 'delta' in v_data.attrs:
+                fit_v = np.array([v_data.attrs['k'], v_data.attrs['delta']])
+            elif fit_v_line is None and range_v is not None and 'x_fit' in v_data.dtype.names:
+                try:
+                    fit_v = np.polyfit(range_v, v_data['x_fit'][:], deg=1)
+                except Exception:
+                    fit_v = None
 
-            axv.plot(pos_v, range_v, 'o-', label="V sweep", zorder=2)
-
-            # Plot fit line from stored column if available
-            if 'x_fit' in v_data.dtype.names:
-                fit_line = v_data['x_fit'][:]
-                axv.plot(fit_line, range_v, '^-', label="V fit", zorder=3)
-            elif 'k' in v_data.attrs and 'delta' in v_data.attrs:
-                fit_line = (
-                    v_data.attrs['k'] * range_v + v_data.attrs['delta']
-                )
-                axv.plot(fit_line, range_v, '^-', label="V fit", zorder=3)
-
-            axv.set_xlabel("$x$ [$\\mu$m]")
-            axv.set_ylabel("$y$ [$\\mu$m]")
-            axv.set_title(_Title('sweeps', 'v'))
-            axv.grid(True)
-            axv.legend()
-
-        fig.tight_layout()
-        return fig
+        return SweepVisualizer.plot_from_arrays(
+            range_h, range_v, pos_h, pos_v,
+            fit_h=fit_h, fit_v=fit_v,
+            fit_h_line=fit_h_line, fit_v_line=fit_v_line,
+            xbpm_dist=1.0, figsize=figsize
+        )
 
 
 class BladeCurrentVisualizer:
