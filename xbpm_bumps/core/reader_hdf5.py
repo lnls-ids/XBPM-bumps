@@ -181,14 +181,57 @@ class HDF5FigureReconstructor:
 
     @staticmethod
     def _reconstruct_blades_center(analysis_grp):
-        """Reconstruct blades center figure from analysis group."""
-        from .visualizers import BladeCurrentVisualizer
+        """Reconstruct blades center figure from analysis group.
+
+        Uses the canonical plotting function with blade data extracted
+        from HDF5, ensuring consistency with live analysis.
+        """
+        import numpy as np
+        from .visualizers import plot_blades_center_from_dicts
+
         if 'sweeps' not in analysis_grp:
             raise ValueError("No sweeps in /analysis/ group")
         sweeps_grp = analysis_grp['sweeps']
         h_data = sweeps_grp.get('blades_h')
         v_data = sweeps_grp.get('blades_v')
-        return BladeCurrentVisualizer.plot_from_hdf5(h_data, v_data)
+
+        # Extract blade data from HDF5 into dicts matching live format
+        blades_h = None
+        range_h = None
+        if h_data is not None:
+            rng = h_data['x_index'][:]
+            blades_h = {}
+            for blade_name in ['to', 'ti', 'bi', 'bo']:
+                vals = h_data[blade_name][:]
+                err_name = f's_{blade_name}'
+                errs = (h_data[err_name][:]
+                        if err_name in h_data.dtype.names else None)
+                if errs is not None:
+                    blades_h[blade_name] = np.column_stack([vals, errs])
+                else:
+                    blades_h[blade_name] = vals
+            range_h = rng
+
+        blades_v = None
+        range_v = None
+        if v_data is not None:
+            rng = v_data['y_index'][:]
+            blades_v = {}
+            for blade_name in ['to', 'ti', 'bi', 'bo']:
+                vals = v_data[blade_name][:]
+                err_name = f's_{blade_name}'
+                errs = (v_data[err_name][:]
+                        if err_name in v_data.dtype.names else None)
+                if errs is not None:
+                    blades_v[blade_name] = np.column_stack([vals, errs])
+                else:
+                    blades_v[blade_name] = vals
+            range_v = rng
+
+        # Use canonical plotting function
+        beamline = analysis_grp.attrs.get('beamline', '')
+        return plot_blades_center_from_dicts(blades_h, blades_v, range_h,
+                                             range_v, beamline)
 
     @staticmethod
     def _reconstruct_positions(analysis_grp, dataset_name):
@@ -199,7 +242,30 @@ class HDF5FigureReconstructor:
         positions_grp = analysis_grp['positions']
         if dataset_name not in positions_grp:
             raise ValueError(f"No {dataset_name} in /analysis/positions/")
-        return PositionVisualizer.plot_from_hdf5(positions_grp[dataset_name])
+
+        # Infer title context from dataset/group naming conventions.
+        name = (dataset_name or '').lower()
+        calc = 'pairwise' if 'pair' in name else ('cross' if 'cross' in name
+                                                   else '')
+        if 'raw' in name:
+            rort = 'raw'
+        elif 'scaled' in name or 'transf' in name:
+            rort = 'Transf.'
+        else:
+            rort = ''
+
+        beamline = analysis_grp.attrs.get('beamline', '')
+        if not beamline:
+            grp_name = analysis_grp.name.rsplit('/', 1)[-1]
+            if grp_name.startswith('analysis_'):
+                beamline = grp_name.split('analysis_', 1)[1]
+
+        return PositionVisualizer.plot_from_hdf5(
+            positions_grp[dataset_name],
+            beamline=beamline,
+            rort=rort,
+            calc=calc,
+        )
 
 
 # --- Object-Oriented HDF5 Data Reader ---
@@ -280,19 +346,12 @@ class HDF5DataReader:
             rawdata: List of (meta, grid, bpm_dict) tuples
         """
         import numpy as np
-        from .config import Config
 
         rawdata = []
-        rawdata_0_keys = list(Config.BEAMLINENAME.keys())
-
-        rawdata_1_keys = [
-            'cnb', 'mnc', 'cat', 'mgn'
-        ]
         rawdata_2_keys = [
             'current', 'agx', 'agy', 'posx', 'posy', 'orbx', 'orby',
         ]
 
-        sweep_idx = 0
         for key in raw_grp:
             if not key.startswith('sweep_'):
                 continue

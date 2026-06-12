@@ -100,7 +100,94 @@ class Config:
         "MNC": "subsec:09SA"
     }
 
+    # -----------------------------------------------------------------------
+    # Graph titles, grouped by tab / figure.
+    # Keys within each tab are the subplot role: 'total', 'roi', 'heatmap',
+    # 'h' (horizontal panel), 'v' (vertical panel), 'suptitle'.
+    # Values may be plain strings or format-strings with {beamline} / {xbpm}.
+    # -----------------------------------------------------------------------
+    PLOT_TITLES = {
+        # BPM-derived positions tab
+        "bpm": {
+            "total"   : "BPM @ {beamline}",
+            "roi"     : "BPM @ {beamline} (ROI)",
+            "heatmap" : "Differences at ROI",
+        },
+
+        # "Blade Map" tab
+        "blade_map": {
+            "suptitle" : "Blade Map – {beamline}",
+        },
+
+        # "Blades at sweeps" tab
+        "blades_at_sweeps": {
+            "h"        : "Horizontal",
+            "v"        : "Vertical",
+            "suptitle" : "Blade Currents at Center",
+        },
+
+        # "Positions along sweeps" tab
+        "sweeps": {
+            "h"        : "Central Horizontal Sweeps",
+            "v"        : "Central Vertical Sweeps",
+        },
+
+        # XBPM position tabs (pairwise / cross, raw / transformed)
+        "xbpm_positions": {
+            "total"    : (
+                "XBPM{xbpmnum}@{beamline}: {ct} $\Delta/\Sigma$, {rort}"
+                ),
+            "roi"      : (
+                "XBPM{xbpmnum}@{beamline}: {ct} $\Delta/\Sigma$, {rort} (ROI)"
+                ),
+            "heatmap"  : (
+                "XBPM{xbpmnum}@{beamline}: RMS in ROI"
+                ),
+        },
+    }
+
     @classmethod
     def get_beamline_name(cls, code: str) -> str:
         """Get full beamline name from code."""
         return cls.BEAMLINENAME.get(code, "N/A")
+
+    @classmethod
+    def get_plot_title(cls, tab: str,
+                       graph: str,
+                       beamline: str = None,
+                       rort: str = "",
+                       calc_type: str = "") -> str:
+        """Return a graph title from the central registry.
+
+        Args:
+            tab:       Top-level key in PLOT_TITLES (e.g. 'sweeps').
+            graph:     Subplot role key
+                       ('total', 'roi', 'heatmap', 'h', 'v', 'suptitle').
+            beamline:  Beamline 3-letter code plus XBPM number (e.g. 'MNC1').
+            rort:      raw or transformed.
+            calc_type: calculation type (e.g. 'pairwise' or 'cross').
+
+        Returns:
+            Formatted title string, or empty string if key not found.
+        """
+        # Select beamline code and XBPM number from input, if provided.
+        if beamline is not None:
+            bline, xbpmnum = beamline[:3], beamline[-1]
+        else:
+            bline, xbpmnum = "", ""
+
+        # Set raw / transformed string for title, if provided.
+        rort = "Raw" if rort == "R" else "Transf."
+
+        # Select cacl type name from pairwise / cross, if provided.
+        if calc_type:
+            calc_type = "" if calc_type == "pairwise" else "Part."
+
+        # Get template from registry and format it with provided values.
+        template = cls.PLOT_TITLES.get(tab, {}).get(graph, "")
+        return template.format(
+            beamline=bline,
+            xbpmnum=xbpmnum,
+            rort=rort,
+            ct=calc_type,
+        )

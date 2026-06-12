@@ -8,6 +8,9 @@ import matplotlib.pyplot as plt
 from .parameters  import Prm                     # noqa: E272
 from .visualizers import PositionVisualizer
 from .constants   import ROI_SIZE_V, ROI_SIZE_H, FIGDPI    # noqa: E272
+from .config      import Config                  # noqa: E272
+
+_Title = Config.get_plot_title   # shorthand for plot titles
 # from .exporters import Exporter
 
 # Keep math font consistent with visualizers (Computer Modern / cm).
@@ -184,35 +187,6 @@ class XBPMProcessor:
             print("\n Figure of blades behaviour at central sweeps"
                   f" saved to file {outfile}.\n")
 
-    def calculate_positions(self, pos_nom_h, pos_nom_v,
-                            nosuppress: bool = False,
-                            showmatrix: bool = True) -> list:
-        """Orchestrate XBPM position calculations and visualization.
-
-        Ensures central sweeps are analyzed, then delegates to
-        `_xbpm_position_calc` to compute positions and plot results.
-
-        Args:
-            nosuppress: If True, skip suppression matrix (raw mode).
-            showmatrix: If True, display blade behavior matrices.
-            pos_nom_h: Nominal position grid (horizontal).
-            pos_nom_v: Nominal position grid (vertical).
-        """
-        # Ensure sweep data is available
-        if (self.range_h is None or self.range_v is None or
-                self.blades_h is None or self.blades_v is None):
-            self.analyze_central_sweeps(show=False)
-
-        rtitle = "raw XBPM" if nosuppress else "scaled XBPM"
-
-        return self._xbpm_position_calc(
-            rtitle=rtitle,
-            nosuppress=nosuppress,
-            showmatrix=showmatrix,
-            pos_nom_h=pos_nom_h,
-            pos_nom_v=pos_nom_v,
-        )
-
     def _extract_roi_slice(self, array):
         """Extract centered ROI slice from an array, handling 1D/2D."""
         nv, nh = array.shape
@@ -233,7 +207,7 @@ class XBPMProcessor:
     def _process_position_type(self, calc_type,  # noqa: D417
                                pos_full_h, pos_full_v,
                                pos_nom_h, pos_nom_v, pos_nom_h_roi,
-                               pos_nom_v_roi, rtitle):
+                               pos_nom_v_roi, nosuppress):
         """Process a single position type (pairwise or cross-blade).
 
         Args:
@@ -241,7 +215,7 @@ class XBPMProcessor:
             pos_full_h/v: Full position array (measured)
             pos_nom_h/v: Nominal position array (reference)
             pos_nom_h/v_roi: ROI slice of nominal positions
-            rtitle: Result title for visualization
+            nosuppress: If True, label results as raw mode.
 
         Returns:
             Dict with scaled positions, scales, stats, visualizer.
@@ -257,11 +231,24 @@ class XBPMProcessor:
             pos_nom_h_roi, pos_nom_v_roi, label
         )
 
-        # Build display title: math symbol + transform suffix
-        op_symbol = (u"$\Delta/\Sigma$" if calc_type == "pairwise"
-                     else u"partial $\Delta/\Sigma$")
-        transform = "raw" if "raw" in rtitle else "Tr"
-        vis_title = f"{op_symbol} - {transform}"
+        # Set raw (R) / transformed (T) graph type.
+        transform = "R" if nosuppress else "T"
+
+        # Build title map for visualizer with formatted titles from registry.
+        title_map = {
+            'total'   : _Title('xbpm_positions', 'total',
+                               beamline=self.prm.beamline,
+                               rort=transform,
+                               calc_type=calc_type),
+            'roi'     : _Title('xbpm_positions', 'roi',
+                               beamline=self.prm.beamline,
+                               rort=transform,
+                               calc_type=calc_type),
+            'heatmap' : _Title('xbpm_positions', 'heatmap',
+                               beamline=self.prm.beamline,
+                               rort=transform,
+                               calc_type=calc_type),
+        }
 
         # Scale full positions
         pos_full_h_scaled = kx * pos_full_h + deltax
@@ -276,7 +263,7 @@ class XBPMProcessor:
         stats = self._calculate_roi_stats(diffx2, diffy2)
 
         # Visualize
-        visualizer = PositionVisualizer(self.prm, vis_title)
+        visualizer = PositionVisualizer(self.prm, titles=title_map)
         visualizer.show_position_results(
             pos_nom_h, pos_nom_v,
             pos_full_h_scaled, pos_full_v_scaled,
@@ -357,14 +344,19 @@ class XBPMProcessor:
             },
         }
 
-    def _xbpm_position_calc(self, rtitle: str, nosuppress: bool,
-                            showmatrix: bool,
-                            pos_nom_h, pos_nom_v) -> dict:
+    def xbpm_position_calculation(self, pos_nom_h, pos_nom_v,
+                                  nosuppress: bool = False,
+                                  showmatrix: bool = True) -> dict:
         """Orchestrate position calculation for pairwise and cross-blade.
 
         Delegates to helpers for reduced complexity while maintaining
         full analysis pipeline.
         """
+        # Ensure sweep data is available for suppression matrix estimation.
+        if (self.range_h is None or self.range_v is None or
+                self.blades_h is None or self.blades_v is None):
+            self.analyze_central_sweeps(show=False)
+
         # Parse and compute core data
         blades, _ = self.data_parse()
         supmat = self.suppression_matrix(showmatrix=showmatrix,
@@ -385,7 +377,7 @@ class XBPMProcessor:
             results_by_type[calc_type] = self._process_position_type(
                 calc_type, pos_h, pos_v,
                 pos_nom_h, pos_nom_v, pos_nom_h_roi, pos_nom_v_roi,
-                rtitle
+                nosuppress
             )
 
         # Compile and return results
@@ -752,13 +744,13 @@ class BPMProcessor:
         # Plot full grid
         self._plot_position_scatter(
             ax_all, self.xnom, self.ynom, self.xpos, self.ypos,
-            f"BPM @ {self.prm.beamline}"
+            _Title('bpm', 'total', beamline=self.prm.beamline)
         )
 
         # Plot ROI closeup
         self._plot_position_scatter(
             ax_close, xnom_roi, ynom_roi, xpos_roi, ypos_roi,
-            f"BPM @ {self.prm.beamline} (ROI)"
+            _Title('bpm', 'roi', beamline=self.prm.beamline)
         )
 
         # Plot differences heatmap with extent mapping
@@ -845,7 +837,9 @@ class BPMProcessor:
 
             axdiff.set_xlabel("")
             axdiff.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
-            axdiff.set_title("Differences at ROI")
+            axdiff.set_title(
+                _Title('bpm', 'heatmap', self.prm.beamline), pad=2
+                )
             axdiff.grid(False)
         else:
             # 2D heatmap with extent mapping
@@ -876,7 +870,9 @@ class BPMProcessor:
 
             axdiff.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)  # noqa: W605
             axdiff.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
-            axdiff.set_title("Differences at ROI")
+            axdiff.set_title(
+                _Title('bpm', 'heatmap', self.prm.beamline), pad=2
+                )
             axdiff.grid(False)
 
     def _plot_position_scatter(self, ax, pos_nom_h, pos_nom_v,
@@ -935,10 +931,10 @@ class BPMProcessor:
         handles, labels = [], []
         if len(nom) > 0:
             handles.append(nom[0])
-            labels.append("Nominal")
+            labels.append("Nom.")
         if len(pos) > 0:
             handles.append(pos[0])
-            labels.append("Calculated")
+            labels.append("Calc.")
         if handles:
             ax.legend(handles, labels)
         ax.grid()
@@ -1029,6 +1025,8 @@ class BPMProcessor:
 
     def _offset_search(self, idx):
         """Extrapolate offsets when reference orbit is missing."""
+        # Get the angle and orbit data for the current and next BPMs
+        # across all measurements.
         nextidx = idx + 1
         agx    = np.array([dt[2]['agx']
                            for dt in self.rawdata])
@@ -1037,6 +1035,8 @@ class BPMProcessor:
         n_orbx = np.array([dt[2]['orbx'][nextidx]
                            for dt in self.rawdata])
 
+        # Find the max and min angles to check for variation. If angles are
+        # constant, we cannot extrapolate and must raise an error.
         agxmax = np.max(agx)
         agxmin = np.min(agx)
         if np.isclose(agxmax, agxmin):
@@ -1045,6 +1045,7 @@ class BPMProcessor:
                 "or explicit (agx=0, agy=0) reference point."
             )
 
+        # Use the max and min orbits to extrapolate the offset at zero angle.
         osx = np.array(sorted(list(set(orbx))))
         oxmin, oxmax = osx[0], osx[-1]
         offset_x_sect = ((oxmin * agxmax - oxmax * agxmin) /
@@ -1055,6 +1056,7 @@ class BPMProcessor:
         offset_x_next = ((onxmin * agxmax - onxmax * agxmin) /
                          (agxmax - agxmin))
 
+        # Repeat the same process for the vertical plane.
         agy    = np.array([dt[2]['agy']
                            for dt in self.rawdata])
         orby   = np.array([dt[2]['orby'][idx]

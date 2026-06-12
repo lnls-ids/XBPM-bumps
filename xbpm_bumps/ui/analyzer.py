@@ -412,7 +412,7 @@ class XBPMAnalyzer(QObject):
         """Calculate raw XBPM positions."""
         self.analysisProgress.emit("Calculating raw XBPM positions...")
         pos_nom_h, pos_nom_v = self._resolve_reference_positions(results)
-        result_data = self.app.processor.calculate_positions(
+        result_data = self.app.processor.xbpm_position_calculation(
             pos_nom_h, pos_nom_v,
             nosuppress=True,
             showmatrix=True,
@@ -463,7 +463,7 @@ class XBPMAnalyzer(QObject):
         """Calculate scaled XBPM positions."""
         self.analysisProgress.emit("Calculating scaled XBPM positions...")
         pos_nom_h, pos_nom_v = self._resolve_reference_positions(results)
-        result_data = self.app.processor.calculate_positions(
+        result_data = self.app.processor.xbpm_position_calculation(
             pos_nom_h, pos_nom_v,
             nosuppress=False,
             showmatrix=True,
@@ -517,84 +517,20 @@ class XBPMAnalyzer(QObject):
         self.logMessage.emit("Stop requested...")
 
     def _generate_sweep_figure(self, range_h, range_v, blades_h, blades_v):
-        """Generate central sweep position plots."""
-        import matplotlib.pyplot as plt
-        import numpy as np
+        """Generate central sweep position plots.
 
-        # Calculate positions from blade data
-        pos_ch_v = None
-        fit_ch_v = None
-        if blades_h is not None and len(range_h) > 1:
-            to_ch = blades_h["to"]
-            ti_ch = blades_h["ti"]
-            bi_ch = blades_h["bi"]
-            bo_ch = blades_h["bo"]
-
-            pos_to_ti_v = (to_ch + ti_ch)
-            pos_bi_bo_v = (bo_ch + bi_ch)
-            pos_ch_v = ((pos_to_ti_v - pos_bi_bo_v) /
-                        (pos_to_ti_v + pos_bi_bo_v))
-            fit_ch_v = np.polyfit(range_h, pos_ch_v, deg=1)
-
-        pos_cv_h = None
-        fit_cv_h = None
-        if blades_v is not None and len(range_v) > 1:
-            to_cv = blades_v["to"]
-            ti_cv = blades_v["ti"]
-            bi_cv = blades_v["bi"]
-            bo_cv = blades_v["bo"]
-
-            pos_to_bo_h = (to_cv + bo_cv)
-            pos_ti_bi_h = (ti_cv + bi_cv)
-            pos_cv_h = ((pos_to_bo_h - pos_ti_bi_h) /
-                        (pos_to_bo_h + pos_ti_bi_h))
-            fit_cv_h = np.polyfit(range_v, pos_cv_h, deg=1)
-
-        # Create figure
-        fig, (axh, axv) = plt.subplots(1, 2, figsize=(12, 5))
-
-        if fit_ch_v is not None:
-            hline = ((fit_ch_v[0, 0] * range_h + fit_ch_v[1, 0])
-                     * self.app.prm.xbpmdist)
-            axh.plot(range_h * self.app.prm.xbpmdist,
-                     pos_ch_v[:, 0] * self.app.prm.xbpmdist, 'o-',
-                     label="H sweep")
-            axh.plot(range_h * self.app.prm.xbpmdist, hline,
-                     '^-', label="H fit")
-            axh.set_xlabel("$x$ [$\\mu$m]")
-            axh.set_ylabel("$y$ [$\\mu$m]")
-            axh.set_title("Central Horizontal Sweeps")
-            ylim = (np.max(np.abs(hline + pos_ch_v[:, 0]
-                                  * self.app.prm.xbpmdist)) * 1.1)
-            axh.set_ylim(-ylim, ylim)
-            axh.grid(True)
-            axh.legend()
-
-        if fit_cv_h is not None:
-            vline = ((fit_cv_h[0, 0] * range_v + fit_cv_h[1, 0])
-                     * self.app.prm.xbpmdist)
-            axv.plot(pos_cv_h[:, 0] * self.app.prm.xbpmdist,
-                     range_v * self.app.prm.xbpmdist,
-                     'o-', label="V sweep")
-            axv.plot(vline, range_v * self.app.prm.xbpmdist,
-                     '^-', label="V fit")
-            axv.set_xlabel("$x$ [$\\mu$m]")
-            axv.set_ylabel("$y$ [$\\mu$m]")
-            axv.set_title("Central Vertical Sweeps")
-            axv.set_xlim((np.min(range_v) * 0.005 + fit_cv_h[1, 0])
-                         * self.app.prm.xbpmdist,
-                         (np.max(range_v) * 0.005 + fit_cv_h[1, 0])
-                         * self.app.prm.xbpmdist)
-            axv.grid(True)
-            axv.legend()
-
-        fig.tight_layout()
-        return fig
+        Delegates to the canonical visualizer implementation.
+        """
+        from ..core.visualizers import plot_central_sweeps
+        return plot_central_sweeps(range_h, range_v, blades_h, blades_v,
+                                   self.app.prm.xbpmdist)
 
     def _generate_blades_center_figure(self):
-        """Generate blade currents at center plots."""
-        import matplotlib.pyplot as plt
-        import numpy as np
+        """Generate blade currents at center plots.
+
+        Delegates to the canonical visualizer implementation.
+        """
+        from ..core.visualizers import plot_blades_center_from_dicts
 
         # Ensure we have sweep data
         if (self.app.processor.range_h is None or
@@ -606,48 +542,5 @@ class XBPMAnalyzer(QObject):
         range_h = self.app.processor.range_h
         range_v = self.app.processor.range_v
 
-        if blades_h is None and blades_v is None:
-            return None
-
-        fig, (axh, axv) = plt.subplots(1, 2, figsize=(10, 5))
-
-        if blades_h is not None:
-            for key, blval in blades_h.items():
-                val = blval[:, 0]
-                wval = blval[:, 1]
-                weight = 1. / wval if not np.isinf(1. / wval).any() else None
-                (acoef, bcoef) = np.polyfit(range_h, val, deg=1, w=weight)
-                k = f"{key.upper()}"
-                axh.errorbar(range_h, val, wval, fmt='o-', label=k,
-                             zorder=1)
-                axh.plot(range_h, range_h * acoef + bcoef,
-                         "^-", label=f"{k} fit", zorder=2)
-
-        if blades_v is not None:
-            for key, blval in blades_v.items():
-                val = blval[:, 0]
-                wval = blval[:, 1]
-                weight = 1. / wval if not np.isinf(1. / wval).any() else None
-                (acoef, bcoef) = np.polyfit(range_v, val, deg=1, w=weight)
-                k = f"{key.upper()}"
-                axv.errorbar(range_v, val, wval, fmt='o-', label=k,
-                             zorder=1)
-                axv.plot(range_v, range_v * acoef + bcoef,
-                         "^-", label=f"{k} fit", zorder=2)
-
-        axh.set_title("Horizontal")
-        axv.set_title("Vertical")
-        axh.legend()
-        axv.legend()
-        axh.grid()
-        axv.grid()
-        axh.set_xlabel("$x$ $\\mu$rad")
-        axv.set_xlabel("$y$ $\\mu$rad")
-
-        ylabel = ("$I$ [# counts]" if self.app.prm.beamline[:3]
-                  in ["MGN", "MNC"] else "$I$ [A]")
-        axh.set_ylabel(ylabel)
-        axv.set_ylabel(ylabel)
-        fig.tight_layout()
-
-        return fig
+        return plot_blades_center_from_dicts(blades_h, blades_v, range_h,
+                                             range_v, self.app.prm.beamline)

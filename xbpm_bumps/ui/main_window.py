@@ -895,26 +895,38 @@ class XBPMMainWindow(QMainWindow):
 
         width, height = original_size
         target_width = min(width, 10.0)
-        target_height = height * (target_width / width) if width > 0 else height
+        target_height = (height * (target_width / width) 
+                         if width > 0
+                         else height)
         fig.set_size_inches(target_width, target_height, forward=False)
 
         for ax in axes:
             axis_state.append({
-                'title': ax.title.get_fontsize(),
-                'xlabel': ax.xaxis.label.get_fontsize(),
-                'ylabel': ax.yaxis.label.get_fontsize(),
-                'xtick': ax.xaxis.get_ticklabels()[0].get_fontsize()
-                if ax.xaxis.get_ticklabels() else None,
-                'ytick': ax.yaxis.get_ticklabels()[0].get_fontsize()
-                if ax.yaxis.get_ticklabels() else None,
+                'title'  : ax.title.get_fontsize(),
+                'xlabel' : ax.xaxis.label.get_fontsize(),
+                'ylabel' : ax.yaxis.label.get_fontsize(),
+                'xtick'  : ax.xaxis.get_ticklabels()[0].get_fontsize()
+                            if ax.xaxis.get_ticklabels() else None,
+                'ytick'  : ax.yaxis.get_ticklabels()[0].get_fontsize()
+                            if ax.yaxis.get_ticklabels() else None,
             })
 
-            ax.title.set_fontsize(max(ax.title.get_fontsize() * 1.35, 14))
+            # Keep export readable while avoiding overlap on long panel titles.
+            title_scale = 1.05
+            title_min = 10
+            title_max = 12
+            title_text = ax.get_title() or ""
+            if len(title_text) > 42:
+                title_max = 10
+            ax.title.set_fontsize(
+                min(max(ax.title.get_fontsize() * title_scale, title_min),
+                    title_max)
+            )
             ax.xaxis.label.set_fontsize(
-                max(ax.xaxis.label.get_fontsize() * 1.35, 13)
+                max(ax.xaxis.label.get_fontsize() * 1.20, 12)
             )
             ax.yaxis.label.set_fontsize(
-                max(ax.yaxis.label.get_fontsize() * 1.35, 13)
+                max(ax.yaxis.label.get_fontsize() * 1.20, 12)
             )
             ax.tick_params(axis='both', which='major', labelsize=11)
 
@@ -923,7 +935,7 @@ class XBPMMainWindow(QMainWindow):
                 sizes = [text.get_fontsize() for text in legend.get_texts()]
                 legend_state.append((legend, sizes))
                 for text in legend.get_texts():
-                    text.set_fontsize(max(text.get_fontsize() * 1.25, 11))
+                    text.set_fontsize(max(text.get_fontsize() * 0.75, 9))
 
         for text in fig.findobj(match=lambda obj: hasattr(obj, 'get_text')):
             try:
@@ -932,7 +944,7 @@ class XBPMMainWindow(QMainWindow):
                 continue
             if label == "Difference [$\\mu$m]":
                 text_state.append((text, text.get_fontsize()))
-                text.set_fontsize(max(text.get_fontsize() * 1.25, 11))
+                text.set_fontsize(max(text.get_fontsize() * 0.8, 11))
 
         fig.savefig(path, dpi=FIGDPI, bbox_inches='tight')
 
@@ -976,7 +988,7 @@ class XBPMMainWindow(QMainWindow):
         # Compute nominal grid positions from data
         pos_nom_h, pos_nom_v = self._compute_nominal_positions(data)
 
-        result_raw = processor.calculate_positions(
+        result_raw = processor.xbpm_position_calculation(
             pos_nom_h=pos_nom_h,
             pos_nom_v=pos_nom_v,
             nosuppress=True,
@@ -1047,7 +1059,7 @@ class XBPMMainWindow(QMainWindow):
         # Compute nominal grid positions from data
         pos_nom_h, pos_nom_v = self._compute_nominal_positions(data)
 
-        result_scaled = processor.calculate_positions(
+        result_scaled = processor.xbpm_position_calculation(
             pos_nom_h=pos_nom_h,
             pos_nom_v=pos_nom_v,
             nosuppress=False,
