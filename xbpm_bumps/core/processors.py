@@ -248,7 +248,8 @@ class XBPMProcessor:
         """
         # Perform scaling fit
         label = "Δ/Σ" if calc_type == "pairwise" else "Partial Δ/Σ"
-        (kx, deltax, ky, deltay) = XBPMProcessor.scaling_fit(
+        (kx, skx, deltax, sdeltax,
+         ky, sky, deltay, sdeltay) = XBPMProcessor.scaling_fit(
             pos_roi_h, pos_roi_v,
             pos_nom_h_roi, pos_nom_v_roi, label
         )
@@ -307,16 +308,19 @@ class XBPMProcessor:
             'h_roi_scaled' : pos_roi_h_scaled,
             'v_roi_scaled' : pos_roi_v_scaled,
             'kx'           : kx,
+            'skx'          : skx,
             'ky'           : ky,
+            'sky'          : sky,
             'dx'           : deltax,
+            'sdx'          : sdeltax,
             'dy'           : deltay,
+            'sdy'          : sdeltay,
             'stats'        : stats,
             'visualizer'   : visualizer,
         }
 
     def _compile_results(self, pair_result, cross_result,
-                         supmat, nosuppress,
-                         pos_nom_h, pos_nom_v):
+                         supmat, nosuppress, pos_nom_h, pos_nom_v):
         """Compile and save final results from pairwise and cross-blade."""
         pair_visualizer  = pair_result['visualizer']
         cross_visualizer = cross_result['visualizer']
@@ -353,17 +357,25 @@ class XBPMProcessor:
             'pairwise_figure' : pair_visualizer.fig,
             'cross_figure'    : cross_visualizer.fig,
             'scales' : {
-                'pair'   : {
-                    'kx' : pair_result['kx'],
-                    'ky' : pair_result['ky'],
-                    'dx' : pair_result['dx'],
-                    'dy' : pair_result['dy'],
+                'pair'    : {
+                    'kx'  : pair_result['kx'],
+                    'skx' : pair_result['skx'],
+                    'ky'  : pair_result['ky'],
+                    'sky' : pair_result['sky'],
+                    'dx'  : pair_result['dx'],
+                    'sdx' : pair_result['sdx'],
+                    'dy'  : pair_result['dy'],
+                    'sdy' : pair_result['sdy'],
                 },
-                'cross'  : {
-                    'kx' : cross_result['kx'],
-                    'ky' : cross_result['ky'],
-                    'dx' : cross_result['dx'],
-                    'dy' : cross_result['dy'],
+                'cross'   : {
+                    'kx'  : cross_result['kx'],
+                    'skx' : cross_result['skx'],
+                    'ky'  : cross_result['ky'],
+                    'sky' : cross_result['sky'],
+                    'dx'  : cross_result['dx'],
+                    'sdx' : cross_result['sdx'],
+                    'dy'  : cross_result['dy'],
+                    'sdy' : cross_result['sdy'],
                 },
             },
             'supmat' : supmat,
@@ -599,25 +611,61 @@ class XBPMProcessor:
         pos_v_cln = pos_v[v_finitemask]
         nom_v_cln = nom_v[v_finitemask]
 
-        kx, deltax = 1., 0.
-        if len(set(nom_h.ravel())) > 1:
+        kx, deltax   = 1., 0.
+        skx, sdeltax = 0., 0.
+        if len(set(nom_h.ravel())) > 1 and pos_h_cln.size >= 2:
+            coeffs_x = None
+            covx = None
             try:
-                kx, deltax = np.polyfit(pos_h_cln, nom_h_cln, deg=1)
-            except Exception as err:
-                print(f"\n WARNING: when calculating horizontal scaling"
-                      f" coefficients:\n{err}\n Setting to default values.")
+                # polyfit(cov=True) returns (coeffs, cov_matrix), not 3 values.
+                coeffs_x, covx = np.polyfit(
+                    pos_h_cln, nom_h_cln, deg=1, cov=True
+                )
+            except Exception:
+                # Keep fitted coefficients even if covariance cannot be estimated
+                # (e.g., small sample count), so scaling is still applied.
+                try:
+                    coeffs_x = np.polyfit(pos_h_cln, nom_h_cln, deg=1)
+                except Exception as err:
+                    print(f"\n WARNING: when calculating horizontal scaling"
+                          f" coefficients:\n{err}\n"
+                          " Setting to default values.")
 
-        ky, deltay = 1., 0.
-        if len(set(nom_v.ravel())) > 1:
+            if coeffs_x is not None:
+                kx, deltax = coeffs_x
+            if covx is not None:
+                skx     = np.sqrt(covx[0, 0])
+                sdeltax = np.sqrt(covx[1, 1])
+
+        ky, deltay   = 1., 0.
+        sky, sdeltay = 0., 0.
+        if len(set(nom_v.ravel())) > 1 and pos_v_cln.size >= 2:
+            coeffs_y = None
+            covy = None
             try:
-                ky, deltay = np.polyfit(pos_v_cln, nom_v_cln, deg=1)
-            except Exception as err:
-                print(f"\n WARNING: when calculating vertical scaling"
-                      f" coefficients:\n{err}\n Setting to default values.")
+                # polyfit(cov=True) returns (coeffs, cov_matrix), not 3 values.
+                coeffs_y, covy = np.polyfit(
+                    pos_v_cln, nom_v_cln, deg=1, cov=True
+                )
+            except Exception:
+                try:
+                    coeffs_y = np.polyfit(pos_v_cln, nom_v_cln, deg=1)
+                except Exception as err:
+                    print(f"\n WARNING: when calculating vertical scaling"
+                          f" coefficients:\n{err}\n"
+                          " Setting to default values.")
 
-        print(f"kx = {kx:12.4f},   deltax = {deltax:12.4f}")
-        print(f"ky = {ky:12.4f},   deltay = {deltay:12.4f}\n")
-        return kx, deltax, ky, deltay
+            if coeffs_y is not None:
+                ky, deltay = coeffs_y
+            if covy is not None:
+                sky     = np.sqrt(covy[0, 0])
+                sdeltay = np.sqrt(covy[1, 1])
+
+        print(f"kx = {kx:12.4f} ({skx:4.1f}),"
+              f"   deltax = {deltax:12.4f} ({sdeltax:4.1f})")
+        print(f"ky = {ky:12.4f} ({sky:4.1f}),"
+              f"   deltay = {deltay:12.4f} ({sdeltay:4.1f})\n")
+        return kx, skx, deltax, sdeltax, ky, sky, deltay, sdeltay
 
     @staticmethod
     def _estimate_spreaded_std_dev(pos_h_scaled, pos_v_scaled,

@@ -689,12 +689,13 @@ class XBPMMainWindow(QMainWindow):
         # Figures that need separate windows or tabs (position grids)
         popup_specs = [
             ('xbpm_raw_pairwise_figure', 'xbpm_raw_pairwise',
-             "XBPM Raw Pairwise"),
-            ('xbpm_raw_cross_figure', 'xbpm_raw_cross', "XBPM Raw Cross"),
+               "XBPM Raw Δ/Σ"),
+              ('xbpm_raw_cross_figure', 'xbpm_raw_cross',
+               "XBPM Raw Partial Δ/Σ"),
             ('xbpm_scaled_pairwise_figure', 'xbpm_scaled_pairwise',
-             "XBPM Scaled Pairwise"),
+               "XBPM Transf. Δ/Σ"),
             ('xbpm_scaled_cross_figure', 'xbpm_scaled_cross',
-             "XBPM Scaled Cross"),
+               "XBPM Transf. Partial Δ/Σ"),
         ]
 
         # Display inline figures in main window
@@ -847,9 +848,13 @@ class XBPMMainWindow(QMainWindow):
                 f" | Type: positions / {calc_type} / {sup}\n"
             )
             fp.write(f"kx           = {float(scales.get('kx', 1)):.6f}\n")
+            fp.write(f"skx          = {float(scales.get('skx', 0)):.6f}\n")
             fp.write(f"dx           = {float(scales.get('dx', 0)):.6f}\n")
+            fp.write(f"sdx          = {float(scales.get('sdx', 0)):.6f}\n")
             fp.write(f"ky           = {float(scales.get('ky', 1)):.6f}\n")
+            fp.write(f"sky          = {float(scales.get('sky', 0)):.6f}\n")
             fp.write(f"dy           = {float(scales.get('dy', 0)):.6f}\n")
+            fp.write(f"sdy          = {float(scales.get('sdy', 0)):.6f}\n")
             if stats:
                 fp.write("sigma_h      = "
                          f"{float(stats.get('sigma_h', 0)):.6f}  um\n")
@@ -870,8 +875,8 @@ class XBPMMainWindow(QMainWindow):
         """Save figure with print-friendly typography without changing UI use.
 
         The live app keeps its current figure sizing. Export applies a
-        temporary font boost and slightly more compact figure width so labels
-        remain legible when placed on A4 pages.
+        temporary font boost but preserves figure geometry so subplot spacing
+        remains consistent with what is shown in the UI.
         """
         original_size = fig.get_size_inches().copy()
         axes = fig.get_axes()
@@ -881,9 +886,9 @@ class XBPMMainWindow(QMainWindow):
 
         width, height = original_size
         target_width = min(width, 10.0)
-        target_height = (height * (target_width / width) 
-                         if width > 0
-                         else height)
+        target_height = (height * (target_width / width)
+                 if width > 0
+                 else height)
         fig.set_size_inches(target_width, target_height, forward=False)
 
         for ax in axes:
@@ -897,13 +902,14 @@ class XBPMMainWindow(QMainWindow):
                             if ax.yaxis.get_ticklabels() else None,
             })
 
-            # Keep export readable while avoiding overlap on long panel titles.
-            title_scale = 1.05
-            title_min = 10
-            title_max = 12
+            # Keep former tuned proportions; only reduce title size a bit
+            # to avoid collisions on 3-panel layouts.
+            title_scale = 0.90
+            title_min = 9
+            title_max = 10
             title_text = ax.get_title() or ""
             if len(title_text) > 42:
-                title_max = 10
+                title_max = 9
             ax.title.set_fontsize(
                 min(max(ax.title.get_fontsize() * title_scale, title_min),
                     title_max)
@@ -932,6 +938,9 @@ class XBPMMainWindow(QMainWindow):
                 text_state.append((text, text.get_fontsize()))
                 text.set_fontsize(max(text.get_fontsize() * 0.8, 11))
 
+        # Keep canvas geometry untouched to preserve constrained-layout
+        # subplot spacing in exported PNGs (WYSIWYG with live tabs).
+        fig.canvas.draw()
         fig.savefig(path, dpi=FIGDPI, bbox_inches='tight')
 
         for ax, state in zip(axes, axis_state):
@@ -1614,7 +1623,8 @@ class XBPMMainWindow(QMainWindow):
 
                 lines_to_add = self._format_scale_entry(coeffs)
                 if lines_to_add:
-                    scale_lines.append(f"  * {scope} {label}:")
+                    subject = Config.get_position_subject(scope, label)
+                    scale_lines.append(f"  * {subject}:")
                     scale_lines.extend(lines_to_add)
 
         return {'positions': scale_lines} if scale_lines else {}
@@ -1625,13 +1635,19 @@ class XBPMMainWindow(QMainWindow):
         line1 = []
         line2 = []
 
-        for key, err_key in (('kx', 's_kx'), ('dx', 's_dx')):
-            item = self._format_value_with_optional_error(coeffs, key, err_key)
+        for key, err_keys in (
+            ('kx', ('skx', 's_kx')),
+            ('dx', ('sdx', 's_dx')),
+        ):
+            item = self._format_value_with_optional_error(coeffs, key, err_keys)
             if item:
                 line1.append(item)
 
-        for key, err_key in (('ky', 's_ky'), ('dy', 's_dy')):
-            item = self._format_value_with_optional_error(coeffs, key, err_key)
+        for key, err_keys in (
+            ('ky', ('sky', 's_ky')),
+            ('dy', ('sdy', 's_dy')),
+        ):
+            item = self._format_value_with_optional_error(coeffs, key, err_keys)
             if item:
                 line2.append(item)
 
@@ -1645,12 +1661,23 @@ class XBPMMainWindow(QMainWindow):
     @staticmethod
     def _format_value_with_optional_error(coeffs: dict,
                                           key: str,
-                                          err_key: str) -> str:
+                                          err_keys) -> str:
         """Format coeff as value or value +/- error when available."""
         val = coeffs.get(key)
         if val is None:
             return ""
-        err = coeffs.get(err_key)
+
+        # Accept both legacy keys (s_kx/s_dx/...) and current keys
+        # (skx/sdx/...) to support old and new result payloads.
+        if isinstance(err_keys, (tuple, list)):
+            err = None
+            for ek in err_keys:
+                if ek in coeffs and coeffs.get(ek) is not None:
+                    err = coeffs.get(ek)
+                    break
+        else:
+            err = coeffs.get(err_keys)
+
         try:
             val_num = float(val)
             if err is not None:

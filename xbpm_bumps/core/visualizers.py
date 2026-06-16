@@ -235,9 +235,9 @@ class PositionVisualizer:
             engine = self.fig.get_layout_engine()
             if engine is not None and hasattr(engine, "set"):
                 engine.set(
-                    w_pad=0.02,   # space figure edge / axes, horizontal
+                    w_pad=0.06,   # space figure edge / axes, horizontal
                     h_pad=0.0,    # space figure edge / axes, vertical
-                    wspace=0.02,  # space between axes, horizontal
+                    wspace=0.06,  # space between axes, horizontal
                     hspace=0.0,   # space between axes, vertical
                 )
             else:
