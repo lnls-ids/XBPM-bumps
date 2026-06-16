@@ -2,12 +2,21 @@
 
 import os
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 
 from .parameters  import Prm                     # noqa: E272
 from .visualizers import PositionVisualizer
 from .constants   import ROI_SIZE_V, ROI_SIZE_H, FIGDPI    # noqa: E272
+from .config      import Config                  # noqa: E272
+
+_Title = Config.get_plot_title   # shorthand for plot titles
 # from .exporters import Exporter
+
+# Keep math font consistent with visualizers (Computer Modern / cm).
+matplotlib.rcParams['mathtext.fontset'] = 'cm'
+matplotlib.rcParams['mathtext.rm'] = 'serif'
+matplotlib.rcParams['font.family'] = 'serif'
 
 
 class XBPMProcessor:
@@ -178,93 +187,16 @@ class XBPMProcessor:
             print("\n Figure of blades behaviour at central sweeps"
                   f" saved to file {outfile}.\n")
 
-    def calculate_scaled_positions(self, pos_nom_h, pos_nom_v,
-                                   showmatrix: bool = True) -> list:
-        """Calculate positions with suppression matrix correction.
-
-        Applies suppression matrices to correct for blade gain variations
-        and scales results to physical distances.
-
-        Args:
-            showmatrix: If True, display blade behavior matrices.
-            pos_nom_h: Nominal position grid (horizontal).
-            pos_nom_v: Nominal position grid (vertical).
-
-        Returns:
-            List of [pairwise_positions_dict, cross_positions_dict].
-        """
-        return self.calculate_positions(
-            rtitle="scaled XBPM",
-            nosuppress=False,
-            pos_nom_h=pos_nom_h,
-            pos_nom_v=pos_nom_v,
-            showmatrix=showmatrix,
-        )
-
-    def calculate_raw_positions(self, pos_nom_h, pos_nom_v,
-                                showmatrix: bool = True) -> list:
-        """Calculate positions without suppression (raw).
-
-        Args:
-            showmatrix: If True, display blade behavior matrices.
-            pos_nom_h: Nominal position grid (horizontal).
-            pos_nom_v: Nominal position grid (vertical).
-        """
-        return self.calculate_positions(
-            rtitle="raw XBPM",
-            nosuppress=True,
-            pos_nom_h=pos_nom_h,
-            pos_nom_v=pos_nom_v,
-            showmatrix=showmatrix,
-        )
-
-    def calculate_positions(self, rtitle: str,
-                             nosuppress: bool,
-                             pos_nom_h, pos_nom_v,
-                             showmatrix: bool = True) -> list:
-        """Orchestrate XBPM position calculations and visualization.
-
-        Ensures central sweeps are analyzed, then delegates to
-        `_xbpm_position_calc` to compute positions and plot results.
-
-        Args:
-            rtitle: Result title for visualization.
-            nosuppress: If True, skip suppression matrix (raw mode).
-            showmatrix: If True, display blade behavior matrices.
-            pos_nom_h: Nominal position grid (horizontal).
-            pos_nom_v: Nominal position grid (vertical).
-        """
-        # Ensure sweep data is available
-        if (self.range_h is None or self.range_v is None or
-                self.blades_h is None or self.blades_v is None):
-            self.analyze_central_sweeps(show=False)
-
-        return self._xbpm_position_calc(
-            rtitle=rtitle,
-            nosuppress=nosuppress,
-            showmatrix=showmatrix,
-            pos_nom_h=pos_nom_h,
-            pos_nom_v=pos_nom_v,
-        )
-
-    def _extract_roi_bounds(self, pos_nom_h, pos_nom_v):
-        """Calculate ROI (Region of Interest) slice boundaries.
-
-        Returns:
-            Tuple (frh, uph, frv, upv) - row/column slice indices.
-        """
-        nh = pos_nom_h.shape[1]
-        nv = pos_nom_v.shape[0]
+    def _extract_roi_slice(self, array):
+        """Extract centered ROI slice from an array, handling 1D/2D."""
+        nv, nh = array.shape
         roi_h = min(self.roi_h_size, nh)
         roi_v = min(self.roi_v_size, nv)
         frh = max(0, int((nh - roi_h) / 2))
         uph = min(nh, frh + roi_h)
         frv = max(0, int((nv - roi_v) / 2))
         upv = min(nv, frv + roi_v)
-        return frh, uph, frv, upv
 
-    def _extract_roi_slice(self, array, frh, uph, frv, upv):
-        """Extract ROI slice from array, handling 1D/2D cases."""
         if array.shape[0] == 1:
             return array[0, frv:upv]
         elif array.shape[1] == 1:
@@ -275,7 +207,7 @@ class XBPMProcessor:
     def _process_position_type(self, calc_type,  # noqa: D417
                                pos_full_h, pos_full_v,
                                pos_nom_h, pos_nom_v, pos_nom_h_roi,
-                               pos_nom_v_roi, frh, uph, frv, upv, rtitle):
+                               pos_nom_v_roi, nosuppress):
         """Process a single position type (pairwise or cross-blade).
 
         Args:
@@ -283,15 +215,14 @@ class XBPMProcessor:
             pos_full_h/v: Full position array (measured)
             pos_nom_h/v: Nominal position array (reference)
             pos_nom_h/v_roi: ROI slice of nominal positions
-            frh, uph, frv, upv: ROI boundaries
-            rtitle: Result title for visualization
+            nosuppress: If True, label results as raw mode.
 
         Returns:
             Dict with scaled positions, scales, stats, visualizer.
         """
         # Extract ROI from measured positions
-        pos_roi_h = self._extract_roi_slice(pos_full_h, frh, uph, frv, upv)
-        pos_roi_v = self._extract_roi_slice(pos_full_v, frh, uph, frv, upv)
+        pos_roi_h = self._extract_roi_slice(pos_full_h)
+        pos_roi_v = self._extract_roi_slice(pos_full_v)
 
         # Perform scaling fit
         label = "Pairwise" if calc_type == "pairwise" else "Cross"
@@ -299,6 +230,25 @@ class XBPMProcessor:
             pos_roi_h, pos_roi_v,
             pos_nom_h_roi, pos_nom_v_roi, label
         )
+
+        # Set raw (R) / transformed (T) graph type.
+        transform = "R" if nosuppress else "T"
+
+        # Build title map for visualizer with formatted titles from registry.
+        title_map = {
+            'total'   : _Title('xbpm_positions', 'total',
+                               beamline=self.prm.beamline,
+                               rort=transform,
+                               calc_type=calc_type),
+            'roi'     : _Title('xbpm_positions', 'roi',
+                               beamline=self.prm.beamline,
+                               rort=transform,
+                               calc_type=calc_type),
+            'heatmap' : _Title('xbpm_positions', 'heatmap',
+                               beamline=self.prm.beamline,
+                               rort=transform,
+                               calc_type=calc_type),
+        }
 
         # Scale full positions
         pos_full_h_scaled = kx * pos_full_h + deltax
@@ -313,7 +263,7 @@ class XBPMProcessor:
         stats = self._calculate_roi_stats(diffx2, diffy2)
 
         # Visualize
-        visualizer = PositionVisualizer(self.prm, f"{label} {rtitle}")
+        visualizer = PositionVisualizer(self.prm, titles=title_map)
         visualizer.show_position_results(
             pos_nom_h, pos_nom_v,
             pos_full_h_scaled, pos_full_v_scaled,
@@ -339,7 +289,7 @@ class XBPMProcessor:
                          supmat, nosuppress,
                          pos_nom_h, pos_nom_v):
         """Compile and save final results from pairwise and cross-blade."""
-        pair_visualizer = pair_result['visualizer']
+        pair_visualizer  = pair_result['visualizer']
         cross_visualizer = cross_result['visualizer']
 
         # Save figures if requested
@@ -355,7 +305,7 @@ class XBPMProcessor:
             cross_visualizer.save_figure(outfile_c)
 
         # Build position dictionaries for export
-        scaled_pos_pair = dict()
+        scaled_pos_pair  = dict()
         scaled_pos_cross = dict()
         for ii, lin in enumerate(pos_nom_h):
             for jj, xx in enumerate(lin):
@@ -394,46 +344,51 @@ class XBPMProcessor:
             },
         }
 
-    def _xbpm_position_calc(self, rtitle: str, nosuppress: bool,
-                            showmatrix: bool,
-                            pos_nom_h, pos_nom_v) -> dict:
+    def xbpm_position_calculation(self, pos_nom_h, pos_nom_v,
+                                  nosuppress: bool = False,
+                                  showmatrix: bool = True) -> dict:
         """Orchestrate position calculation for pairwise and cross-blade.
 
         Delegates to helpers for reduced complexity while maintaining
         full analysis pipeline.
         """
+        # Ensure sweep data is available for suppression matrix estimation.
+        if (self.range_h is None or self.range_v is None or
+                self.blades_h is None or self.blades_v is None):
+            self.analyze_central_sweeps(show=False)
+
         # Parse and compute core data
         blades, _ = self.data_parse()
         supmat = self.suppression_matrix(showmatrix=showmatrix,
                                          nosuppress=nosuppress)
 
-        # Extract ROI bounds once
-        frh, uph, frv, upv = self._extract_roi_bounds(pos_nom_h, pos_nom_v)
-
         # Extract nominal ROI slices
-        pos_nom_h_roi = self._extract_roi_slice(pos_nom_h, frh, uph, frv, upv)
-        pos_nom_v_roi = self._extract_roi_slice(pos_nom_v, frh, uph, frv, upv)
+        pos_nom_h_roi = self._extract_roi_slice(pos_nom_h)
+        pos_nom_v_roi = self._extract_roi_slice(pos_nom_v)
 
-        # Process pairwise positions
-        pos_pair = self.beam_position_pair(supmat)
-        (_, _, pos_pair_h, pos_pair_v) = self.position_dict_parse(pos_pair)
-        pair_result = self._process_position_type(
-            'pairwise', pos_pair_h, pos_pair_v,
-            pos_nom_h, pos_nom_v, pos_nom_h_roi, pos_nom_v_roi,
-            frh, uph, frv, upv, rtitle
-        )
+        results_by_type = {}
+        for calc_type in ('pairwise', 'cross'):
+            if calc_type == 'pairwise':
+                pos_pair = self.beam_position_pair(supmat)
+                (_, _, pos_h, pos_v) = self.position_dict_parse(pos_pair)
+            else:
+                pos_h, pos_v = self.beam_position_cross(blades)
 
-        # Process cross-blade positions
-        pos_cr_h, pos_cr_v = XBPMProcessor.beam_position_cross(blades)
-        cross_result = self._process_position_type(
-            'cross', pos_cr_h, pos_cr_v,
-            pos_nom_h, pos_nom_v, pos_nom_h_roi, pos_nom_v_roi,
-            frh, uph, frv, upv, rtitle
-        )
+            results_by_type[calc_type] = self._process_position_type(
+                calc_type, pos_h, pos_v,
+                pos_nom_h, pos_nom_v, pos_nom_h_roi, pos_nom_v_roi,
+                nosuppress
+            )
 
         # Compile and return results
-        return self._compile_results(pair_result, cross_result, supmat,
-                                     nosuppress, pos_nom_h, pos_nom_v)
+        return self._compile_results(
+            results_by_type['pairwise'],
+            results_by_type['cross'],
+            supmat,
+            nosuppress,
+            pos_nom_h,
+            pos_nom_v,
+        )
 
     @staticmethod
     def standard_suppression_matrix():
@@ -789,13 +744,13 @@ class BPMProcessor:
         # Plot full grid
         self._plot_position_scatter(
             ax_all, self.xnom, self.ynom, self.xpos, self.ypos,
-            f"BPM positions @ {self.prm.beamline}"
+            _Title('bpm', 'total', beamline=self.prm.beamline)
         )
 
         # Plot ROI closeup
         self._plot_position_scatter(
             ax_close, xnom_roi, ynom_roi, xpos_roi, ypos_roi,
-            f"BPM positions @ {self.prm.beamline} closeup"
+            _Title('bpm', 'roi', beamline=self.prm.beamline)
         )
 
         # Plot differences heatmap with extent mapping
@@ -815,9 +770,13 @@ class BPMProcessor:
         Returns:
             Tuple (xnom_roi, ynom_roi, xpos_roi, ypos_roi) of ROI arrays.
         """
-        xnom_cut, ynom_cut = self._roi_cut(self.xnom, self.ynom)
-        xpos_cut, ypos_cut = self._roi_cut(self.xpos, self.ypos)
-        return xnom_cut, ynom_cut, xpos_cut, ypos_cut
+        rows, cols = self._roi_slices(self.xnom.shape)
+        return (
+            self.xnom[rows, cols],
+            self.ynom[rows, cols],
+            self.xpos[rows, cols],
+            self.ypos[rows, cols],
+        )
 
     def _compile_measurement_results(self):
         """Compile measured and nominal coordinates into return format.
@@ -874,11 +833,13 @@ class BPMProcessor:
                                origin='lower')
             cbar = self.fig.colorbar(im, ax=axdiff,
                                       fraction=0.4, pad=0.3)
-            cbar.set_label(u"Difference [$\\mu$m]")
+            cbar.set_label(u"RMS Difference [$\\mu$m]", fontsize=14)
 
             axdiff.set_xlabel("")
-            axdiff.set_ylabel(u"$y$ [$\\mu$m]")
-            axdiff.set_title("Differences at ROI")
+            axdiff.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
+            axdiff.set_title(
+                _Title('bpm', 'heatmap', self.prm.beamline), pad=2
+                )
             axdiff.grid(False)
         else:
             # 2D heatmap with extent mapping
@@ -905,11 +866,13 @@ class BPMProcessor:
             )
             cbar = self.fig.colorbar(im, ax=axdiff,
                                      fraction=0.046, pad=0.04)
-            cbar.set_label(u"Difference [$\\mu$m]")
+            cbar.set_label(u"RMS Difference [$\\mu$m]", fontsize=14)
 
-            axdiff.set_xlabel(u"$x$ [$\\mu$m]")  # noqa: W605
-            axdiff.set_ylabel(u"$y$ [$\\mu$m]")
-            axdiff.set_title("Differences at ROI")
+            axdiff.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)  # noqa: W605
+            axdiff.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
+            axdiff.set_title(
+                _Title('bpm', 'heatmap', self.prm.beamline), pad=2
+                )
             axdiff.grid(False)
 
     def _plot_position_scatter(self, ax, pos_nom_h, pos_nom_v,
@@ -927,8 +890,8 @@ class BPMProcessor:
         ax.set_title(title, pad=2)
         pos = ax.plot(pos_h, pos_v, 'bo')
         nom = ax.plot(pos_nom_h, pos_nom_v, 'r+')
-        ax.set_xlabel(u"$x$ [$\\mu$m]")  # noqa: W605
-        ax.set_ylabel(u"$y$ [$\\mu$m]")
+        ax.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)  # noqa: W605
+        ax.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
 
         # Compute common limits to ensure equal aspect ratio with margin.
         # Use only finite values to avoid NaN/Inf axis-limit failures.
@@ -968,10 +931,10 @@ class BPMProcessor:
         handles, labels = [], []
         if len(nom) > 0:
             handles.append(nom[0])
-            labels.append("Nominal")
+            labels.append("Nom.")
         if len(pos) > 0:
             handles.append(pos[0])
-            labels.append("Calculated")
+            labels.append("Calc.")
         if handles:
             ax.legend(handles, labels)
         ax.grid()
@@ -1007,9 +970,9 @@ class BPMProcessor:
                   f" {missing} points missing from nominal mesh."
                   " Missing points were set to NaN.")
 
-    def _roi_cut(self, xnom, ynom):
-        """Return ROI slices of nominal coordinate grids."""
-        nv, nh = xnom.shape[0], xnom.shape[1]
+    def _roi_slices(self, shape):
+        """Return row/column slices for the centered ROI."""
+        nv, nh = shape
         roi_h = min(self.roi_h_size, nh)
         roi_v = min(self.roi_v_size, nv)
         fromh = max(0, int((nh - roi_h) / 2))
@@ -1018,9 +981,9 @@ class BPMProcessor:
         uptov = min(nv, fromv + roi_v)
 
         if nh == 1 or nv == 1:
-            return xnom[fromv:uptov], ynom[fromv:uptov]
+            return slice(fromv, uptov), slice(None)
 
-        return xnom[fromv:uptov, fromh:uptoh], ynom[fromv:uptov, fromh:uptoh]
+        return slice(fromv, uptov), slice(fromh, uptoh)
 
     def _sector_index(self) -> int:
         sector = int(self.prm.section.split(':')[1][:2])
@@ -1062,6 +1025,8 @@ class BPMProcessor:
 
     def _offset_search(self, idx):
         """Extrapolate offsets when reference orbit is missing."""
+        # Get the angle and orbit data for the current and next BPMs
+        # across all measurements.
         nextidx = idx + 1
         agx    = np.array([dt[2]['agx']
                            for dt in self.rawdata])
@@ -1070,6 +1035,8 @@ class BPMProcessor:
         n_orbx = np.array([dt[2]['orbx'][nextidx]
                            for dt in self.rawdata])
 
+        # Find the max and min angles to check for variation. If angles are
+        # constant, we cannot extrapolate and must raise an error.
         agxmax = np.max(agx)
         agxmin = np.min(agx)
         if np.isclose(agxmax, agxmin):
@@ -1078,6 +1045,7 @@ class BPMProcessor:
                 "or explicit (agx=0, agy=0) reference point."
             )
 
+        # Use the max and min orbits to extrapolate the offset at zero angle.
         osx = np.array(sorted(list(set(orbx))))
         oxmin, oxmax = osx[0], osx[-1]
         offset_x_sect = ((oxmin * agxmax - oxmax * agxmin) /
@@ -1088,6 +1056,7 @@ class BPMProcessor:
         offset_x_next = ((onxmin * agxmax - onxmax * agxmin) /
                          (agxmax - agxmin))
 
+        # Repeat the same process for the vertical plane.
         agy    = np.array([dt[2]['agy']
                            for dt in self.rawdata])
         orby   = np.array([dt[2]['orby'][idx]
@@ -1209,24 +1178,11 @@ class BPMProcessor:
             return rms_stats, None
 
         # Differences at ROI.
-        roi_h = min(self.roi_h_size, nh)
-        roi_v = min(self.roi_v_size, nv)
-        fromh = max(0, int((nh - roi_h) / 2))
-        uptoh = min(nh, fromh + roi_h)
-        fromv = max(0, int((nv - roi_v) / 2))
-        uptov = min(nv, fromv + roi_v)
-
-        # Extract ROI slices, handling 1D cases.
-        if nh == 1 or nv == 1:
-            xnom_cut = xnom[fromv:uptov]
-            ynom_cut = ynom[fromv:uptov]
-            xpos_cut = xpos[fromv:uptov]
-            ypos_cut = ypos[fromv:uptov]
-        else:
-            xnom_cut = xnom[fromv:uptov, fromh:uptoh]
-            ynom_cut = ynom[fromv:uptov, fromh:uptoh]
-            xpos_cut = xpos[fromv:uptov, fromh:uptoh]
-            ypos_cut = ypos[fromv:uptov, fromh:uptoh]
+        rows, cols = self._roi_slices(xnom.shape)
+        xnom_cut = xnom[rows, cols]
+        ynom_cut = ynom[rows, cols]
+        xpos_cut = xpos[rows, cols]
+        ypos_cut = ypos[rows, cols]
 
         # Calculate differences and filter valid (finite) points in ROI.
         diff_h_cut = np.abs(xnom_cut - xpos_cut)
