@@ -141,7 +141,7 @@ class Config:
                 "XBPM{xbpmnum}@{beamline}: {ct} $\Delta/\Sigma$, {rort} (ROI)"
                 ),
             "heatmap"  : (
-                "XBPM{xbpmnum}@{beamline}: RMS in ROI"
+                "RMS in ROI"
                 ),
         },
     }
