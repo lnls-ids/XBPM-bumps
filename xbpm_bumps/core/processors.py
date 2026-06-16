@@ -187,51 +187,73 @@ class XBPMProcessor:
             print("\n Figure of blades behaviour at central sweeps"
                   f" saved to file {outfile}.\n")
 
-    def _extract_roi_slice(self, array):
-        """Extract centered ROI slice from an array, handling 1D/2D."""
-        nv, nh = array.shape
-        roi_h = min(self.roi_h_size, nh)
-        roi_v = min(self.roi_v_size, nv)
-        frh = max(0, int((nh - roi_h) / 2))
-        uph = min(nh, frh + roi_h)
-        frv = max(0, int((nv - roi_v) / 2))
-        upv = min(nv, frv + roi_v)
+    def _roi_slice_indices(self, array):
+        """Extract centered ROI slice indices from an array, handling 1D/2D."""
+        n_lin, n_col = array.shape
+        n_roi_h  = min(self.roi_h_size, n_col)
+        n_roi_v  = min(self.roi_v_size, n_lin)
+        fr_col     = max(0, int((n_col - n_roi_h) / 2))
+        up_col     = min(n_col, fr_col + n_roi_h)
+        fr_row     = max(0, int((n_lin - n_roi_v) / 2))
+        up_row     = min(n_lin, fr_row + n_roi_v)
 
-        if array.shape[0] == 1:
-            return array[0, frv:upv]
-        elif array.shape[1] == 1:
-            return array[frv:upv, 0]
+        if fr_col == up_col:
+            dim = 'h'
+        elif fr_row == up_row:
+            dim = 'v'
         else:
-            return array[frv:upv, frh:uph]
+            dim = '2d'
+
+        return (fr_col, up_col, fr_row, up_row), dim
+
+    def _extract_roi_slice(self, array, dim,
+                           fr_col, up_col, fr_row, up_row):
+        """Check whether array is 1D along one axis and extract accordingly.
+        
+        Args:
+            array: Input array to extract ROI from.
+            fr_col: Starting index for horizontal slice.
+            up_col: Ending index for horizontal slice.
+            fr_row: Starting index for vertical slice.
+            up_row: Ending index for vertical slice.
+
+        Returns:
+            Extracted ROI slice from the input array.
+        """
+        if dim == 'h':
+            return array[0, fr_col:up_col]
+        elif dim == 'v':
+            return array[fr_row:up_row, 0]
+        else:
+            return array[fr_row:up_row, fr_col:up_col]
 
     def _process_position_type(self, calc_type,  # noqa: D417
-                               pos_full_h, pos_full_v,
-                               pos_nom_h, pos_nom_v, pos_nom_h_roi,
-                               pos_nom_v_roi, nosuppress):
+                               pos_all_h, pos_all_v,
+                               pos_roi_h, pos_roi_v,
+                               pos_nom_h, pos_nom_v,
+                               pos_nom_h_roi,
+                               pos_nom_v_roi, nosuppress, dim):
         """Process a single position type (pairwise or cross-blade).
 
         Args:
             calc_type: 'pairwise' or 'cross'
-            pos_full_h/v: Full position array (measured)
+            pos_all_h/v: Full position array (measured)
             pos_nom_h/v: Nominal position array (reference)
             pos_nom_h/v_roi: ROI slice of nominal positions
             nosuppress: If True, label results as raw mode.
+            dim : Dimension of ROI ('h', 'v', or '2d') for RMS calculation.
 
         Returns:
             Dict with scaled positions, scales, stats, visualizer.
         """
-        # Extract ROI from measured positions
-        pos_roi_h = self._extract_roi_slice(pos_full_h)
-        pos_roi_v = self._extract_roi_slice(pos_full_v)
-
         # Perform scaling fit
-        label = "Pairwise" if calc_type == "pairwise" else "Cross"
+        label = "Δ/Σ" if calc_type == "pairwise" else "Partial Δ/Σ"
         (kx, deltax, ky, deltay) = XBPMProcessor.scaling_fit(
             pos_roi_h, pos_roi_v,
             pos_nom_h_roi, pos_nom_v_roi, label
         )
 
-        # Set raw (R) / transformed (T) graph type.
+        # Set raw (R) or transformed (T) graph type.
         transform = "R" if nosuppress else "T"
 
         # Build title map for visualizer with formatted titles from registry.
@@ -251,38 +273,45 @@ class XBPMProcessor:
         }
 
         # Scale full positions
-        pos_full_h_scaled = kx * pos_full_h + deltax
-        pos_full_v_scaled = ky * pos_full_v + deltay
-        pos_roi_h_scaled = kx * pos_roi_h + deltax
-        pos_roi_v_scaled = ky * pos_roi_v + deltay
+        pos_all_h_scaled = kx * pos_all_h + deltax
+        pos_all_v_scaled = ky * pos_all_v + deltay
+        pos_roi_h_scaled = kx * pos_roi_h  + deltax
+        pos_roi_v_scaled = ky * pos_roi_v  + deltay
 
         # Compute statistics
-        diffx2 = (pos_roi_h_scaled - pos_nom_h_roi) ** 2
-        diffy2 = (pos_roi_v_scaled - pos_nom_v_roi) ** 2
-        diffroi = np.sqrt(diffx2 + diffy2)
-        stats = self._calculate_roi_stats(diffx2, diffy2)
+        diffx2_roi = (pos_roi_h_scaled - pos_nom_h_roi) ** 2
+        diffy2_roi = (pos_roi_v_scaled - pos_nom_v_roi) ** 2
+        stats      = self._calculate_roi_stats(diffx2_roi, diffy2_roi)
+        diffxyroi  = np.sqrt(diffx2_roi + diffy2_roi)
+
+        if dim == 'h':
+            diffroi = diffx2_roi
+        elif dim == 'v':
+            diffroi = diffy2_roi
+        else:
+            diffroi = diffxyroi
 
         # Visualize
         visualizer = PositionVisualizer(self.prm, titles=title_map)
         visualizer.show_position_results(
             pos_nom_h, pos_nom_v,
-            pos_full_h_scaled, pos_full_v_scaled,
+            pos_all_h_scaled, pos_all_v_scaled,
             pos_roi_h_scaled, pos_roi_v_scaled,
             pos_nom_h_roi, pos_nom_v_roi,
             diffroi
         )
 
         return {
-            'h_scaled': pos_full_h_scaled,
-            'v_scaled': pos_full_v_scaled,
-            'h_roi_scaled': pos_roi_h_scaled,
-            'v_roi_scaled': pos_roi_v_scaled,
-            'kx': kx,
-            'ky': ky,
-            'dx': deltax,
-            'dy': deltay,
-            'stats': stats,
-            'visualizer': visualizer,
+            'h_scaled'     : pos_all_h_scaled,
+            'v_scaled'     : pos_all_v_scaled,
+            'h_roi_scaled' : pos_roi_h_scaled,
+            'v_roi_scaled' : pos_roi_v_scaled,
+            'kx'           : kx,
+            'ky'           : ky,
+            'dx'           : deltax,
+            'dy'           : deltay,
+            'stats'        : stats,
+            'visualizer'   : visualizer,
         }
 
     def _compile_results(self, pair_result, cross_result,
@@ -320,27 +349,27 @@ class XBPMProcessor:
                 ]
 
         return {
-            'positions': [scaled_pos_pair, scaled_pos_cross],
-            'pairwise_figure': pair_visualizer.fig,
-            'cross_figure': cross_visualizer.fig,
-            'scales': {
-                'pair': {
-                    'kx': pair_result['kx'],
-                    'ky': pair_result['ky'],
-                    'dx': pair_result['dx'],
-                    'dy': pair_result['dy'],
+            'positions'       : [scaled_pos_pair, scaled_pos_cross],
+            'pairwise_figure' : pair_visualizer.fig,
+            'cross_figure'    : cross_visualizer.fig,
+            'scales' : {
+                'pair'   : {
+                    'kx' : pair_result['kx'],
+                    'ky' : pair_result['ky'],
+                    'dx' : pair_result['dx'],
+                    'dy' : pair_result['dy'],
                 },
-                'cross': {
-                    'kx': cross_result['kx'],
-                    'ky': cross_result['ky'],
-                    'dx': cross_result['dx'],
-                    'dy': cross_result['dy'],
+                'cross'  : {
+                    'kx' : cross_result['kx'],
+                    'ky' : cross_result['ky'],
+                    'dx' : cross_result['dx'],
+                    'dy' : cross_result['dy'],
                 },
             },
-            'supmat': supmat,
-            'xbpm_stats': {
-                'pairwise': pair_result['stats'],
-                'cross': cross_result['stats'],
+            'supmat' : supmat,
+            'xbpm_stats' : {
+                'pairwise' : pair_result['stats'],
+                'cross'    : cross_result['stats'],
             },
         }
 
@@ -362,32 +391,45 @@ class XBPMProcessor:
         supmat = self.suppression_matrix(showmatrix=showmatrix,
                                          nosuppress=nosuppress)
 
-        # Extract nominal ROI slices
-        pos_nom_h_roi = self._extract_roi_slice(pos_nom_h)
-        pos_nom_v_roi = self._extract_roi_slice(pos_nom_v)
+        # Extract nominal ROI slices.
+        from_upto, dim = self._roi_slice_indices(pos_nom_h)
+        pos_nom_h_roi  = self._extract_roi_slice(pos_nom_h, dim, *from_upto)
+        pos_nom_v_roi  = self._extract_roi_slice(pos_nom_v, dim, *from_upto)
 
-        results_by_type = {}
-        for calc_type in ('pairwise', 'cross'):
-            if calc_type == 'pairwise':
-                pos_pair = self.beam_position_pair(supmat)
-                (_, _, pos_h, pos_v) = self.position_dict_parse(pos_pair)
-            else:
-                pos_h, pos_v = self.beam_position_cross(blades)
+        # Pairwise calculation (Delta/Sigma).
+        pos_pair = self.beam_position_pair(supmat)
+        (_, _, pos_h, pos_v) = self.position_dict_parse(pos_pair)
 
-            results_by_type[calc_type] = self._process_position_type(
-                calc_type, pos_h, pos_v,
+        # Extract ROI slices from measured data.
+        pos_roi_h = self._extract_roi_slice(pos_h, dim, *from_upto)
+        pos_roi_v = self._extract_roi_slice(pos_v, dim, *from_upto)
+
+        # Process data: fitting, scaling, stats, visualization.
+        pairwise_result = self._process_position_type(
+                'pairwise', pos_h, pos_v, pos_roi_h, pos_roi_v,
                 pos_nom_h, pos_nom_v, pos_nom_h_roi, pos_nom_v_roi,
-                nosuppress
+                nosuppress, dim
+            )
+
+        # Cross-blade calculation (partial Delta/Sigma).
+        pos_h, pos_v = self.beam_position_cross(blades)
+
+        # Extract ROI slices from measured data.
+        pos_roi_h = self._extract_roi_slice(pos_h, dim, *from_upto)
+        pos_roi_v = self._extract_roi_slice(pos_v, dim, *from_upto)
+
+        # Process data: fitting, scaling, stats, visualization.
+        cross_result = self._process_position_type(
+            'cross', pos_h, pos_v, pos_roi_h, pos_roi_v,
+            pos_nom_h, pos_nom_v, pos_nom_h_roi, pos_nom_v_roi,
+            nosuppress, dim
             )
 
         # Compile and return results
         return self._compile_results(
-            results_by_type['pairwise'],
-            results_by_type['cross'],
-            supmat,
-            nosuppress,
-            pos_nom_h,
-            pos_nom_v,
+            pairwise_result, cross_result,
+            supmat, nosuppress,
+            pos_nom_h, pos_nom_v,
         )
 
     @staticmethod
@@ -532,21 +574,35 @@ class XBPMProcessor:
 
     @staticmethod
     def scaling_fit(pos_h, pos_v, nom_h, nom_v, calctype=""):
-        """Calculate scaling coefficients from fitted positions."""
+        """Calculate scaling coefficients from fitted positions.
+        
+        Args:
+            pos_h    : Measured horizontal positions array.
+            pos_v    : Measured vertical positions array.
+            nom_h    : Nominal horizontal positions array.
+            nom_v    : Nominal vertical positions array.
+            calctype : Type of calculation (for logging purposes).
+        
+        Returns:
+            kx     : Horizontal scaling factor.
+            deltax : Horizontal offset.
+            ky     : Vertical scaling factor.
+            deltay : Vertical offset.
+        """
         print(f"\n#### {calctype} blades:")
 
-        hfinitemask = np.isfinite(pos_h)
-        ph_cln = pos_h[hfinitemask]
-        nh_cln = nom_h[hfinitemask]
+        h_finitemask = np.isfinite(pos_h)
+        pos_h_cln = pos_h[h_finitemask]
+        nom_h_cln = nom_h[h_finitemask]
 
-        vfinitemask = np.isfinite(pos_v)
-        pv_cln = pos_v[vfinitemask]
-        nv_cln = nom_v[vfinitemask]
+        v_finitemask = np.isfinite(pos_v)
+        pos_v_cln = pos_v[v_finitemask]
+        nom_v_cln = nom_v[v_finitemask]
 
         kx, deltax = 1., 0.
         if len(set(nom_h.ravel())) > 1:
             try:
-                kx, deltax = np.polyfit(ph_cln, nh_cln, deg=1)
+                kx, deltax = np.polyfit(pos_h_cln, nom_h_cln, deg=1)
             except Exception as err:
                 print(f"\n WARNING: when calculating horizontal scaling"
                       f" coefficients:\n{err}\n Setting to default values.")
@@ -554,7 +610,7 @@ class XBPMProcessor:
         ky, deltay = 1., 0.
         if len(set(nom_v.ravel())) > 1:
             try:
-                ky, deltay = np.polyfit(pv_cln, nv_cln, deg=1)
+                ky, deltay = np.polyfit(pos_v_cln, nom_v_cln, deg=1)
             except Exception as err:
                 print(f"\n WARNING: when calculating vertical scaling"
                       f" coefficients:\n{err}\n Setting to default values.")
@@ -601,15 +657,17 @@ class XBPMProcessor:
             dict: Statistics with sigma_h, sigma_v, sigma_total,
                   diff_max_h, diff_min_h, diff_max_v, diff_min_v.
         """
-        n = diffx2.size
-        sigma_h = np.sqrt(np.sum(diffx2) / n)
-        sigma_v = np.sqrt(np.sum(diffy2) / n)
-        sigma_total = np.sqrt((np.sum(diffx2) + np.sum(diffy2)) / n)
+        nx, ny = diffx2.size, diffy2.size
+        sum_diffx2_n = np.sum(diffx2) / nx
+        sum_diffy2_n = np.sum(diffy2) / ny
+        sigma_h      = np.sqrt(sum_diffx2_n)
+        sigma_v      = np.sqrt(sum_diffy2_n)
+        sigma_total  = np.sqrt(sum_diffx2_n + sum_diffy2_n)
 
-        diff_max_h = np.sqrt(np.max(diffx2))
-        diff_min_h = np.sqrt(np.min(diffx2))
-        diff_max_v = np.sqrt(np.max(diffy2))
-        diff_min_v = np.sqrt(np.min(diffy2))
+        diff_max_h   = np.sqrt(np.max(diffx2))
+        diff_min_h   = np.sqrt(np.min(diffx2))
+        diff_max_v   = np.sqrt(np.max(diffy2))
+        diff_min_v   = np.sqrt(np.min(diffy2))
 
         return {
             'sigma_h'     : sigma_h,

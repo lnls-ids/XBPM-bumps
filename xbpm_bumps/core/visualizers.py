@@ -203,16 +203,16 @@ class PositionVisualizer:
         """Display full position results in 1x3 subplot layout.
 
         Args:
-            pos_nom_h: Nominal horizontal positions (full grid).
-            pos_nom_v: Nominal vertical positions (full grid).
-            pos_h: Calculated horizontal positions (full grid).
-            pos_v: Calculated vertical positions (full grid).
-            pos_roi_h: Calculated horizontal positions in ROI.
-            pos_roi_v: Calculated vertical positions in ROI.
-            pos_nom_h_roi: Nominal horizontal positions inside ROI.
-            pos_nom_v_roi: Nominal vertical positions inside ROI.
-            diff_roi: RMS position differences in ROI.
-            figsize: Figure size as (width, height) tuple.
+            pos_nom_h     : Nominal horizontal positions (full grid).
+            pos_nom_v     : Nominal vertical positions (full grid).
+            pos_h         : Calculated horizontal positions (full grid).
+            pos_v         : Calculated vertical positions (full grid).
+            pos_roi_h     : Calculated horizontal positions in ROI.
+            pos_roi_v     : Calculated vertical positions in ROI.
+            pos_nom_h_roi : Nominal horizontal positions inside ROI.
+            pos_nom_v_roi : Nominal vertical positions inside ROI.
+            diff_roi      : RMS position differences in ROI.
+            figsize       : Figure size as (width, height) tuple.
         """
         if diff_roi is None:
             is_1d = True
