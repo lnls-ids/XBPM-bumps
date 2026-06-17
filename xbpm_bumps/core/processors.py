@@ -441,7 +441,7 @@ class XBPMProcessor:
             )
 
         # Compile and return results
-        return self._compile_results(pair_result, cross_result, supmat, 
+        return self._compile_results(pairwise_result, cross_result, supmat, 
                                      stddevmat, nosuppress, pos_nom_h, 
                                      pos_nom_v)
 
