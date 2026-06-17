@@ -510,7 +510,7 @@ class XBPMProcessor:
 
         if showmatrix:
             print(f'Undulator phase or gap: {self.prm.phaseorgap}')
-            print("\n Suppression matrix with standard deviations:")
+            print("\nSuppression matrix:")
             for ii, lin in enumerate(supmat):
                 for jj, col in enumerate(lin):
                     print(f" {col:12.6f} (±{stddevmat[ii, jj]:10.6f})", end='')

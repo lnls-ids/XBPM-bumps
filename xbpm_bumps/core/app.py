@@ -88,11 +88,10 @@ class XBPMApp:
             Tuple (pos_nom_h, pos_nom_v) - nominal position grids scaled
             by XBPM distance.
         """
-        pair = self.processor.beam_position_pair(
-            self.processor.suppression_matrix(
+        supmat, _ = self.processor.suppression_matrix(
                 showmatrix=False, nosuppress=True
             )
-        )
+        pair = self.processor.beam_position_pair(supmat)
         pos_nom_h, pos_nom_v, _, _ = (
             self.processor.position_dict_parse(pair)
         )
