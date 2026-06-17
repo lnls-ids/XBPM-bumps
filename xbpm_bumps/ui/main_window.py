@@ -36,6 +36,13 @@ class XBPMMainWindow(QMainWindow):
     # Emits parameters when Run is clicked
     analysisRequested = pyqtSignal(dict)  # noqa: N815
 
+    ANALYSIS_SECTION_TITLES = {
+        'positions': 'Positions',
+        'sweep_positions': 'Sweep Positions',
+        'blades_sweeps': 'Blades at Sweeps',
+        'bpm': 'BPM',
+    }
+
     def __init__(self):
         """Initialize the main window."""
         super().__init__()
@@ -69,27 +76,6 @@ class XBPMMainWindow(QMainWindow):
         self.reader.read()
         self.rawdata = self.reader.rawdata
 
-        # DEBUG
-        # print(
-        #     "\n\n #### DEBUG (main window._read_data_and_select_beamline):"
-        #     " ####\n"
-        # )
-        # print(f" rawdata type: {type(self.rawdata)}")
-        # print(f" rawdata [0] : {type(self.rawdata[0])}"
-        #       f" {self.rawdata[0][0].keys()}")
-        # try:
-        #     print(f" rawdata [1] : {type(self.rawdata[0])}"
-        #         f" {self.rawdata[0][1].keys()}")
-        # except Exception as exc:
-        #     print(f" rawdata [1] access error: {exc}")
-        # try:
-        #     print(f" rawdata [2] : {type(self.rawdata[0])}"
-        #         f" {self.rawdata[0][2].keys()}")
-        # except Exception as exc:
-        #     print(f" rawdata [2] access error: {exc}")
-        # print("\n ########## END DEBUG ##########\n\n")
-        # END DEBUG
-
         # Extract beamlines using HDF5 logic if file is HDF5
         beamlines = []
         if (os.path.isfile(workdir) and
@@ -119,6 +105,24 @@ class XBPMMainWindow(QMainWindow):
         # Persist in parameter panel for future get_parameters() calls
         if hasattr(self, 'param_panel'):
             self.param_panel.set_beamline(chosen)
+
+        # Set ROI defaults to the maximum available points in each direction.
+        # This keeps defaults aligned with the actual loaded measurement grid.
+        try:
+            self.prm.beamline = chosen
+            fetched = self.reader._blades_fetch()
+            data = fetched[0] if isinstance(fetched, tuple) else fetched
+            keys = np.array(list(data.keys())) if data else np.array([])
+            if keys.size > 0 and keys.ndim == 2 and keys.shape[1] >= 2:
+                n_h = np.unique(keys[:, 0]).shape[0]
+                n_v = np.unique(keys[:, 1]).shape[0]
+                self.param_panel.set_roi_defaults_from_grid(n_h, n_v)
+                self.log_message(
+                    "ROI defaults set from loaded grid:"
+                    f" H={n_h}, V={n_v}"
+                )
+        except Exception as exc:  # pragma: no cover - defensive
+            self.log_message(f"Could not set ROI defaults from grid: {exc}")
 
         self._update_xbpmdist_from_beamline(chosen)
         return chosen
@@ -238,7 +242,7 @@ class XBPMMainWindow(QMainWindow):
 
         # Visualization tabs (ordered to match analysis options)
         bpm_tab, bpm_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(bpm_tab, "BPM Positions")
+        self.results_tabs.addTab(bpm_tab, "BPM")
         self.canvases["bpm"] = bpm_canvas
 
         blade_tab, blade_canvas = self._create_canvas_tab()
@@ -255,19 +259,19 @@ class XBPMMainWindow(QMainWindow):
         self.canvases["sweeps"] = sweep_canvas
 
         xbpm_raw_pw_tab, xbpm_raw_pw_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(xbpm_raw_pw_tab, "XBPM Raw Pairwise")
+        self.results_tabs.addTab(xbpm_raw_pw_tab, "XBPM Δ/Σ raw")
         self.canvases["xbpm_raw_pairwise"] = xbpm_raw_pw_canvas
 
         xbpm_scaled_pw_tab, xbpm_scaled_pw_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(xbpm_scaled_pw_tab, "XBPM Scaled Pairwise")
+        self.results_tabs.addTab(xbpm_scaled_pw_tab, "XBPM Δ/Σ Tr")
         self.canvases["xbpm_scaled_pairwise"] = xbpm_scaled_pw_canvas
 
         xbpm_raw_cr_tab, xbpm_raw_cr_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(xbpm_raw_cr_tab, "XBPM Raw Cross")
+        self.results_tabs.addTab(xbpm_raw_cr_tab, "XBPM part. Δ/Σ - raw")
         self.canvases["xbpm_raw_cross"] = xbpm_raw_cr_canvas
 
         xbpm_scaled_cr_tab, xbpm_scaled_cr_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(xbpm_scaled_cr_tab, "XBPM Scaled Cross")
+        self.results_tabs.addTab(xbpm_scaled_cr_tab, "XBPM part. Δ/Σ - Tr")
         self.canvases["xbpm_scaled_cross"] = xbpm_scaled_cr_canvas
 
         return self.results_tabs
@@ -685,12 +689,13 @@ class XBPMMainWindow(QMainWindow):
         # Figures that need separate windows or tabs (position grids)
         popup_specs = [
             ('xbpm_raw_pairwise_figure', 'xbpm_raw_pairwise',
-             "XBPM Raw Pairwise"),
-            ('xbpm_raw_cross_figure', 'xbpm_raw_cross', "XBPM Raw Cross"),
+               "XBPM Raw Δ/Σ"),
+              ('xbpm_raw_cross_figure', 'xbpm_raw_cross',
+               "XBPM Raw Partial Δ/Σ"),
             ('xbpm_scaled_pairwise_figure', 'xbpm_scaled_pairwise',
-             "XBPM Scaled Pairwise"),
+               "XBPM Transf. Δ/Σ"),
             ('xbpm_scaled_cross_figure', 'xbpm_scaled_cross',
-             "XBPM Scaled Cross"),
+               "XBPM Transf. Partial Δ/Σ"),
         ]
 
         # Display inline figures in main window
@@ -843,9 +848,13 @@ class XBPMMainWindow(QMainWindow):
                 f" | Type: positions / {calc_type} / {sup}\n"
             )
             fp.write(f"kx           = {float(scales.get('kx', 1)):.6f}\n")
+            fp.write(f"skx          = {float(scales.get('skx', 0)):.6f}\n")
             fp.write(f"dx           = {float(scales.get('dx', 0)):.6f}\n")
+            fp.write(f"sdx          = {float(scales.get('sdx', 0)):.6f}\n")
             fp.write(f"ky           = {float(scales.get('ky', 1)):.6f}\n")
+            fp.write(f"sky          = {float(scales.get('sky', 0)):.6f}\n")
             fp.write(f"dy           = {float(scales.get('dy', 0)):.6f}\n")
+            fp.write(f"sdy          = {float(scales.get('sdy', 0)):.6f}\n")
             if stats:
                 fp.write("sigma_h      = "
                          f"{float(stats.get('sigma_h', 0)):.6f}  um\n")
@@ -861,6 +870,96 @@ class XBPMMainWindow(QMainWindow):
                          f"{float(stats.get('diff_min_h', 0)):.6f}  um\n")
                 fp.write("diff_min_v   = "
                          f"{float(stats.get('diff_min_v', 0)):.6f}  um\n")
+
+    def _save_figure_for_export(self, fig, path: str) -> None:
+        """Save figure with print-friendly typography without changing UI use.
+
+        The live app keeps its current figure sizing. Export applies a
+        temporary font boost but preserves figure geometry so subplot spacing
+        remains consistent with what is shown in the UI.
+        """
+        original_size = fig.get_size_inches().copy()
+        axes = fig.get_axes()
+        axis_state = []
+        legend_state = []
+        text_state = []
+
+        width, height = original_size
+        target_width = min(width, 10.0)
+        target_height = (height * (target_width / width)
+                 if width > 0
+                 else height)
+        fig.set_size_inches(target_width, target_height, forward=False)
+
+        for ax in axes:
+            axis_state.append({
+                'title'  : ax.title.get_fontsize(),
+                'xlabel' : ax.xaxis.label.get_fontsize(),
+                'ylabel' : ax.yaxis.label.get_fontsize(),
+                'xtick'  : ax.xaxis.get_ticklabels()[0].get_fontsize()
+                            if ax.xaxis.get_ticklabels() else None,
+                'ytick'  : ax.yaxis.get_ticklabels()[0].get_fontsize()
+                            if ax.yaxis.get_ticklabels() else None,
+            })
+
+            # Keep former tuned proportions; only reduce title size a bit
+            # to avoid collisions on 3-panel layouts.
+            title_scale = 0.90
+            title_min = 9
+            title_max = 10
+            title_text = ax.get_title() or ""
+            if len(title_text) > 42:
+                title_max = 9
+            ax.title.set_fontsize(
+                min(max(ax.title.get_fontsize() * title_scale, title_min),
+                    title_max)
+            )
+            ax.xaxis.label.set_fontsize(
+                max(ax.xaxis.label.get_fontsize() * 1.20, 12)
+            )
+            ax.yaxis.label.set_fontsize(
+                max(ax.yaxis.label.get_fontsize() * 1.20, 12)
+            )
+            ax.tick_params(axis='both', which='major', labelsize=11)
+
+            legend = ax.get_legend()
+            if legend is not None:
+                sizes = [text.get_fontsize() for text in legend.get_texts()]
+                legend_state.append((legend, sizes))
+                for text in legend.get_texts():
+                    text.set_fontsize(max(text.get_fontsize() * 0.75, 9))
+
+        for text in fig.findobj(match=lambda obj: hasattr(obj, 'get_text')):
+            try:
+                label = text.get_text()
+            except Exception:  # noqa: S110
+                continue
+            if label == "RMS Difference [$\\mu$m]":
+                text_state.append((text, text.get_fontsize()))
+                text.set_fontsize(max(text.get_fontsize() * 0.8, 11))
+
+        # Keep canvas geometry untouched to preserve constrained-layout
+        # subplot spacing in exported PNGs (WYSIWYG with live tabs).
+        fig.canvas.draw()
+        fig.savefig(path, dpi=FIGDPI, bbox_inches='tight')
+
+        for ax, state in zip(axes, axis_state):
+            ax.title.set_fontsize(state['title'])
+            ax.xaxis.label.set_fontsize(state['xlabel'])
+            ax.yaxis.label.set_fontsize(state['ylabel'])
+            if state['xtick'] is not None:
+                ax.tick_params(axis='x', which='major', labelsize=state['xtick'])
+            if state['ytick'] is not None:
+                ax.tick_params(axis='y', which='major', labelsize=state['ytick'])
+
+        for legend, sizes in legend_state:
+            for text, size in zip(legend.get_texts(), sizes):
+                text.set_fontsize(size)
+
+        for text, size in text_state:
+            text.set_fontsize(size)
+
+        fig.set_size_inches(original_size[0], original_size[1], forward=False)
 
     def _export_xbpm_raw(self, prefix: str, params: dict) -> bool:
         """Export raw XBPM positions and figures.
@@ -884,9 +983,10 @@ class XBPMMainWindow(QMainWindow):
         # Compute nominal grid positions from data
         pos_nom_h, pos_nom_v = self._compute_nominal_positions(data)
 
-        result_raw = processor.calculate_raw_positions(
+        result_raw = processor.xbpm_position_calculation(
             pos_nom_h=pos_nom_h,
             pos_nom_v=pos_nom_v,
+            nosuppress=True,
             showmatrix=True
         )
         exporter.data_dump_with_prefix(
@@ -902,9 +1002,7 @@ class XBPMMainWindow(QMainWindow):
                 os.path.dirname(prefix),
                 f"xbpm_positions_pair_raw_{self.analyzer.app.prm.beamline}.png"
             )
-            result_raw['pairwise_figure'].savefig(
-                fig_pair, dpi=FIGDPI, bbox_inches='tight'
-            )
+            self._save_figure_for_export(result_raw['pairwise_figure'], fig_pair)
             logger.info("Pairwise figure saved to %s", fig_pair)
 
         if result_raw.get('cross_figure'):
@@ -912,9 +1010,7 @@ class XBPMMainWindow(QMainWindow):
                 os.path.dirname(prefix),
                 f"xbpm_positions_cross_raw_{self.analyzer.app.prm.beamline}.png"
             )
-            result_raw['cross_figure'].savefig(
-                fig_cross, dpi=FIGDPI, bbox_inches='tight'
-            )
+            self._save_figure_for_export(result_raw['cross_figure'], fig_cross)
             logger.info("Cross figure saved to %s", fig_cross)
 
         # Export scaling factors and statistics
@@ -958,9 +1054,10 @@ class XBPMMainWindow(QMainWindow):
         # Compute nominal grid positions from data
         pos_nom_h, pos_nom_v = self._compute_nominal_positions(data)
 
-        result_scaled = processor.calculate_scaled_positions(
+        result_scaled = processor.xbpm_position_calculation(
             pos_nom_h=pos_nom_h,
             pos_nom_v=pos_nom_v,
+            nosuppress=False,
             showmatrix=True
         )
         exporter.data_dump_with_prefix(
@@ -976,9 +1073,7 @@ class XBPMMainWindow(QMainWindow):
                 os.path.dirname(prefix),
                 f"xbpm_positions_pair_scaled_{self.analyzer.app.prm.beamline}.png"
             )
-            result_scaled['pairwise_figure'].savefig(
-                fig_pair, dpi=FIGDPI, bbox_inches='tight'
-            )
+            self._save_figure_for_export(result_scaled['pairwise_figure'], fig_pair)
             logger.info("Pairwise figure saved to %s", fig_pair)
 
         if result_scaled.get('cross_figure'):
@@ -986,9 +1081,7 @@ class XBPMMainWindow(QMainWindow):
                 os.path.dirname(prefix),
                 f"xbpm_positions_cross_scaled_{self.analyzer.app.prm.beamline}.png"
             )
-            result_scaled['cross_figure'].savefig(
-                fig_cross, dpi=FIGDPI, bbox_inches='tight'
-            )
+            self._save_figure_for_export(result_scaled['cross_figure'], fig_cross)
             logger.info("Cross figure saved to %s", fig_cross)
 
         # Export scaling factors and statistics
@@ -1056,7 +1149,7 @@ class XBPMMainWindow(QMainWindow):
             if fig is None:
                 continue
             fig_path = os.path.join(os.path.dirname(prefix), filename)
-            fig.savefig(fig_path, dpi=FIGDPI, bbox_inches='tight')
+            self._save_figure_for_export(fig, fig_path)
             logger.info("Figure saved to %s", fig_path)
             exported = True
         return exported
@@ -1072,7 +1165,7 @@ class XBPMMainWindow(QMainWindow):
             fig_path = os.path.join(
                 outdir, f'xbpm_central_sweeps_{beamline}.png'
             )
-            fig.savefig(fig_path, dpi=FIGDPI, bbox_inches='tight')
+            self._save_figure_for_export(fig, fig_path)
             logger.info("Figure saved to %s", fig_path)
             exported = True
 
@@ -1385,6 +1478,15 @@ class XBPMMainWindow(QMainWindow):
     def _parse_fit(self, fit):
         """Parse fit parameters into k and delta values."""
         try:
+            # Fit can be either [k, delta] or [[k, s_k], [delta, s_delta]].
+            if hasattr(fit, "shape") and fit.shape == (2, 2):
+                return {
+                    'k': float(fit[0][0]),
+                    'delta': float(fit[1][0]),
+                    's_k': float(fit[0][1]),
+                    's_delta': float(fit[1][1]),
+                }
+
             k_val = (float(fit[0][0])
                      if hasattr(fit, "__len__") else float(fit[0]))
             delta_val = (float(fit[1][0])
@@ -1451,13 +1553,17 @@ class XBPMMainWindow(QMainWindow):
 
         if 'raw' in text:
             scope = 'raw'
-        if 'scaled' in text:
+        if 'scaled' in text or ' tr' in text:
             scope = 'scaled'
-
         if 'pair' in text:
             label = 'pair'
-        if 'cross' in text:
+        if 'cross' in text or 'part.' in text:
             label = 'cross'
+
+        # Pairwise tabs are named "XBPM Δ/Σ raw|Tr" and do not include
+        # the literal word "pair".
+        if 'xbpm' in text and label is None:
+            label = 'pair'
 
         if scope or label:
             return scope, label
@@ -1517,7 +1623,8 @@ class XBPMMainWindow(QMainWindow):
 
                 lines_to_add = self._format_scale_entry(coeffs)
                 if lines_to_add:
-                    scale_lines.append(f"  * {scope} {label}:")
+                    subject = Config.get_position_subject(scope, label)
+                    scale_lines.append(f"  * {subject}:")
                     scale_lines.extend(lines_to_add)
 
         return {'positions': scale_lines} if scale_lines else {}
@@ -1528,21 +1635,21 @@ class XBPMMainWindow(QMainWindow):
         line1 = []
         line2 = []
 
-        for key in ('kx', 'dx'):
-            val = coeffs.get(key)
-            if val is not None:
-                try:
-                    line1.append(f"{key:>10} = {float(val):.6f}")
-                except Exception:
-                    line1.append(f"{key:>10} = {val}")
+        for key, err_keys in (
+            ('kx', ('skx', 's_kx')),
+            ('dx', ('sdx', 's_dx')),
+        ):
+            item = self._format_value_with_optional_error(coeffs, key, err_keys)
+            if item:
+                line1.append(item)
 
-        for key in ('ky', 'dy'):
-            val = coeffs.get(key)
-            if val is not None:
-                try:
-                    line2.append(f"{key:>10} = {float(val):.6f}")
-                except Exception:
-                    line2.append(f"{key:>10} = {val}")
+        for key, err_keys in (
+            ('ky', ('sky', 's_ky')),
+            ('dy', ('sdy', 's_dy')),
+        ):
+            item = self._format_value_with_optional_error(coeffs, key, err_keys)
+            if item:
+                line2.append(item)
 
         if line1:
             lines_to_add.append("   " + ", ".join(line1))
@@ -1550,6 +1657,36 @@ class XBPMMainWindow(QMainWindow):
             lines_to_add.append("   " + ", ".join(line2))
 
         return lines_to_add
+
+    @staticmethod
+    def _format_value_with_optional_error(coeffs: dict,
+                                          key: str,
+                                          err_keys) -> str:
+        """Format coeff as value or value +/- error when available."""
+        val = coeffs.get(key)
+        if val is None:
+            return ""
+
+        # Accept both legacy keys (s_kx/s_dx/...) and current keys
+        # (skx/sdx/...) to support old and new result payloads.
+        if isinstance(err_keys, (tuple, list)):
+            err = None
+            for ek in err_keys:
+                if ek in coeffs and coeffs.get(ek) is not None:
+                    err = coeffs.get(ek)
+                    break
+        else:
+            err = coeffs.get(err_keys)
+
+        try:
+            val_num = float(val)
+            if err is not None:
+                return f"{key:>10} = {val_num:.6f} +/- {float(err):.3g}"
+            return f"{key:>10} = {val_num:.6f}"
+        except Exception:
+            if err is not None:
+                return f"{key:>10} = {val} +/- {err}"
+            return f"{key:>10} = {val}"
 
     def _format_sweeps_positions_section(
             self, meta: dict) -> dict[str, list[str]]:
@@ -1566,7 +1703,7 @@ class XBPMMainWindow(QMainWindow):
 
             lines_to_add = self._format_sweeps_fit_entry(fit)
             if lines_to_add:
-                sweeps_pos_lines.append(f"\n  * {label}:")
+                sweeps_pos_lines.append(f"  * {label}:")
                 sweeps_pos_lines.extend(lines_to_add)
 
         return ({'sweep_positions': sweeps_pos_lines}
@@ -1611,7 +1748,7 @@ class XBPMMainWindow(QMainWindow):
 
                 parts = self._format_blade_fit_entry(fit)
                 if parts:
-                    blades_lines.append(f"\n  * {label} {blade}:")
+                    blades_lines.append(f"  * {label} {blade}:")
                     blades_lines.append("   " + ", ".join(parts))
 
         return {'blades_sweeps': blades_lines} if blades_lines else {}
@@ -1661,7 +1798,7 @@ class XBPMMainWindow(QMainWindow):
         if 'raw' in text:
             xbpm_stats = (meta.get('xbpm_stats_raw', {})
                           if isinstance(meta, dict) else {})
-        elif 'scaled' in text:
+        elif 'scaled' in text or ' tr' in text:
             xbpm_stats = (meta.get('xbpm_stats_scaled', {})
                           if isinstance(meta, dict) else {})
         else:
@@ -1674,8 +1811,12 @@ class XBPMMainWindow(QMainWindow):
         calc_type = None
         if 'pair' in text:
             calc_type = 'pairwise'
-        elif 'cross' in text:
+        elif 'cross' in text or 'part.' in text:
             calc_type = 'cross'
+
+        # Default XBPM Δ/Σ raw|Tr tabs are pairwise.
+        if calc_type is None and 'xbpm' in text:
+            calc_type = 'pairwise'
 
         if not calc_type:
             return {}
@@ -1724,17 +1865,18 @@ class XBPMMainWindow(QMainWindow):
         text = (active_tab or "").lower()
 
         # Raw pairwise tab: show standard suppression matrix
-        if 'raw' in text and 'pair' in text:
+        is_pairwise = ('pair' in text) or ('xbpm' in text and 'part.' not in text)
+        if 'raw' in text and is_pairwise:
             supmat = meta.get('supmat_standard')
             if supmat is not None:
-                lines.append("\n  ** Standard Suppression Matrix:")
+                lines.append("  ** Standard Suppression Matrix:")
                 lines.extend(self._format_matrix(supmat))
 
         # Scaled pairwise tab: show calculated suppression matrix
-        elif 'scaled' in text and 'pair' in text:
+        elif ('scaled' in text or ' tr' in text) and is_pairwise:
             supmat = meta.get('supmat')
             if supmat is not None:
-                lines.append("\n  ** Calculated Suppression Matrix:")
+                lines.append("  ** Calculated Suppression Matrix:")
                 lines.extend(self._format_matrix(supmat))
 
         return lines
@@ -1766,8 +1908,8 @@ class XBPMMainWindow(QMainWindow):
             content = sections.get(name)
             if not content:
                 continue
-            prefix = "** " if name == active_section else ""
-            lines.append(f"{prefix}{name.capitalize()}:")
+            title = self.ANALYSIS_SECTION_TITLES.get(name, name.replace('_', ' ').title())
+            lines.append(f"** {title}:")
             lines.extend(content)
             lines.append("")
 
@@ -1928,12 +2070,14 @@ class XBPMMainWindow(QMainWindow):
         if available.
         """
         figures_to_show = [
-            ('xbpm_raw_pairwise_figure', 'XBPM Raw - Pairwise Positions'),
-            ('xbpm_raw_cross_figure', 'XBPM Raw - Cross-blades Positions'),
+            ('xbpm_raw_pairwise_figure',
+             'XBPM Raw - Δ/Σ Positions'),
+            ('xbpm_raw_cross_figure',
+             'XBPM Raw - Partial Δ/Σ Positions'),
             ('xbpm_scaled_pairwise_figure',
-             'XBPM Scaled - Pairwise Positions'),
+             'XBPM Scaled - Δ/Σ Positions'),
             ('xbpm_scaled_cross_figure',
-             'XBPM Scaled - Cross-blades Positions'),
+             'XBPM Scaled - Partial Δ/Σ Positions'),
         ]
 
         found_any = False

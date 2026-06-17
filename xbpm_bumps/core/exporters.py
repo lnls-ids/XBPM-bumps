@@ -1392,6 +1392,11 @@ class Exporter:
                     'Distance from radiation source to XBPM detector (m)'
                 )
             )
+        # Store ROI size so reconstruction can reproduce the exact ROI slice
+        roisize = getattr(self.prm, 'roisize', None)
+        if roisize and len(roisize) >= 2:
+            analysis.attrs['roi_h_size'] = int(roisize[0])
+            analysis.attrs['roi_v_size'] = int(roisize[1])
         for meta_key in ['meta', 'analysis_meta', 'metadata']:
             meta = results.get(meta_key)
             if isinstance(meta, dict):

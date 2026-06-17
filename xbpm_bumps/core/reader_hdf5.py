@@ -56,6 +56,8 @@ class HDF5FigureReconstructor:
         ]
 
         for hdf5_name, result_key in figure_map.items():
+            if result_key in results:
+                continue
             try:
                 fig = self.reconstruct_figure(hdf5_name)
                 if fig is not None:
@@ -126,7 +128,9 @@ class HDF5FigureReconstructor:
                         f"Unknown figure '{figure_name}'."
                         f" Available: {available}"
                     )
-                return self._reconstruct_positions(analysis_grp, dataset_name)
+                return self._reconstruct_positions(
+                    h5, analysis_grp, dataset_name
+                )
 
     @staticmethod
     def _find_analysis_group(h5_file):
@@ -181,25 +185,131 @@ class HDF5FigureReconstructor:
 
     @staticmethod
     def _reconstruct_blades_center(analysis_grp):
-        """Reconstruct blades center figure from analysis group."""
+        """Reconstruct blades center figure from analysis group.
+
+        Uses the canonical plotting function with blade data extracted
+        from HDF5, ensuring consistency with live analysis.
+        """
         from .visualizers import BladeCurrentVisualizer
-        if 'sweeps' not in analysis_grp:
+
+        sweeps_grp = (analysis_grp.get('sweeps')
+                      or analysis_grp.get('central_sweeps'))
+        if sweeps_grp is None:
             raise ValueError("No sweeps in /analysis/ group")
-        sweeps_grp = analysis_grp['sweeps']
         h_data = sweeps_grp.get('blades_h')
         v_data = sweeps_grp.get('blades_v')
+
         return BladeCurrentVisualizer.plot_from_hdf5(h_data, v_data)
 
     @staticmethod
-    def _reconstruct_positions(analysis_grp, dataset_name):
+    def _reconstruct_positions(h5_file, analysis_grp, dataset_name):
         """Reconstruct position figure from analysis group."""
         from .visualizers import PositionVisualizer
         if 'positions' not in analysis_grp:
             raise ValueError("No positions in /analysis/ group")
         positions_grp = analysis_grp['positions']
-        if dataset_name not in positions_grp:
-            raise ValueError(f"No {dataset_name} in /analysis/positions/")
-        return PositionVisualizer.plot_from_hdf5(positions_grp[dataset_name])
+
+        # Support legacy/new naming variants for the same semantic figure.
+        candidates = [dataset_name]
+        if dataset_name == 'bpm':
+            candidates.append('bpm_positions')
+        elif dataset_name == 'bpm_positions':
+            candidates.append('bpm')
+
+        selected_name = None
+        for name in candidates:
+            if name in positions_grp:
+                selected_name = name
+                break
+        if selected_name is None and dataset_name in ('bpm', 'bpm_positions'):
+            return HDF5FigureReconstructor._reconstruct_bpm_from_raw(
+                h5_file, analysis_grp
+            )
+        if selected_name is None:
+            raise ValueError(
+                f"No {dataset_name} in /analysis/positions/ "
+                f"(tried {candidates})"
+            )
+
+        roi_bounds = {}
+        for key in ('x_min', 'x_max', 'y_min', 'y_max'):
+            if key in positions_grp.attrs:
+                roi_bounds[key] = positions_grp.attrs[key]
+
+        # Prefer explicitly stored ROI sizes over coordinate inference.
+        roi_h_size = analysis_grp.attrs.get('roi_h_size', None)
+        roi_v_size = analysis_grp.attrs.get('roi_v_size', None)
+        stored_roi_size = None
+        if roi_h_size is not None and roi_v_size is not None:
+            stored_roi_size = (int(roi_h_size), int(roi_v_size))
+
+        # Infer title context from dataset/group naming conventions.
+        name = (selected_name or '').lower()
+        calc = 'pairwise' if 'pair' in name else ('cross' if 'cross' in name
+                                                   else '')
+        if 'raw' in name:
+            rort = 'raw'
+        elif 'scaled' in name or 'transf' in name:
+            rort = 'Transf.'
+        else:
+            rort = ''
+
+        beamline = analysis_grp.attrs.get('beamline', '')
+        if not beamline:
+            grp_name = analysis_grp.name.rsplit('/', 1)[-1]
+            if grp_name.startswith('analysis_'):
+                beamline = grp_name.split('analysis_', 1)[1]
+
+        return PositionVisualizer.plot_from_hdf5(
+            positions_grp[selected_name],
+            beamline=beamline,
+            rort=rort,
+            calc=calc,
+            roi_bounds=roi_bounds or None,
+            roi_size=stored_roi_size,
+        )
+
+    @staticmethod
+    def _reconstruct_bpm_from_raw(h5_file, analysis_grp):
+        """Fallback reconstruction of BPM positions from raw_data sweeps."""
+        from .parameters import Prm
+        from .processors import BPMProcessor
+        from .config import Config
+
+        raw_grp = h5_file.get('raw_data')
+        if raw_grp is None:
+            raise ValueError("No BPM dataset in positions and no raw_data")
+
+        rawdata = HDF5DataReader.extract_sweeps(raw_grp)
+        if not rawdata:
+            raise ValueError("No BPM dataset in positions and raw_data is empty")
+
+        beamline = analysis_grp.attrs.get('beamline', '')
+        if not beamline:
+            grp_name = analysis_grp.name.rsplit('/', 1)[-1]
+            if grp_name.startswith('analysis_'):
+                beamline = grp_name.split('analysis_', 1)[1]
+
+        base_bl = beamline[:3] if beamline else ''
+        section = Config.SECTIONS.get(base_bl)
+        if not section:
+            raise ValueError(
+                "No BPM dataset in positions and section is unavailable "
+                "to reconstruct from raw_data"
+            )
+
+        prm = Prm()
+        prm.beamline = beamline
+        prm.section = section
+        prm.bpmdist = Config.BPMDISTS.get(base_bl)
+        prm.xbpmdist = analysis_grp.attrs.get(
+            'xbpmdist', Config.XBPMDISTS.get(beamline,
+                                             Config.XBPMDISTS.get(base_bl))
+        )
+
+        bpm_processor = BPMProcessor(rawdata, prm)
+        bpm_processor.calculate_positions()
+        return bpm_processor.fig
 
 
 # --- Object-Oriented HDF5 Data Reader ---
@@ -280,19 +390,12 @@ class HDF5DataReader:
             rawdata: List of (meta, grid, bpm_dict) tuples
         """
         import numpy as np
-        from .config import Config
 
         rawdata = []
-        rawdata_0_keys = list(Config.BEAMLINENAME.keys())
-
-        rawdata_1_keys = [
-            'cnb', 'mnc', 'cat', 'mgn'
-        ]
         rawdata_2_keys = [
             'current', 'agx', 'agy', 'posx', 'posy', 'orbx', 'orby',
         ]
 
-        sweep_idx = 0
         for key in raw_grp:
             if not key.startswith('sweep_'):
                 continue
@@ -364,8 +467,63 @@ class HDF5DataReader:
             self._load_sweeps_meta(analysis, meta)
             self._load_bpm_stats_meta(analysis, meta)
             self._load_roi_bounds_fallback(analysis, meta)
+            bpm_stats = meta.get('bpm_stats', {}) if isinstance(meta, dict) else {}
+            needs_bpm_derivation = not (
+                isinstance(bpm_stats, dict) and
+                any(key in bpm_stats for key in ('sigma_h', 'sigma_v', 'sigma_total'))
+            )
+            if needs_bpm_derivation:
+                bpm_stats = self._derive_bpm_stats_from_raw(
+                    h5file, analysis, beamline
+                )
+                if isinstance(bpm_stats, dict) and bpm_stats:
+                    meta['bpm_stats'] = bpm_stats
             self._load_supmat_meta(analysis, meta)
         return meta
+
+    @staticmethod
+    def _derive_bpm_stats_from_raw(h5file, analysis, beamline):
+        """Derive BPM stats from /raw_data when /positions/bpm is missing."""
+        raw_grp = h5file.get('raw_data') if h5file is not None else None
+        if raw_grp is None:
+            return None
+
+        rawdata = HDF5DataReader.extract_sweeps(raw_grp)
+        if not rawdata:
+            return None
+
+        from .parameters import Prm
+        from .processors import BPMProcessor
+        from .config import Config
+        from contextlib import redirect_stdout, redirect_stderr
+        from io import StringIO
+
+        beamline_val = beamline or analysis.attrs.get('beamline', '')
+        base_bl = beamline_val[:3] if beamline_val else ''
+
+        section = analysis.attrs.get('section') or Config.SECTIONS.get(base_bl)
+        bpmdist = analysis.attrs.get('bpmdist') or Config.BPMDISTS.get(base_bl)
+        xbpmdist = (analysis.attrs.get('xbpmdist')
+                    or Config.XBPMDISTS.get(beamline_val)
+                    or Config.XBPMDISTS.get(base_bl))
+
+        if section is None or bpmdist is None or xbpmdist is None:
+            return None
+
+        prm = Prm()
+        prm.beamline = beamline_val
+        prm.section = section
+        prm.bpmdist = float(bpmdist)
+        prm.xbpmdist = float(xbpmdist)
+
+        bpm_processor = BPMProcessor(rawdata, prm)
+        sink = StringIO()
+        try:
+            with redirect_stdout(sink), redirect_stderr(sink):
+                bpm_processor.calculate_positions()
+        except Exception:
+            return None
+        return getattr(bpm_processor, 'last_stats', None)
 
     @staticmethod
     def _load_scales_meta(analysis, meta):
@@ -421,7 +579,9 @@ class HDF5DataReader:
         positions_grp = analysis.get('positions')
         if positions_grp is None:
             return
-        bpm_ds = positions_grp.get('bpm')
+        bpm_ds = positions_grp.get('bpm') or positions_grp.get(
+            'bpm_positions'
+        )
         if bpm_ds is None:
             return
         stats = {}
@@ -520,7 +680,11 @@ class HDF5DataReader:
 
     @staticmethod
     def _read_sweeps_meta(analysis_grp):
-        sweeps = analysis_grp.get('sweeps') if analysis_grp else None
+        if analysis_grp is None:
+            return {}
+        sweeps = analysis_grp.get('sweeps') or analysis_grp.get(
+            'central_sweeps'
+        )
         if sweeps is None:
             return {}
 

@@ -150,8 +150,9 @@ class XBPMApp:
     def _maybe_xbpm_positions(self) -> None:
         pos_nom_h, pos_nom_v = self._resolve_reference_positions()
         if self.prm.xbpmpositionsraw:
-            positions = self.processor.calculate_raw_positions(
+            positions = self.processor.calculate_positions(
                 pos_nom_h, pos_nom_v,
+                nosuppress=True,
                 showmatrix=True,
             )
             if self.prm.outputfile:
@@ -162,8 +163,9 @@ class XBPMApp:
                     self.exporter.write_supmat(supmat, write_file=True)
 
         if self.prm.xbpmpositions:
-            positions = self.processor.calculate_scaled_positions(
+            positions = self.processor.calculate_positions(
                 pos_nom_h, pos_nom_v,
+                nosuppress=False,
                 showmatrix=True,
             )
             if self.prm.outputfile:
