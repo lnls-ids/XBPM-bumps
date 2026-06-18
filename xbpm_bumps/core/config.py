@@ -34,7 +34,7 @@ class Config:
         #"MGN1" : {"TO": 'B', "TI": 'C', "BI": 'A', "BO": 'D'},
         #"MGN2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
 
-        # "MNC1"  : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+        # "MNC1" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         "MNC1" : {"TO": 'D', "TI": 'C', "BI": 'B', "BO": 'A'},
         "MNC2" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
 
@@ -111,7 +111,7 @@ class Config:
         "bpm": {
             "total"   : "BPM @ {beamline}",
             "roi"     : "BPM @ {beamline} (ROI)",
-            "heatmap" : "RMS Differences at ROI",
+            "heatmap" : "RMS $\Delta$ @ ROI",
         },
 
         # "Blade Map" tab
@@ -141,9 +141,22 @@ class Config:
                 "XBPM{xbpmnum}@{beamline}: {ct} $\Delta/\Sigma$, {rort} (ROI)"
                 ),
             "heatmap"  : (
-                "RMS in ROI"
+                "RMS $\Delta$ @ ROI"
                 ),
         },
+    }
+
+    # Consistent naming for pairwise/cross and raw/transformed modes
+    # used by non-plot UI text (analysis info box, exports, logs).
+    POSITION_CALC_LABELS = {
+        "pair"     : "Δ/Σ",
+        "pairwise" : "Δ/Σ",
+        "cross"    : "partial Δ/Σ",
+    }
+
+    POSITION_SCOPE_LABELS = {
+        "raw"     : "raw",
+        "scaled"  : "transformed",
     }
 
     @classmethod
@@ -191,3 +204,17 @@ class Config:
             rort=rort,
             ct=calc_type,
         )
+
+    @classmethod
+    def get_position_subject(cls, scope: str, calc_type: str) -> str:
+        """Return normalized subject label for XBPM position metadata.
+
+        Examples:
+            ('raw', 'pair')   -> 'raw Δ/Σ'
+            ('raw', 'cross')  -> 'raw partial Δ/Σ'
+            ('scaled', 'pair')-> 'transformed Δ/Σ'
+        """
+        scope_label = cls.POSITION_SCOPE_LABELS.get(scope, str(scope or ""))
+        calc_label  = cls.POSITION_CALC_LABELS.get(calc_type,
+                                                   str(calc_type or ""))
+        return f"{scope_label} {calc_label}".strip()
