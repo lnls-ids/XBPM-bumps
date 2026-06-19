@@ -1662,7 +1662,7 @@ class XBPMMainWindow(QMainWindow):
     def _format_value_with_optional_error(coeffs: dict,
                                           key: str,
                                           err_keys) -> str:
-        """Format coeff as value or value +/- error when available."""
+        """Format coeff as value or value and error when available."""
         val = coeffs.get(key)
         if val is None:
             return ""
@@ -1681,11 +1681,11 @@ class XBPMMainWindow(QMainWindow):
         try:
             val_num = float(val)
             if err is not None:
-                return f"{key:>10} = {val_num:.6f} +/- {float(err):.3g}"
+                return f"{key:>10} = {val_num:.6f} ({float(err):.3g})"
             return f"{key:>10} = {val_num:.6f}"
         except Exception:
             if err is not None:
-                return f"{key:>10} = {val} +/- {err}"
+                return f"{key:>10} = {val} ({err})"
             return f"{key:>10} = {val}"
 
     def _format_sweeps_positions_section(
