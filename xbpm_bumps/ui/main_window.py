@@ -805,7 +805,7 @@ class XBPMMainWindow(QMainWindow):
         wrote_any = False
 
         # --- Standard (1/-1) suppression matrix ---
-        supmat_std = XBPMProcessor.standard_suppression_matrix()
+        supmat_std, _ = XBPMProcessor.standard_suppression_matrix()
         std_path = os.path.join(
             outdir,
             f"xbpm_supmat_standard_{self.analyzer.app.prm.beamline}.dat"
@@ -856,19 +856,20 @@ class XBPMMainWindow(QMainWindow):
             fp.write(f"dy           = {float(scales.get('dy', 0)):.6f}\n")
             fp.write(f"sdy          = {float(scales.get('sdy', 0)):.6f}\n")
             if stats:
-                fp.write("sigma_h      = "
+                fp.write("u\n# Position differences statistics ($\\mu$m)\n")
+                fp.write("RMS H diff.     = "
                          f"{float(stats.get('sigma_h', 0)):.6f}  um\n")
-                fp.write("sigma_v      = "
+                fp.write("RMS V diff.     = "
                          f"{float(stats.get('sigma_v', 0)):.6f}  um\n")
-                fp.write("sigma_total  = "
+                fp.write("RMS Total diff. = "
                          f"{float(stats.get('sigma_total', 0)):.6f}  um\n")
-                fp.write("diff_max_h   = "
+                fp.write("Max RMS H diff. = "
                          f"{float(stats.get('diff_max_h', 0)):.6f}  um\n")
-                fp.write("diff_max_v   = "
+                fp.write("Max RMS V diff. = "
                          f"{float(stats.get('diff_max_v', 0)):.6f}  um\n")
-                fp.write("diff_min_h   = "
+                fp.write("Min RMS H diff. = "
                          f"{float(stats.get('diff_min_h', 0)):.6f}  um\n")
-                fp.write("diff_min_v   = "
+                fp.write("Min RMS V diff. = "
                          f"{float(stats.get('diff_min_v', 0)):.6f}  um\n")
 
     def _save_figure_for_export(self, fig, path: str) -> None:
