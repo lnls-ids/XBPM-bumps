@@ -96,11 +96,11 @@ class Exporter:
 
         # Descriptions for BPM statistics saved on positions/bpm
         self.BPM_STATS_DESCRIPTIONS = {
-            'sigma_h': 'Horizontal BPM position std deviation',
-            'sigma_v': 'Vertical BPM position std deviation',
-            'sigma_total': 'Combined BPM position std deviation',
-            'diff_max_h': 'Max horizontal |x_meas - x_nom| [μm]',
-            'diff_max_v': 'Max vertical |y_meas - y_nom| [μm]',
+            'sigma_h'     : 'Horizontal BPM position std deviation',
+            'sigma_v'     : 'Vertical BPM position std deviation',
+            'sigma_total' : 'Combined BPM position std deviation',
+            'diff_max_h'  : 'Max horizontal |x_meas - x_nom| [μm]',
+            'diff_max_v'  : 'Max vertical |y_meas - y_nom| [μm]',
         }
 
     def write_supmat(self, supmat: np.ndarray,
@@ -117,9 +117,17 @@ class Exporter:
         """
         if not write_file:
             return
+
+        # Accept both plain matrix and legacy tuple payload
+        # (supmat, stddevmat).
+        if isinstance(supmat, tuple):
+            supmat = supmat[0]
+
+        mat = np.asarray(supmat, dtype=float)
+
         outfile = outpath if outpath else f"supmat_{self.prm.beamline}.dat"
         with open(outfile, 'w') as fs:
-            for lin in supmat:
+            for lin in mat:
                 for col in lin:
                     fs.write(f" {col:12.6f}")
                 fs.write("\n")
