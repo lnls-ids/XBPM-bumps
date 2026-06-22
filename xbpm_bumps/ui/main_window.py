@@ -43,6 +43,14 @@ class XBPMMainWindow(QMainWindow):
         'bpm': 'BPM',
     }
 
+    BPM_STATS_DESCRIPTIONS = {
+        'sigma_h'     : 'Horizontal RMS pos. difference ',
+        'sigma_v'     : '  Vertical RMS pos. difference ',
+        'sigma_total' : '     Total RMS pos. difference ',
+        'diff_max_h'  : 'Max hor.  |x_meas - x_nom| [μm]',
+        'diff_max_v'  : 'Max vert. |y_meas - y_nom| [μm]',
+    }
+
     def __init__(self):
         """Initialize the main window."""
         super().__init__()
@@ -500,9 +508,12 @@ class XBPMMainWindow(QMainWindow):
             # Always export suppression matrices (independent of checkboxes)
             exported_any |= self._export_suppression_matrices(prefix, results)
 
+            # Always export BPM positions when they were computed
+            exported_any |= self._export_bpm_positions(prefix, results)
+
             # Export XBPM data and figures
-            exported_any |= self._export_xbpm_raw(prefix, params)
-            exported_any |= self._export_xbpm_scaled(prefix, params)
+            exported_any |= self._export_xbpm_raw(prefix, params, results)
+            exported_any |= self._export_xbpm_scaled(prefix, params, results)
 
             # Export other analysis figures and data
             exported_any |= self._export_other_figures(prefix, params, results)
@@ -757,31 +768,6 @@ class XBPMMainWindow(QMainWindow):
             logger.exception("Failed to open Help dialog")
             self.show_error("Help", f"Could not open Help: {exc}")
 
-    def _compute_nominal_positions(self, data=None):
-        """Compute nominal grid positions from measurement data.
-
-        Args:
-            data: Optional legacy argument (unused).
-
-        Returns:
-            Tuple (pos_nom_h, pos_nom_v) - nominal position grids.
-        """
-        _ = data
-        processor = self.analyzer.app.processor
-        prm = self.analyzer.app.prm
-
-        # Use processor to compute nominal positions from data
-        supmat = processor.suppression_matrix(showmatrix=False,
-                                              nosuppress=True)
-        pair = processor.beam_position_pair(supmat)
-        pos_nom_h, pos_nom_v, _, _ = processor.position_dict_parse(pair)
-
-        # Scale by XBPM distance
-        pos_nom_h *= prm.xbpmdist
-        pos_nom_v *= prm.xbpmdist
-
-        return pos_nom_h, pos_nom_v
-
     def _export_suppression_matrices(self, prefix: str,
                                       results: dict) -> bool:
         """Export both suppression matrices unconditionally.
@@ -962,12 +948,15 @@ class XBPMMainWindow(QMainWindow):
 
         fig.set_size_inches(original_size[0], original_size[1], forward=False)
 
-    def _export_xbpm_raw(self, prefix: str, params: dict) -> bool:
+    def _export_xbpm_raw(self, prefix: str,
+                         params: dict,
+                         results: dict) -> bool:
         """Export raw XBPM positions and figures.
 
         Args:
             prefix: Export filename prefix.
             params: Parameter dictionary from UI.
+            results: Last analysis results dictionary.
 
         Returns:
             True if export occurred, False otherwise.
@@ -978,18 +967,11 @@ class XBPMMainWindow(QMainWindow):
         from ..core.exporters import Exporter
 
         exporter = Exporter(self.analyzer.app.prm)
-        processor = self.analyzer.app.processor
-        data = self.analyzer.app.data
+        result_raw = results.get('positions_raw_full')
+        if not result_raw:
+            logger.warning("Raw XBPM export skipped: no cached analysis data.")
+            return False
 
-        # Compute nominal grid positions from data
-        pos_nom_h, pos_nom_v = self._compute_nominal_positions(data)
-
-        result_raw = processor.xbpm_position_calculation(
-            pos_nom_h=pos_nom_h,
-            pos_nom_v=pos_nom_v,
-            nosuppress=True,
-            showmatrix=True
-        )
         exporter.data_dump_with_prefix(
             prefix,
             self.analyzer.app.data,
@@ -998,20 +980,24 @@ class XBPMMainWindow(QMainWindow):
         )
 
         # Save figures
-        if result_raw.get('pairwise_figure'):
+        pairwise_fig = (result_raw.get('pairwise_figure') or
+                        results.get('xbpm_raw_pairwise_figure'))
+        if pairwise_fig is not None:
             fig_pair = os.path.join(
                 os.path.dirname(prefix),
                 f"xbpm_positions_pair_raw_{self.analyzer.app.prm.beamline}.png"
             )
-            self._save_figure_for_export(result_raw['pairwise_figure'], fig_pair)
+            self._save_figure_for_export(pairwise_fig, fig_pair)
             logger.info("Pairwise figure saved to %s", fig_pair)
 
-        if result_raw.get('cross_figure'):
+        cross_fig = (result_raw.get('cross_figure') or
+                     results.get('xbpm_raw_cross_figure'))
+        if cross_fig is not None:
             fig_cross = os.path.join(
                 os.path.dirname(prefix),
                 f"xbpm_positions_cross_raw_{self.analyzer.app.prm.beamline}.png"
             )
-            self._save_figure_for_export(result_raw['cross_figure'], fig_cross)
+            self._save_figure_for_export(cross_fig, fig_cross)
             logger.info("Cross figure saved to %s", fig_cross)
 
         # Export scaling factors and statistics
@@ -1033,12 +1019,15 @@ class XBPMMainWindow(QMainWindow):
 
         return True
 
-    def _export_xbpm_scaled(self, prefix: str, params: dict) -> bool:
+    def _export_xbpm_scaled(self, prefix: str,
+                            params: dict,
+                            results: dict) -> bool:
         """Export scaled XBPM positions and figures.
 
         Args:
             prefix: Export filename prefix.
             params: Parameter dictionary from UI.
+            results: Last analysis results dictionary.
 
         Returns:
             True if export occurred, False otherwise.
@@ -1049,18 +1038,11 @@ class XBPMMainWindow(QMainWindow):
         from ..core.exporters import Exporter
 
         exporter = Exporter(self.analyzer.app.prm)
-        processor = self.analyzer.app.processor
-        data = self.analyzer.app.data
+        result_scaled = results.get('positions_scaled_full')
+        if not result_scaled:
+            logger.warning("Scaled XBPM export skipped: no cached analysis data.")
+            return False
 
-        # Compute nominal grid positions from data
-        pos_nom_h, pos_nom_v = self._compute_nominal_positions(data)
-
-        result_scaled = processor.xbpm_position_calculation(
-            pos_nom_h=pos_nom_h,
-            pos_nom_v=pos_nom_v,
-            nosuppress=False,
-            showmatrix=True
-        )
         exporter.data_dump_with_prefix(
             prefix,
             self.analyzer.app.data,
@@ -1069,20 +1051,24 @@ class XBPMMainWindow(QMainWindow):
         )
 
         # Save figures
-        if result_scaled.get('pairwise_figure'):
+        pairwise_fig = (result_scaled.get('pairwise_figure') or
+                        results.get('xbpm_scaled_pairwise_figure'))
+        if pairwise_fig is not None:
             fig_pair = os.path.join(
                 os.path.dirname(prefix),
                 f"xbpm_positions_pair_scaled_{self.analyzer.app.prm.beamline}.png"
             )
-            self._save_figure_for_export(result_scaled['pairwise_figure'], fig_pair)
+            self._save_figure_for_export(pairwise_fig, fig_pair)
             logger.info("Pairwise figure saved to %s", fig_pair)
 
-        if result_scaled.get('cross_figure'):
+        cross_fig = (result_scaled.get('cross_figure') or
+                     results.get('xbpm_scaled_cross_figure'))
+        if cross_fig is not None:
             fig_cross = os.path.join(
                 os.path.dirname(prefix),
                 f"xbpm_positions_cross_scaled_{self.analyzer.app.prm.beamline}.png"
             )
-            self._save_figure_for_export(result_scaled['cross_figure'], fig_cross)
+            self._save_figure_for_export(cross_fig, fig_cross)
             logger.info("Cross figure saved to %s", fig_cross)
 
         # Export scaling factors and statistics
@@ -1102,6 +1088,29 @@ class XBPMMainWindow(QMainWindow):
                 )
                 logger.info("Info file saved to %s", info_path)
 
+        return True
+
+    def _export_bpm_positions(self, prefix: str, results: dict) -> bool:
+        """Export BPM positions to a text file (always when data is available).
+
+        Args:
+            prefix: Export filename prefix (directory is derived from it).
+            results: Last analysis results dictionary.
+
+        Returns:
+            True if export occurred, False otherwise.
+        """
+        bpm_data = results.get('positions', {}).get('bpm')
+        if not bpm_data:
+            return False
+        measured = bpm_data.get('measured')
+        nominal = bpm_data.get('nominal')
+        if measured is None or nominal is None:
+            return False
+
+        from ..core.exporters import Exporter
+        exporter = Exporter(self.analyzer.app.prm)
+        exporter.data_dump_bpm(measured, nominal, prefix=prefix)
         return True
 
     def _export_analysis_info(self, prefix: str) -> bool:
@@ -1140,8 +1149,6 @@ class XBPMMainWindow(QMainWindow):
              f'xbpm_blademap_{beamline}.png'),
             ('showbladescenter', 'blades_center_figure',
              f'xbpm_blades_center_{beamline}.png'),
-            ('xbpmfrombpm', 'bpm_figure',
-             f'xbpm_bpm_positions_{beamline}.png'),
         ]
         for option_key, result_key, filename in figure_exports:
             if not params.get(option_key):
@@ -1151,6 +1158,16 @@ class XBPMMainWindow(QMainWindow):
                 continue
             fig_path = os.path.join(os.path.dirname(prefix), filename)
             self._save_figure_for_export(fig, fig_path)
+            logger.info("Figure saved to %s", fig_path)
+            exported = True
+        # BPM positions: always export the figure when it was computed
+        bpm_fig = results.get('bpm_figure')
+        if bpm_fig is not None:
+            fig_path = os.path.join(
+                os.path.dirname(prefix),
+                f'xbpm_bpm_positions_{beamline}.png'
+            )
+            self._save_figure_for_export(bpm_fig, fig_path)
             logger.info("Figure saved to %s", fig_path)
             exported = True
         return exported
@@ -1771,15 +1788,62 @@ class XBPMMainWindow(QMainWindow):
         bpm_stats = meta.get('bpm_stats', {}) if isinstance(meta, dict) else {}
 
         if isinstance(bpm_stats, dict):
-            for key in ('sigma_h', 'sigma_v', 'sigma_total',
-                       'diff_max_h', 'diff_max_v'):
+            roi_size = getattr(self.prm, 'roisize', None)
+            if isinstance(roi_size, (list, tuple)) and len(roi_size) >= 2:
+                try:
+                    bpm_lines.append(
+                        f"  ROI size [H x V points] = {int(roi_size[0])} x {int(roi_size[1])}"
+                    )
+                    bpm_lines.append("")
+                except Exception:
+                    pass
+
+            bpm_lines.append("  Sigmas (all sites):")
+            for key in ('sigma_h', 'sigma_v', 'sigma_total'):
                 if key in bpm_stats:
+                    entry = self.BPM_STATS_DESCRIPTIONS.get(key, key)
                     try:
                         bpm_lines.append(
-                            f"  {key:>17}  =  {float(bpm_stats[key]):.4g}"
+                            f"  {entry:>17} = {float(bpm_stats[key]):.4g}"
                         )
                     except Exception:
-                        bpm_lines.append(f"  {key:>17}  =  {bpm_stats[key]}")
+                        bpm_lines.append(f"  {entry:>17} = {bpm_stats[key]}")
+
+            bpm_lines.append("")
+            bpm_lines.append("")
+
+            bpm_lines.append("  Extremes (all sites):")
+            for key in ('diff_max_h', 'diff_max_v'):
+                if key in bpm_stats:
+                    entry = self.BPM_STATS_DESCRIPTIONS.get(key, key)
+                    try:
+                        bpm_lines.append(
+                            f"  {entry:>17} = {float(bpm_stats[key]):.4g}"
+                        )
+                    except Exception:
+                        bpm_lines.append(f"  {entry:>17} = {bpm_stats[key]}")
+
+            if bpm_stats.get('roi_available'):
+                roi_sigma_h = bpm_stats.get('roi_sigma_h')
+                roi_sigma_v = bpm_stats.get('roi_sigma_v')
+                roi_sigma_t = bpm_stats.get('roi_sigma_total')
+                if (roi_sigma_h is not None or
+                    roi_sigma_v is not None or
+                    roi_sigma_t is not None):
+                    bpm_lines.append("")
+                    bpm_lines.append("  Sigmas (ROI):")
+                    if roi_sigma_h is not None:
+                        bpm_lines.append(
+                            f"  {'ROI horizontal RMS':>17} = {float(roi_sigma_h):.4g}"
+                        )
+                    if roi_sigma_v is not None:
+                        bpm_lines.append(
+                            f"  {'ROI vertical RMS':>17} = {float(roi_sigma_v):.4g}"
+                        )
+                    if roi_sigma_t is not None:
+                        bpm_lines.append(
+                            f"  {'ROI total RMS':>17} = {float(roi_sigma_t):.4g}"
+                        )
 
         return {'bpm': bpm_lines} if bpm_lines else {}
 
@@ -1870,14 +1934,14 @@ class XBPMMainWindow(QMainWindow):
         if 'raw' in text and is_pairwise:
             supmat = meta.get('supmat_standard')
             if supmat is not None:
-                lines.append("  ** Standard Suppression Matrix:")
+                lines.append("\n  ** Standard Suppression Matrix:")
                 lines.extend(self._format_matrix(supmat))
 
         # Scaled pairwise tab: show calculated suppression matrix
         elif ('scaled' in text or ' tr' in text) and is_pairwise:
             supmat = meta.get('supmat')
             if supmat is not None:
-                lines.append("  ** Calculated Suppression Matrix:")
+                lines.append("\n  ** Calculated Suppression Matrix:")
                 lines.extend(self._format_matrix(supmat))
 
         return lines
@@ -1910,7 +1974,7 @@ class XBPMMainWindow(QMainWindow):
             if not content:
                 continue
             title = self.ANALYSIS_SECTION_TITLES.get(name, name.replace('_', ' ').title())
-            lines.append(f"** {title}:")
+            lines.append(f"\n** {title}:")
             lines.extend(content)
             lines.append("")
 

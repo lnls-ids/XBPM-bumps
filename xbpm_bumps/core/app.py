@@ -64,8 +64,6 @@ class XBPMApp:
                 print("Invalid input. Please enter a number.")
 
     def _maybe_bpm_positions(self) -> None:
-        if not self.prm.xbpmfrombpm:
-            return
         if self.prm.section is None:
             print("### ERROR: section not defined for BPM analysis. Skipping.")
             return
@@ -79,7 +77,10 @@ class XBPMApp:
                   " Skipping.")
             return
         bpm_processor = BPMProcessor(raw, self.prm)
-        bpm_processor.calculate_positions()
+        measured, nominal = bpm_processor.calculate_positions()
+        self._bpm_reference = (bpm_processor.xpos, bpm_processor.ypos)
+        if self.prm.outputfile and measured is not None and nominal is not None:
+            self.exporter.data_dump_bpm(measured, nominal)
 
     def _compute_nominal_grid(self):
         """Compute nominal position grid from beam position pair.
@@ -149,7 +150,7 @@ class XBPMApp:
     def _maybe_xbpm_positions(self) -> None:
         pos_nom_h, pos_nom_v = self._resolve_reference_positions()
         if self.prm.xbpmpositionsraw:
-            positions = self.processor.calculate_positions(
+            positions = self.processor.xbpm_position_calculation(
                 pos_nom_h, pos_nom_v,
                 nosuppress=True,
                 showmatrix=True,
@@ -162,7 +163,7 @@ class XBPMApp:
                     self.exporter.write_supmat(supmat, write_file=True)
 
         if self.prm.xbpmpositions:
-            positions = self.processor.calculate_positions(
+            positions = self.processor.xbpm_position_calculation(
                 pos_nom_h, pos_nom_v,
                 nosuppress=False,
                 showmatrix=True,
