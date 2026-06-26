@@ -179,7 +179,7 @@ class XBPMAnalyzer(QObject):
         flags = {
             'xbpmpositions'   : '-x',
             'xbpmpositionsraw': '-r',
-            'xbpmfrombpm'     : '-b',
+            'showbpmpositions'  : '-b',
             'usebpmref'       : '--bpmref',
             'showblademap'    : '-m',
             'centralsweep'    : '-c',
@@ -207,7 +207,7 @@ class XBPMAnalyzer(QObject):
 
         # Define analysis steps as a list of tuples: (condition, method)
         steps = [
-            (self.app.prm.xbpmfrombpm,      self._step_bpm_positions),
+            (True,                          self._step_bpm_positions),
             (self.app.prm.showblademap,     self._step_blade_map),
             (self.app.prm.centralsweep,     self._step_central_sweeps),
             (self.app.prm.showbladescenter, self._step_blades_center),

@@ -338,17 +338,26 @@ class XBPMProcessor:
             outfile_c = os.path.join(outdir, f"xbpm_cross_pos_{sup}_{bl}.png")
             cross_visualizer.save_figure(outfile_c)
 
-        # Build position dictionaries for export
+        # Build position dictionaries for export.
+        # Keys are always derived from the raw scan grid (data.keys() angles ×
+        # xbpmdist) so they are regular and sortable regardless of whether the
+        # optimisation reference is the nominal grid or BPM-measured positions.
+        gridlist  = np.array(list(self.data.keys()))
+        grid_lin  = np.unique(gridlist[:, 1])   # sorted y scan angles
+        grid_col  = np.unique(gridlist[:, 0])   # sorted x scan angles
+        dist      = self.prm.xbpmdist
+
         scaled_pos_pair  = dict()
         scaled_pos_cross = dict()
-        for ii, lin in enumerate(pos_nom_h):
-            for jj, xx in enumerate(lin):
-                yy = pos_nom_v[ii, jj]
-                scaled_pos_pair[xx, yy] = [
+        for ii, y in enumerate(grid_lin):
+            for jj, x in enumerate(grid_col):
+                xk = x * dist
+                yk = y * dist
+                scaled_pos_pair[xk, yk] = [
                     pair_result['h_scaled'][ii, jj],
                     pair_result['v_scaled'][ii, jj]
                 ]
-                scaled_pos_cross[xx, yy] = [
+                scaled_pos_cross[xk, yk] = [
                     cross_result['h_scaled'][ii, jj],
                     cross_result['v_scaled'][ii, jj]
                 ]
@@ -909,9 +918,9 @@ class BPMProcessor:
         Returns:
             Tuple (measured, nominal) where each is a 2-column array or None.
         """
-        measured = (np.column_stack((self.xpos, self.ypos))
+        measured = (np.column_stack((self.xpos.ravel(), self.ypos.ravel()))
                     if self.xpos.size else None)
-        nominal = (np.column_stack((self.xnom, self.ynom))
+        nominal = (np.column_stack((self.xnom.ravel(), self.ynom.ravel()))
                    if self.xnom.size else None)
         return measured, nominal
 

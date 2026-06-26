@@ -1,5 +1,7 @@
 """Beamline configuration constants."""
 
+from typing import Optional
+
 
 class Config:
     """Beamline configuration and constants."""
@@ -135,13 +137,13 @@ class Config:
         # XBPM position tabs (pairwise / cross, raw / transformed)
         "xbpm_positions": {
             "total"    : (
-                "XBPM{xbpmnum}@{beamline}: {ct} $\Delta/\Sigma$, {rort}"
+                r"XBPM{xbpmnum}@{beamline}: {ct} $\Delta/\Sigma$, {rort}"
                 ),
             "roi"      : (
-                "XBPM{xbpmnum}@{beamline}: {ct} $\Delta/\Sigma$, {rort} (ROI)"
+                r"XBPM{xbpmnum}@{beamline}: {ct} $\Delta/\Sigma$, {rort} (ROI)"
                 ),
             "heatmap"  : (
-                "RMS $\Delta$ @ ROI"
+                r"RMS $\Delta$ @ ROI"
                 ),
         },
     }
@@ -167,7 +169,7 @@ class Config:
     @classmethod
     def get_plot_title(cls, tab: str,
                        graph: str,
-                       beamline: str = None,
+                       beamline: Optional[str] = None,
                        rort: str = "",
                        calc_type: str = "") -> str:
         """Return a graph title from the central registry.

@@ -31,7 +31,7 @@ class Exporter:
             'centralsweep': 'Process only central sweep data',
             'showbladescenter': 'Display blade center positions',
             'xbpmpositions': 'Calculate XBPM positions from BPM data',
-            'xbpmfrombpm': 'Derive XBPM positions using BPM measurements',
+            'showbpmpositions': 'Display BPM-calculated positions panel in GUI',
             'xbpmpositionsraw': 'Calculate raw (unsuppressed) XBPM positions',
             'usebpmref': 'Use BPM measured positions as nominal reference',
             'outputfile': 'Path to output HDF5 file',
@@ -57,8 +57,8 @@ class Exporter:
 
         # Analysis group and dataset descriptions
         self.ANALYSIS_DESCRIPTIONS = {
-            'positions': 'Calculated beam positions from various methods',
-            'positions/bpm': 'BPM-measured beam positions (x, y coordinates)',
+            'positions'     : 'Calculated beam positions from various methods',
+            'positions/bpm' : 'BPM-measured beam positions (x, y coordinates)',
             'positions/xbpm_raw_pairwise': (
                 'Raw XBPM positions using pairwise blade analysis'
             ),
@@ -80,6 +80,9 @@ class Exporter:
             'matrices/optimized': (
                 'Optimized suppression matrix from beam orbit analysis'
             ),
+            'matrices/stddev': (
+                'Standard deviation matrix for suppression matrix elements'
+                ),
 
             'scales': 'Scaling coefficients for position transformations',
             'scales/raw': 'Scaling factors for raw XBPM positions',
@@ -101,6 +104,8 @@ class Exporter:
             'sigma_total' : 'Combined BPM position std deviation',
             'diff_max_h'  : 'Max horizontal |x_meas - x_nom| [μm]',
             'diff_max_v'  : 'Max vertical |y_meas - y_nom| [μm]',
+            'diff_min_h'  : 'Min horizontal |x_meas - x_nom| [μm]',
+            'diff_min_v'  : 'Min vertical |y_meas - y_nom| [μm]',
         }
 
     def write_supmat(self, supmat: np.ndarray,
@@ -135,7 +140,8 @@ class Exporter:
     def data_dump(self, data, positions, sup: str = "") -> None:
         """Dump blades data and calculated positions to files."""
         outfile = f"xbpm_blades_{self.prm.beamline}.dat"
-        print(f"\n Writing out data to file {outfile} ...", end='')
+        print("\n>> Writing out data to file"
+              f"\n {outfile} ...", end='')
         with open(outfile, 'w') as df:
             for key, val in data.items():
                 df.write(f"{key[0]}  {key[1]}")
@@ -146,18 +152,20 @@ class Exporter:
         pos_pair, pos_cr = positions
 
         outfilep = f"xbpm_positions_pair_{sup}_{self.prm.beamline}.dat"
-        print("\n Writing out pairwise blade calculated positions to file"
-              f" {outfilep} ...", end='')
+        print(f"\n>> Writing out pairwise blade calculated positions to file"
+              f"\n {outfilep} ...", end='')
         with open(outfilep, 'w') as fp:
-            for key, val in pos_pair.items():
+            for key, val in sorted(pos_pair.items(),
+                                    key=lambda item: (item[0][0], item[0][1])):
                 fp.write(f"{key[0]}  {key[1]}")
                 fp.write(f"  {val[0]} {val[1]}\n")
 
         outfilec = f"xbpm_positions_cross_{sup}_{self.prm.beamline}.dat"
-        print("\n Writing out cross-blade calculated positions to file"
-              f" {outfilec} ...", end='')
+        print(f"\n>> Writing out cross-blade calculated positions to file"
+              f"\n {outfilec} ...", end='')
         with open(outfilec, 'w') as fc:
-            for key, val in pos_cr.items():
+            for key, val in sorted(pos_cr.items(),
+                                    key=lambda item: (item[0][0], item[0][1])):
                 fc.write(f"{key[0]}  {key[1]}")
                 fc.write(f"  {val[0]} {val[1]}\n")
 
@@ -170,7 +178,8 @@ class Exporter:
         outdir = os.path.dirname(prefix) or "."
         os.makedirs(outdir, exist_ok=True)
         outfile = os.path.join(outdir, f"xbpm_blades_{self.prm.beamline}.dat")
-        print(f"\n Writing out data to file {outfile} ...", end='')
+        print("\n>> Writing out data to file"
+              f"\n {outfile} ...", end='')
         with open(outfile, 'w') as df:
             for key, val in data.items():
                 df.write(f"{key[0]}  {key[1]}")
@@ -183,23 +192,61 @@ class Exporter:
         outfilep = os.path.join(
             outdir, f"xbpm_positions_pair_{sup}_{self.prm.beamline}.dat"
         )
-        print("\n Writing out pairwise blade calculated positions to file"
-              f" {outfilep} ...", end='')
+        print("\n>> Writing out pairwise blade calculated positions to file"
+              f"\n {outfilep} ...", end='')
         with open(outfilep, 'w') as fp:
-            for key, val in pos_pair.items():
+            for key, val in sorted(pos_pair.items(),
+                                    key=lambda item: (item[0][0], item[0][1])):
                 fp.write(f"{key[0]}  {key[1]}")
                 fp.write(f"  {val[0]} {val[1]}\n")
 
         outfilec = os.path.join(
             outdir, f"xbpm_positions_cross_{sup}_{self.prm.beamline}.dat"
         )
-        print("\n Writing out cross-blade calculated positions to file"
-              f" {outfilec} ...", end='')
+        print("\n>> Writing out cross-blade calculated positions to file"
+              f"\n {outfilec} ...", end='')
         with open(outfilec, 'w') as fc:
-            for key, val in pos_cr.items():
+            for key, val in sorted(pos_cr.items(),
+                                    key=lambda item: (item[0][0], item[0][1])):
                 fc.write(f"{key[0]}  {key[1]}")
                 fc.write(f"  {val[0]} {val[1]}\n")
 
+        print("done.\n")
+
+    def data_dump_bpm(self, measured: np.ndarray, nominal: np.ndarray,
+                      prefix: str = None) -> None:
+        """Write BPM-measured positions to a text file.
+
+        Format per line: nom_x  nom_y  bpm_x  bpm_y, sorted by nominal key.
+
+        Args:
+            measured: 2-column array [[bpm_x, bpm_y], ...].
+            nominal:  2-column array [[nom_x, nom_y], ...].
+            prefix:   Optional path prefix; file is placed in its directory.
+                      When None the file is written to the current directory.
+        """
+        if measured is None or nominal is None:
+            return
+
+        filename = f"bpm_positions_{self.prm.beamline}.dat"
+        if prefix:
+            outdir = os.path.dirname(os.path.abspath(prefix)) or "."
+            outfile = os.path.join(outdir, filename)
+        else:
+            outfile = filename
+
+        pos_dict = {
+            (float(nominal[i, 0]), float(nominal[i, 1])): [
+                float(measured[i, 0]), float(measured[i, 1])
+            ]
+            for i in range(len(nominal))
+        }
+
+        print(f"\n>> Writing BPM positions to file\n {outfile} ...", end='')
+        with open(outfile, 'w') as fp:
+            for key, val in sorted(pos_dict.items(),
+                                   key=lambda item: (item[0][0], item[0][1])):
+                fp.write(f"{key[0]}  {key[1]}  {val[0]} {val[1]}\n")
         print("done.\n")
 
     def write_hdf5(self, filepath: str, data: dict, results: dict,
@@ -2070,27 +2117,72 @@ class Exporter:
                 continue
 
     def _write_figures(self, h5file, results: dict, data: dict) -> None:
-        """Write blade heatmap to analysis_<beamline>/blade_map/ with metadata.
+        """Write blade heatmap to analysis_<beamline>/blade_map/ with metadata,
+        and store all available analysis figures as RGBA image arrays under
+        analysis_<beamline>/figures/.
 
-        Note: All figure metadata is now stored directly with the data in
-        /analysis_<beamline>/ (positions, sweeps). Only blade_map needs
-        special handling since it contains processed grid data
-        (expensive to recalculate).
+        HDF5 viewers (silx, HDFView, h5web) automatically display any dataset
+        with shape (H, W, 4) as an RGBA image, so no special convention is
+        needed — the arrays are directly viewable.
         """
-        # Blade heatmap: store processed grid data in
-        # /analysis_<beamline>/blade_map/
+        # Locate the analysis group (created by _write_derived)
+        analysis = None
+        for key in h5file.keys():
+            if key.startswith('analysis_'):
+                analysis = h5file[key]
+                break
+        if analysis is None and 'analysis' in h5file:
+            analysis = h5file['analysis']
+
+        if analysis is None:
+            return
+
+        # --- Blade heatmap: store processed grid data (expensive to recompute)
         if results.get('blade_figure'):
-            # Find the analysis group: prefer analysis_<beamline>,
-            # fall back to legacy
-            analysis = None
-            for key in h5file.keys():
-                if key.startswith('analysis_'):
-                    analysis = h5file[key]
-                    break
-            if analysis is None and 'analysis' in h5file:
-                analysis = h5file['analysis']
-            if analysis is not None:
-                self._write_blade_map_data(analysis, data)
+            self._write_blade_map_data(analysis, data)
+
+        # --- All figures: store as rendered RGBA image arrays
+        figure_map = {
+            'bpm':           results.get('bpm_figure'),
+            'central_sweeps': results.get('sweeps_figure'),
+            'blade_map':     results.get('blade_figure'),
+            'blades_center': results.get('blades_center_figure'),
+        }
+        # Also collect pairwise/cross figures from raw and scaled results
+        for result_key in ('positions_raw_full', 'positions_scaled_full'):
+            sub = results.get(result_key)
+            if not isinstance(sub, dict):
+                continue
+            suffix = 'raw' if 'raw' in result_key else 'scaled'
+            for fig_key in ('pairwise_figure', 'cross_figure'):
+                fig = sub.get(fig_key) or results.get(
+                    f'xbpm_{suffix}_{fig_key.replace("_figure", "")}_figure'
+                )
+                if fig is not None:
+                    label = f'xbpm_{suffix}_{fig_key.replace("_figure", "")}'
+                    figure_map[label] = fig
+
+        available = {k: v for k, v in figure_map.items() if v is not None}
+        if not available:
+            return
+
+        fig_grp = analysis.require_group('figures')
+        for name, fig in available.items():
+            self._write_figure_as_image(fig_grp, name, fig)
+
+    def _write_figure_as_image(self, group, name: str, fig) -> None:
+        """Render a matplotlib figure and store it as a (H, W, 3) uint8 dataset."""
+        rgb = self._fig_to_array(fig)
+        if rgb is None:
+            return
+        try:
+            group.create_dataset(
+                name, data=rgb, compression='gzip', compression_opts=4
+            )
+        except Exception:
+            logger.warning(
+                "Failed to write figure '%s' as image", name, exc_info=True
+            )
 
     def _write_blade_map_data(self, analysis_group, data: dict) -> None:
         """Store blade heatmap data in /analysis/blade_map/.
@@ -2129,37 +2221,36 @@ class Exporter:
 
     @staticmethod
     def _fig_to_array(fig):
-        """Render matplotlib figure to RGBA numpy array.
+        """Render matplotlib figure to an RGB numpy array (H × W × 3, uint8).
 
-        Uses PNG format (lossless, 8-bit per channel RGBA) at 300 DPI
-        for high quality visualization in HDF5 viewers. Transparent
-        background avoids colormap artifacts in silx.
+        Uses PNG format at 300 DPI with a white background.  The result is
+        stored as a 3-channel RGB array so that HDF5 viewers (silx, HDFView,
+        h5web) display it as a true-colour image without any colormap applied.
+        Transparent backgrounds are avoided because viewers that do not support
+        alpha treat the alpha channel as a fourth scalar plane and apply a
+        false-colour map (e.g. Viridis), producing a yellow cast.
         """
         try:
             from PIL import Image  # type: ignore
             buf = BytesIO()
-            # Use transparent background to avoid colormap issues in silx
             fig.savefig(
                 buf,
                 format='png',
                 dpi=300,
                 bbox_inches='tight',
-                facecolor='none',  # Transparent background
+                facecolor='white',
                 edgecolor='none',
-                transparent=True,
             )
             buf.seek(0)
-            # Read PNG bytes into memory before closing buffer
-            png_bytes = buf.getvalue()
-            # Open image from bytes
-            img_buf = BytesIO(png_bytes)
-            img = Image.open(img_buf)
-            # Keep as RGBA to preserve transparency
-            if img.mode != 'RGBA':
-                img = img.convert('RGBA')
-            # Convert to numpy array and ensure it's copied
-            rgba_array = np.array(img, copy=True)
-            return rgba_array
+            img = Image.open(BytesIO(buf.getvalue()))
+            # Flatten onto white in case the figure has partial transparency
+            if img.mode in ('RGBA', 'LA'):
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                background.paste(img, mask=img.split()[-1])
+                img = background
+            else:
+                img = img.convert('RGB')
+            return np.array(img, copy=True)   # shape (H, W, 3), uint8
         except Exception:
             logger.warning("Failed to render figure to array", exc_info=True)
             return None

@@ -26,7 +26,7 @@ class Prm:
     centralsweep     : bool                = False
     showbladescenter : bool                = False
     xbpmpositions    : bool                = False
-    xbpmfrombpm      : bool                = False
+    showbpmpositions : bool                = False
     xbpmpositionsraw : bool                = False
     usebpmref        : bool                = False
     outputfile       : Optional[str]       = None
@@ -83,7 +83,7 @@ class ParameterBuilder:
             centralsweep     = bool(args.centralsweep),
             showbladescenter = bool(args.showbladescenter),
             xbpmpositions    = bool(args.xbpmpositions),
-            xbpmfrombpm      = bool(args.xbpmfrombpm),
+            showbpmpositions = bool(args.showbpmpositions),
             xbpmpositionsraw = bool(args.xbpmpositionsraw),
             usebpmref        = bool(args.usebpmref),
             outputfile       = bool(args.outputfile),
@@ -114,8 +114,8 @@ class ParameterBuilder:
 
         # Boolean flags
         parser.add_argument(
-            '-b', action='store_true', dest='xbpmfrombpm',
-            help='Show positions calculated from BPM data'
+            '-b', action='store_true', dest='showbpmpositions',
+            help='Show BPM positions panel in GUI'
         )
         parser.add_argument(
             '-c', action='store_true', dest='showbladescenter',
