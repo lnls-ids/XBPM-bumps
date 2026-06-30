@@ -11,7 +11,9 @@ from ..core.app import XBPMApp
 from ..core.parameters import Prm
 from ..core.processors import XBPMProcessor
 from ..core.exporters import Exporter
-
+# from ..core.visualizers import SweepVisualizer as SWV
+from ..core.visualizers import BladeCurrentVisualizer as BCV
+from ..core.visualizers import BladeMapVisualizer as BMV
 
 class XBPMAnalyzer(QObject):
     """Qt wrapper for XBPMApp with signals for async execution.
@@ -21,15 +23,16 @@ class XBPMAnalyzer(QObject):
     """
 
     # Signals
-    analysisStarted = pyqtSignal()        # noqa: N815
-    analysisProgress = pyqtSignal(str)    # noqa: N815
-    analysisComplete = pyqtSignal(dict)   # noqa: N815
-    analysisError = pyqtSignal(str, str)  # noqa: N815
-    logMessage = pyqtSignal(str)          # noqa: N815
+    analysisStarted  = pyqtSignal()
+    analysisProgress = pyqtSignal(str)
+    analysisComplete = pyqtSignal(dict)
+    analysisError    = pyqtSignal(str, str)
+    logMessage       = pyqtSignal(str)
 
     # (No longer needed: beamline selection is centralized)
 
-    def __init__(self, prm, builder, reader, rawdata, parent=None):
+    def __init__(self, prm: Prm, builder: Any, reader: Any,
+                 rawdata: Any, parent=None):
         """Initialize the analyzer.
 
         Args:
@@ -49,7 +52,7 @@ class XBPMAnalyzer(QObject):
         # self._preselected_beamline: Optional[str] = None
 
     @pyqtSlot(dict)
-    def load_data_only(self):
+    def load_data_only(self: "XBPMAnalyzer"):
         """Load data without running analysis.
 
         This allows exporting raw data to HDF5 without analysis results.
@@ -94,7 +97,7 @@ class XBPMAnalyzer(QObject):
             error_msg = f"{str(e)}\n\n{traceback.format_exc()}"
             self.analysisError.emit("Data Load Failed", error_msg)
 
-    def _initialize_and_run_analysis(self):
+    def _initialize_and_run_analysis(self: "XBPMAnalyzer"):
         """Initialize processor/exporter and run analysis steps."""
         # Initialize processor and exporter
         self.analysisProgress.emit("Initializing processor...")
@@ -108,7 +111,7 @@ class XBPMAnalyzer(QObject):
         self.analysisComplete.emit(results)
 
     @pyqtSlot(dict)
-    def run_analysis(self):
+    def run_analysis(self: "XBPMAnalyzer"):
         """Execute XBPM analysis with given parameters.
 
         This method is designed to be called from a worker thread.
@@ -177,14 +180,14 @@ class XBPMAnalyzer(QObject):
 
         # Boolean flags - map parameter name to flag
         flags = {
-            'xbpmpositions'   : '-x',
-            'xbpmpositionsraw': '-r',
-            'showbpmpositions'  : '-b',
-            'usebpmref'       : '--bpmref',
-            'showblademap'    : '-m',
-            'centralsweep'    : '-c',
-            'showbladescenter': '-s',
-            'outputfile'      : '-o',
+            'xbpmpositions'    : '-x',
+            'xbpmpositionsraw' : '-r',
+            'showbpmpositions' : '-b',
+            'showblademap'     : '-m',
+            'centralsweep'     : '-c',
+            'showbladescenter' : '-s',
+            'outputfile'       : '-o',
+            'usebpmref'        : '--bpmref',
         }
         for param, flag in flags.items():
             if params.get(param):
@@ -260,7 +263,7 @@ class XBPMAnalyzer(QObject):
             results['bpm_stats'] = stats
         results['bpm_figure'] = bpm_processor.fig
 
-    def _compute_nominal_grid(self):
+    def _compute_nominal_grid(self: "XBPMAnalyzer"):
         """Compute nominal position grid from beam position pair.
 
         Returns:
@@ -303,15 +306,14 @@ class XBPMAnalyzer(QObject):
 
     def _step_blade_map(self, results: dict):
         """Generate blade map."""
-        self.analysisProgress.emit("Generating blade map...")
-        from ..core.visualizers import BladeMapVisualizer
-        visualizer = BladeMapVisualizer(self.app.data, self.app.prm)
+        self.analysisProgress.emit("\n# Generating blade map...")
+        visualizer = BMV(self.app.data, self.app.prm)
         fig = visualizer.show()  # Generate and capture figure
         results['blade_figure'] = fig
 
     def _step_central_sweeps(self, results: dict):
         """Analyze central sweeps and generate position plots."""
-        self.analysisProgress.emit("Analyzing central sweeps...")
+        self.analysisProgress.emit("\n# Analyzing central sweeps...")
 
         # Analyze and generate figure
         (range_h, range_v, blades_h, blades_v, pos_h, pos_v,
@@ -319,8 +321,9 @@ class XBPMAnalyzer(QObject):
 
         # Recreate the sweep visualization
         if range_h is not None and range_v is not None:
-            fig = self._generate_sweep_figure(range_h, range_v,
-                                              blades_h, blades_v)
+            fig = BCV.plot_central_sweeps(range_h, range_v,
+                                          blades_h, blades_v,
+                                          self.app.prm.xbpmdist)
             results['sweeps_figure'] = fig
             results['sweeps_data'] = (
                 range_h, range_v, blades_h, blades_v,
@@ -329,12 +332,11 @@ class XBPMAnalyzer(QObject):
 
         # Store calculated suppression matrix (not used in UI display)
         # UI gets matrices from raw/scaled results instead
-        supmat = self.app.processor.suppression_matrix()
-        results['supmat'] = supmat
+        results['supmat'] = self.app.processor.suppression_matrix()
 
     def _step_blades_center(self, results: dict):
         """Analyze blades at center and generate blade current plots."""
-        self.analysisProgress.emit("Analyzing blades at center...")
+        self.analysisProgress.emit("\n# Analyzing blades at center...")
 
         # Generate the blades at center figure
         fig = self._generate_blades_center_figure()
@@ -347,7 +349,7 @@ class XBPMAnalyzer(QObject):
             self.app.builder.rawdata = rawdata
             self.app.builder._add_beamline_parameters()
 
-    def _extract_position_coordinates(self, pos_list):
+    def _extract_position_coordinates(self, pos_list: list):
         """Extract coordinates from position result dictionary.
 
         Args:
@@ -369,7 +371,7 @@ class XBPMAnalyzer(QObject):
         except (ValueError, TypeError):
             return None
 
-    def _extract_measured_and_nominal(self, pos_list):
+    def _extract_measured_and_nominal(self, pos_list: list):
         """Extract both measured and nominal coordinates from positions.
 
         Args:
@@ -409,7 +411,7 @@ class XBPMAnalyzer(QObject):
 
     def _step_xbpm_raw(self, results: dict):
         """Calculate raw XBPM positions."""
-        self.analysisProgress.emit("Calculating raw XBPM positions...")
+        self.analysisProgress.emit("\n# Calculating raw XBPM positions...")
         pos_nom_h, pos_nom_v = self._resolve_reference_positions(results)
         result_data = self.app.processor.xbpm_position_calculation(
             pos_nom_h, pos_nom_v,
@@ -460,7 +462,7 @@ class XBPMAnalyzer(QObject):
 
     def _step_xbpm_scaled(self, results: dict):
         """Calculate scaled XBPM positions."""
-        self.analysisProgress.emit("Calculating scaled XBPM positions...")
+        self.analysisProgress.emit("\n# Calculating scaled XBPM positions...")
         pos_nom_h, pos_nom_v = self._resolve_reference_positions(results)
         result_data = self.app.processor.xbpm_position_calculation(
             pos_nom_h, pos_nom_v,
@@ -515,27 +517,16 @@ class XBPMAnalyzer(QObject):
             self.app.exporter.data_dump(self.app.data, positions, sup="scaled")
 
     @pyqtSlot()
-    def stop_analysis(self):
+    def stop_analysis(self: "XBPMAnalyzer"):
         """Request analysis to stop at next checkpoint."""
         self._should_stop = True
         self.logMessage.emit("Stop requested...")
 
-    def _generate_sweep_figure(self, range_h, range_v, blades_h, blades_v):
-        """Generate central sweep position plots.
-
-        Delegates to the canonical visualizer implementation.
-        """
-        from ..core.visualizers import plot_central_sweeps
-        return plot_central_sweeps(range_h, range_v, blades_h, blades_v,
-                                   self.app.prm.xbpmdist)
-
-    def _generate_blades_center_figure(self):
+    def _generate_blades_center_figure(self: "XBPMAnalyzer"):
         """Generate blade currents at center plots.
 
         Delegates to the canonical visualizer implementation.
         """
-        from ..core.visualizers import plot_blades_center_from_dicts
-
         # Ensure we have sweep data
         if (self.app.processor.range_h is None or
             self.app.processor.range_v is None):
@@ -546,5 +537,6 @@ class XBPMAnalyzer(QObject):
         range_h = self.app.processor.range_h
         range_v = self.app.processor.range_v
 
-        return plot_blades_center_from_dicts(blades_h, blades_v, range_h,
-                                             range_v, self.app.prm.beamline)
+        return BCV.plot_blade_center_from_dicts(blades_h, blades_v,
+                                                range_h, range_v,
+                                                self.app.prm.beamline)

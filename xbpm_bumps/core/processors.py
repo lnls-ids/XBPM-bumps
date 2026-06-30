@@ -6,7 +6,10 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 from .parameters  import Prm                     # noqa: E272
-from .visualizers import PositionVisualizer
+from .visualizers import PositionVisualizer as PSV, plot_blade_center_from_dicts  # noqa: E272
+from .visualizers import SweepVisualizer as SWV
+from .visualizers import BladeCurrentVisualizer as BCV
+
 from .constants   import ROI_SIZE_V, ROI_SIZE_H, FIGDPI    # noqa: E272
 from .config      import Config                  # noqa: E272
 
@@ -35,7 +38,6 @@ class XBPMProcessor:
         range_v (np.ndarray): Vertical sweep range.
         blades_h (dict): Blade measurements along horizontal center line.
         blades_v (dict): Blade measurements along vertical center line.
-        suppression_matrix_val: Calculated suppression matrix.
     """
 
     def __init__(self, data: dict, prm: Prm):
@@ -47,13 +49,17 @@ class XBPMProcessor:
         """
         self.data     = data
         self.prm      = prm
-        self.range_h  = None
-        self.range_v  = None
         self.blades_h = None
         self.blades_v = None
-        self.suppression_matrix_val = None
+        self._initialize_ranges()
         self.roi_h_size = prm.roisize[0] if prm.roisize else ROI_SIZE_H
         self.roi_v_size = prm.roisize[1] if prm.roisize else ROI_SIZE_V
+
+    def _initialize_ranges(self):
+        """Initialize horizontal and vertical sweep ranges from data keys."""
+        keys = np.array(list(self.data.keys()))
+        self.range_h = np.unique(keys[:, 0])
+        self.range_v = np.unique(keys[:, 1])
 
     def analyze_central_sweeps(self, show: bool = False) -> tuple:
         """Analyze blade behavior at central sweep positions.
@@ -68,10 +74,6 @@ class XBPMProcessor:
             Tuple of (range_h, range_v, blades_h, blades_v, pos_h, pos_v)
             where pos_h and pos_v are the calculated positions.
         """
-        keys = np.array(list(self.data.keys()))
-        self.range_h = np.unique(keys[:, 0])
-        self.range_v = np.unique(keys[:, 1])
-
         # Run through central horizontal line if data is not just a point
         if len(self.range_h) > 1:
             (pos_ch_v, fit_ch_v,
@@ -137,7 +139,8 @@ class XBPMProcessor:
 
         return pos_cv_h, fit_cv_h, blades_v
 
-    def _central_sweeps_show(self, pos_ch_v, fit_ch_v, pos_cv_h, fit_cv_h):
+    def _central_sweeps_show(self, pos_ch_v: np.ndarray, fit_ch_v: np.ndarray,
+                             pos_cv_h: np.ndarray, fit_cv_h: np.ndarray):
         """Plot results from fittings on central sweeps."""
         from .visualizers import SweepVisualizer
 
@@ -163,8 +166,6 @@ class XBPMProcessor:
 
     def show_blades_at_center(self) -> None:
         """Display blade measurements along central sweeping points."""
-        from .visualizers import BladeCurrentVisualizer
-
         # Ensure we have sweep data
         if self.range_h is None or self.range_v is None:
             self.analyze_central_sweeps(show=False)
@@ -175,11 +176,11 @@ class XBPMProcessor:
                   " Skipping central analysis.")
             return
 
-        fig = BladeCurrentVisualizer.plot_from_dicts(
+        fig = BCV.plot_blade_center_from_dicts(
             self.blades_h, self.blades_v,
             self.range_h, self.range_v,
             beamline=self.prm.beamline
-        )
+            )
 
         if self.prm.outputfile:
             outfile = f"central_sweep_{self.prm.beamline}.png"
@@ -187,7 +188,7 @@ class XBPMProcessor:
             print("\n Figure of blades behaviour at central sweeps"
                   f" saved to file {outfile}.\n")
 
-    def _roi_slice_indices(self, array):
+    def _roi_slice_indices(self, array: np.ndarray) -> tuple:
         """Extract centered ROI slice indices from an array, handling 1D/2D."""
         n_lin, n_col = array.shape
         n_roi_h  = min(self.roi_h_size, n_col)
@@ -206,8 +207,9 @@ class XBPMProcessor:
 
         return (fr_col, up_col, fr_row, up_row), dim
 
-    def _extract_roi_slice(self, array, dim,
-                           fr_col, up_col, fr_row, up_row):
+    def _extract_roi_slice(self, array: np.ndarray, dim: str,
+                           fr_col: int, up_col: int,
+                           fr_row: int, up_row: int) -> np.ndarray:
         """Check whether array is 1D along one axis and extract accordingly.
         
         Args:
@@ -227,12 +229,12 @@ class XBPMProcessor:
         else:
             return array[fr_row:up_row, fr_col:up_col]
 
-    def _process_position_type(self, calc_type,  # noqa: D417
-                               pos_all_h, pos_all_v,
-                               pos_roi_h, pos_roi_v,
-                               pos_nom_h, pos_nom_v,
-                               pos_nom_h_roi,
-                               pos_nom_v_roi, nosuppress, dim):
+    def _process_position_type(self, calc_type: str,  # noqa: D417
+                               pos_all_h: np.ndarray, pos_all_v: np.ndarray,
+                               pos_roi_h: np.ndarray, pos_roi_v: np.ndarray,
+                               pos_nom_h: np.ndarray, pos_nom_v: np.ndarray,
+                               pos_nom_h_roi: np.ndarray,
+                               pos_nom_v_roi: np.ndarray, nosuppress: bool, dim: str) -> dict:
         """Process a single position type (pairwise or cross-blade).
 
         Args:
@@ -293,7 +295,7 @@ class XBPMProcessor:
             diffroi = diffxyroi
 
         # Visualize
-        visualizer = PositionVisualizer(self.prm, titles=title_map)
+        visualizer = PSV.PositionVisualizer(self.prm, titles=title_map)
         visualizer.show_position_results(
             pos_nom_h, pos_nom_v,
             pos_all_h_scaled, pos_all_v_scaled,
@@ -319,9 +321,10 @@ class XBPMProcessor:
             'visualizer'   : visualizer,
         }
 
-    def _compile_results(self, pair_result, cross_result,
-                         supmat, stddevmat, nosuppress,
-                         pos_nom_h, pos_nom_v):
+    def _compile_results(self, pair_result: dict, cross_result: dict,
+                         supmat: np.ndarray, stddevmat: np.ndarray,
+                         nosuppress: bool,
+                         pos_nom_h: np.ndarray, pos_nom_v: np.ndarray) -> dict:
         """Compile and save final results from pairwise and cross-blade."""
         pair_visualizer  = pair_result['visualizer']
         cross_visualizer = cross_result['visualizer']
@@ -397,7 +400,8 @@ class XBPMProcessor:
             },
         }
 
-    def xbpm_position_calculation(self, pos_nom_h, pos_nom_v,
+    def xbpm_position_calculation(self,
+                                  pos_nom_h: np.ndarray, pos_nom_v: np.ndarray,
                                   nosuppress: bool = False,
                                   showmatrix: bool = True) -> dict:
         """Orchestrate position calculation for pairwise and cross-blade.
@@ -407,7 +411,7 @@ class XBPMProcessor:
         """
         # Ensure sweep data is available for suppression matrix estimation.
         if (self.range_h is None or self.range_v is None or
-                self.blades_h is None or self.blades_v is None):
+            self.blades_h is None or self.blades_v is None):
             self.analyze_central_sweeps(show=False)
 
         # Parse and compute core data
