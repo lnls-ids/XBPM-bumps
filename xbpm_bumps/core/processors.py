@@ -40,7 +40,7 @@ class XBPMProcessor:
         blades_v (dict): Blade measurements along vertical center line.
     """
 
-    def __init__(self, data: dict, prm: Prm):
+    def __init__(self, data: dict, prm: Prm, polydeg=1):
         """Initialize processor with data and parameters.
 
         Args:
@@ -49,6 +49,7 @@ class XBPMProcessor:
         """
         self.data     = data
         self.prm      = prm
+        self.polydeg  = polydeg
         self.blades_h = None
         self.blades_v = None
         self._initialize_ranges()
@@ -113,7 +114,7 @@ class XBPMProcessor:
         pos_to_ti_v = (to_ch + ti_ch)
         pos_bi_bo_v = (bo_ch + bi_ch)
         pos_ch_v = (pos_to_ti_v - pos_bi_bo_v) / (pos_to_ti_v + pos_bi_bo_v)
-        fit_ch_v = np.polyfit(self.range_h, pos_ch_v, deg=1)
+        fit_ch_v = np.polyfit(self.range_h, pos_ch_v, deg=self.polydeg)
 
         return pos_ch_v, fit_ch_v, blades_h
 
@@ -135,7 +136,7 @@ class XBPMProcessor:
         pos_to_bo_h = (to_cv + bo_cv)
         pos_ti_bi_h = (ti_cv + bi_cv)
         pos_cv_h = (pos_to_bo_h - pos_ti_bi_h) / (pos_to_bo_h + pos_ti_bi_h)
-        fit_cv_h = np.polyfit(self.range_v, pos_cv_h, deg=1)
+        fit_cv_h = np.polyfit(self.range_v, pos_cv_h, deg=self.polydeg)
 
         return pos_cv_h, fit_cv_h, blades_v
 
@@ -248,11 +249,11 @@ class XBPMProcessor:
         """
         # Perform scaling fit
         label = "Δ/Σ" if calc_type == "pairwise" else "Partial Δ/Σ"
-        (kx, skx, deltax, sdeltax,
-         ky, sky, deltay, sdeltay) = XBPMProcessor.scaling_fit(
-            pos_roi_h, pos_roi_v,
-            pos_nom_h_roi, pos_nom_v_roi, label
+        (scalesx, sigmasx, scalesy, sigmasy) = self.scaling_fit(
+            pos_roi_h, pos_roi_v, pos_nom_h_roi, pos_nom_v_roi, label
         )
+        (qx, kx, deltax), (sqx, skx, sdeltax) = scalesx, sigmasx
+        (qy, ky, deltay), (sqy, sky, sdeltay) = scalesy, sigmasy
 
         # Set raw (R) or transformed (T) graph type.
         transform = "R" if nosuppress else "T"
@@ -274,10 +275,10 @@ class XBPMProcessor:
         }
 
         # Scale full positions
-        pos_all_h_scaled = kx * pos_all_h + deltax
-        pos_all_v_scaled = ky * pos_all_v + deltay
-        pos_roi_h_scaled = kx * pos_roi_h  + deltax
-        pos_roi_v_scaled = ky * pos_roi_v  + deltay
+        pos_all_h_scaled = qx * pos_all_h**2 + kx * pos_all_h + deltax
+        pos_all_v_scaled = qy * pos_all_v**2 + ky * pos_all_v + deltay
+        pos_roi_h_scaled = qx * pos_roi_h**2 + kx * pos_roi_h + deltax
+        pos_roi_v_scaled = qy * pos_roi_v**2 + ky * pos_roi_v + deltay
 
         # Compute statistics
         diffx2_roi = (pos_roi_h_scaled - pos_nom_h_roi) ** 2
@@ -567,7 +568,7 @@ class XBPMProcessor:
             positions[pos] = np.array([dsps[0] / dsps[1], dsps[2] / dsps[3]])
         return positions
 
-    def position_dict_parse(self, data):
+    def position_dict_parse(self, data) -> tuple:
         """Parse XBPM position dict into structured arrays."""
         gridlist = np.array(list(data.keys()))
 
@@ -605,7 +606,7 @@ class XBPMProcessor:
         return (xbpm_nom_h, xbpm_nom_v, xbpm_meas_h, xbpm_meas_v)
 
     @staticmethod
-    def beam_position_cross(blades):
+    def beam_position_cross(blades) -> list:
         """Calculate beam position from blades' currents (cross-blade)."""
         to, ti, bi, bo = blades
         v1 = (to - bi) / (to + bi)
@@ -614,8 +615,8 @@ class XBPMProcessor:
         vpos = (v1 + v2)
         return [hpos, vpos]
 
-    @staticmethod
-    def scaling_fit(pos_h, pos_v, nom_h, nom_v, calctype=""):
+    def scaling_fit(self, pos_h: np.ndarray, pos_v: np.ndarray,
+                    nom_h: np.ndarray, nom_v: np.ndarray, calctype=""):
         """Calculate scaling coefficients from fitted positions.
         
         Args:
@@ -641,90 +642,64 @@ class XBPMProcessor:
         pos_v_cln = pos_v[v_finitemask]
         nom_v_cln = nom_v[v_finitemask]
 
-        kx, deltax   = 1., 0.
-        skx, sdeltax = 0., 0.
-        if len(set(nom_h.ravel())) > 1 and pos_h_cln.size >= 2:
-            coeffs_x = None
-            covx = None
+        coeffs_x, deltas_x = self._poly_fitting(nom_h, nom_h_cln, pos_h_cln)
+        if self.polydeg == 1:
+            qx, kx, deltax    = 0., coeffs_x[0], coeffs_x[1]
+            sqx, skx, sdeltax = 0., deltas_x[0], deltas_x[1]
+        elif self.polydeg == 2:
+            qx, kx, deltax    = coeffs_x
+            sqx, skx, sdeltax = deltas_x
+
+        coeffs_y, deltas_y = self._poly_fitting(nom_v, nom_v_cln, pos_v_cln)
+        if self.polydeg == 1:
+            qy, ky, deltay    = 0., coeffs_y[0], coeffs_y[1]
+            sqy, sky, sdeltay = 0., deltas_y[0], deltas_y[1]
+            qxtxt, qytxt = "", ""
+        elif self.polydeg == 2:
+            qy, ky, deltay    = coeffs_y
+            sqy, sky, sdeltay = deltas_y
+            qxtxt = f"qx = {qx:12.4f} ({sqx:4.1f}),\t"
+            qytxt = f"qy = {qy:12.4f} ({sqy:4.1f}),\t"
+
+        print(qxtxt, f"kx = {kx:12.4f} ({skx:4.1f}),"
+              f"   deltax = {deltax:12.4f} ({sdeltax:4.1f})")
+        print(qytxt, f"ky = {ky:12.4f} ({sky:4.1f}),"
+              f"   deltay = {deltay:12.4f} ({sdeltay:4.1f})\n")
+        return ((qx, kx, deltax), (sqx, skx, sdeltax),
+                (qy, ky, deltay), (sqy, sky, sdeltay))
+
+    def _poly_fitting(self, nom_val: np.ndarray, nom_cln: np.ndarray,
+                            pos_cln: np.ndarray):
+        """Return fitting parameters for scaling fit."""
+        if len(set(nom_val.ravel())) > 1 and pos_cln.size >= 2:
+            coeffs = None
+            covs = None
             try:
                 # polyfit(cov=True) returns (coeffs, cov_matrix), not 3 values.
-                coeffs_x, covx = np.polyfit(
-                    pos_h_cln, nom_h_cln, deg=1, cov=True
+                coeffs, covs = np.polyfit(
+                    pos_cln, nom_cln, deg=self.polydeg, cov=True
                 )
             except Exception:
-                # Keep fitted coefficients even if covariance cannot be estimated
-                # (e.g., small sample count), so scaling is still applied.
+                # Keep fitted coefficients even if covariance cannot be
+                # estimated (e.g., small sample count), so scaling is still
+                # applied (polyfit crashes if covariance cannot be estimated).
                 try:
-                    coeffs_x = np.polyfit(pos_h_cln, nom_h_cln, deg=1)
+                    coeffs = np.polyfit(pos_cln, nom_cln, deg=self.polydeg)
+                    covs = None
                 except Exception as err:
                     print(f"\n WARNING: when calculating horizontal scaling"
                           f" coefficients:\n{err}\n"
                           " Setting to default values.")
 
-            if coeffs_x is not None:
-                kx, deltax = coeffs_x
-            if covx is not None:
-                skx     = np.sqrt(covx[0, 0])
-                sdeltax = np.sqrt(covx[1, 1])
-
-        ky, deltay   = 1., 0.
-        sky, sdeltay = 0., 0.
-        if len(set(nom_v.ravel())) > 1 and pos_v_cln.size >= 2:
-            coeffs_y = None
-            covy = None
-            try:
-                # polyfit(cov=True) returns (coeffs, cov_matrix), not 3 values.
-                coeffs_y, covy = np.polyfit(
-                    pos_v_cln, nom_v_cln, deg=1, cov=True
-                )
-            except Exception:
-                try:
-                    coeffs_y = np.polyfit(pos_v_cln, nom_v_cln, deg=1)
-                except Exception as err:
-                    print(f"\n WARNING: when calculating vertical scaling"
-                          f" coefficients:\n{err}\n"
-                          " Setting to default values.")
-
-            if coeffs_y is not None:
-                ky, deltay = coeffs_y
-            if covy is not None:
-                sky     = np.sqrt(covy[0, 0])
-                sdeltay = np.sqrt(covy[1, 1])
-
-        print(f"kx = {kx:12.4f} ({skx:4.1f}),"
-              f"   deltax = {deltax:12.4f} ({sdeltax:4.1f})")
-        print(f"ky = {ky:12.4f} ({sky:4.1f}),"
-              f"   deltay = {deltay:12.4f} ({sdeltay:4.1f})\n")
-        return kx, skx, deltax, sdeltax, ky, sky, deltay, sdeltay
+            # Extract standard deviations from covariance matrix if available.
+            if covs is not None:
+                deltas = np.sqrt(np.diag(covs))
+            else:
+                deltas = np.zeros(self.polydeg + 1)
+        return (coeffs, deltas)
 
     @staticmethod
-    def _estimate_spreaded_std_dev(pos_h_scaled, pos_v_scaled,
-                                   rawblades):
-        """Estimate standard deviations in ROI between scaled and nominal.
-
-        Args:
-            pos_h_scaled: Scaled horizontal positions array.
-            pos_v_scaled: Scaled vertical positions array.
-            rawblades: Dictionary of raw blade measurements in ROI.
-
-        Returns:
-            diffx2: Squared horizontal differences in ROI.
-            diffy2: Squared vertical differences in ROI.
-        """
-        # Calculate squared differences
-        # for key, val in rawblades.items():
-        #     to = val['to']
-        #     ti = val['ti']
-        #     bo = val['bo']
-        #     bi = val['bi']
-
-        # diffx2 = (pos_h_scaled - pos_nom_h) ** 2
-        # diffy2 = (pos_v_scaled - pos_nom_v) ** 2
-        # return diffx2, diffy2
-        pass
-
-    @staticmethod
-    def _calculate_roi_stats(diffx2, diffy2):
+    def _calculate_roi_stats(diffx2: np.ndarray, diffy2: np.ndarray) -> dict:
         """Calculate RMS statistics from squared position differences in ROI.
 
         Args:
@@ -757,7 +732,7 @@ class XBPMProcessor:
             'diff_min_v'  : diff_min_v,
         }
 
-    def data_parse(self):
+    def data_parse(self) -> tuple:
         """Extract each blade's data from whole data dict into arrays."""
         dk = np.array(list(self.data.keys()))
 

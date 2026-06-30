@@ -135,7 +135,7 @@ class XBPMMainWindow(QMainWindow):
         self._update_xbpmdist_from_beamline(chosen)
         return chosen
 
-    def setup_ui(self):
+    def setup_ui(self) -> None:
         """Initialize the main window layout."""
         # Central widget with splitter
         central = QWidget()
@@ -284,7 +284,7 @@ class XBPMMainWindow(QMainWindow):
 
         return self.results_tabs
 
-    def _on_parameters_changed(self):
+    def _on_parameters_changed(self) -> None:
         """React to parameter changes; pre-select beamline on workdir set."""
         params = self.param_panel.get_parameters()
         workdir = params.get('workdir') or ""
@@ -292,13 +292,13 @@ class XBPMMainWindow(QMainWindow):
             self._last_workdir = workdir
             # self._preselected_beamline removed
 
-    def _schedule_roi_rerun(self):
+    def _schedule_roi_rerun(self) -> None:
         """Debounce ROI changes and re-run analysis if data is loaded."""
         if self._roi_rerun_timer.isActive():
             self._roi_rerun_timer.stop()
         self._roi_rerun_timer.start(400)
 
-    def _create_status_bar(self):
+    def _create_status_bar(self) -> None:
         """Create status bar with progress indicator."""
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -326,7 +326,7 @@ class XBPMMainWindow(QMainWindow):
         except Exception as exc:  # pragma: no cover - defensive
             self.log_message(f"Beamline preselection failed: {exc}")
 
-    def _create_beamline_selector(self):
+    def _create_beamline_selector(self) -> callable:
         """Create beamline selector function for UI dialog."""
         def selector(bls):
             if len(bls) == 1:
@@ -337,7 +337,7 @@ class XBPMMainWindow(QMainWindow):
             return None
         return selector
 
-    def _log_captured_output(self, log_capture):
+    def _log_captured_output(self, log_capture) -> None:
         """Log captured stdout/stderr output."""
         output = log_capture.getvalue()
         if output:
@@ -359,20 +359,21 @@ class XBPMMainWindow(QMainWindow):
         except Exception as exc:  # pragma: no cover - defensive
             self.log_message(f"Could not set XBPM distance: {exc}")
 
-    def _handle_fallback_beamline_selection(self, reader, workdir):
-        """Handle beamline selection when initial read doesn't set it."""
-        import os
+    # def _handle_fallback_beamline_selection(self, reader,
+    #                                         workdir: str) -> None:
+    #     """Handle beamline selection when initial read doesn't set it."""
+    #     import os
 
-        beamlines = []
-        if (os.path.isfile(workdir) and getattr(reader, "rawdata", None)):
-            from xbpm_bumps.core.reader_pickle import extract_beamlines
-            beamlines = extract_beamlines(reader.rawdata)
+    #     beamlines = []
+    #     if (os.path.isfile(workdir) and getattr(reader, "rawdata", None)):
+    #         from xbpm_bumps.core.reader_pickle import extract_beamlines
+    #         beamlines = extract_beamlines(reader.rawdata)
 
-        if len(beamlines) == 1:
-            self.log_message(f"Auto-selected beamline: {beamlines[0]}")
-            self._update_xbpmdist_from_beamline(beamlines[0])
+    #     if len(beamlines) == 1:
+    #         self.log_message(f"Auto-selected beamline: {beamlines[0]}")
+    #         self._update_xbpmdist_from_beamline(beamlines[0])
 
-    def setup_worker_thread(self):
+    def setup_worker_thread(self) -> None:
         """Initialize worker thread for analysis execution."""
         self.worker_thread = QThread()
         # Analyzer will be re-instantiated with canonical Prm and builder
@@ -442,27 +443,27 @@ class XBPMMainWindow(QMainWindow):
         self.analyzer.beamlineSelected.emit(choice)
 
     @pyqtSlot()
-    def _on_analysis_started(self):
+    def _on_analysis_started(self) -> None:
         """Handle analysis started signal."""
         self.set_analysis_running(True)
-        self.log_message("=" * 60)
+        self.log_message("\n" + "=" * 60)
         self.log_message("Analysis started")
         self.log_message("=" * 60)
 
     @pyqtSlot(str)
-    def _on_analysis_progress(self, message: str):
+    def _on_analysis_progress(self, message: str) -> None:
         """Handle analysis progress update."""
         self.status_bar.showMessage(message)
         self.log_message(f"[PROGRESS] {message}")
 
     @pyqtSlot(dict)
-    def _on_analysis_complete(self, results: dict):
+    def _on_analysis_complete(self, results: dict) -> None:
         """Handle analysis completion."""
         self._last_results = results
         self.set_analysis_running(False)
         self.log_message("=" * 60)
         self.log_message("Analysis completed successfully!")
-        self.log_message("=" * 60)
+        self.log_message("=" * 60 + "\n")
 
         self._update_canvases(results)
         self._last_meta = self._collect_meta_from_results(results)
@@ -470,7 +471,8 @@ class XBPMMainWindow(QMainWindow):
 
         self.status_bar.showMessage("Analysis complete", 5000)
 
-    def _on_export_clicked(self):
+    @pyqtSlot()
+    def _on_export_clicked(self) -> None:
         """Handle Export button: write data/positions to user-chosen files."""
         try:
             # Ensure app is initialized and beamline selected
@@ -501,7 +503,7 @@ class XBPMMainWindow(QMainWindow):
             # Strip extension to use as prefix
             prefix, _ext = os.path.splitext(path)
 
-            params = self.param_panel.get_parameters()
+            params  = self.param_panel.get_parameters()
             results = getattr(self, '_last_results', {})
             exported_any = False
 
@@ -540,7 +542,7 @@ class XBPMMainWindow(QMainWindow):
             self.show_error("Export Failed", str(exc))
 
     @pyqtSlot()
-    def _on_export_hdf5_clicked(self):
+    def _on_export_hdf5_clicked(self) -> None:
         """Export data to HDF5 file (with or without analysis results)."""
         try:
             # Ensure data is loaded (analysis is optional)
@@ -589,7 +591,7 @@ class XBPMMainWindow(QMainWindow):
             self.show_error("Export to HDF5 Failed", str(exc))
 
     @pyqtSlot()
-    def _on_open_directory(self):
+    def _on_open_directory(self) -> None:
         """Open dialog to select working directory with pickle files."""
         dialog = QFileDialog(self)
         dialog.setWindowTitle("Select Working Directory")
@@ -616,7 +618,7 @@ class XBPMMainWindow(QMainWindow):
             self._load_data_from_directory()
 
     @pyqtSlot()
-    def _on_open_hdf5(self):
+    def _on_open_hdf5(self) -> None:
         """Open dialog to select HDF5 data file.
 
         (Routes through Analyzer for beamline selection.)
@@ -755,7 +757,7 @@ class XBPMMainWindow(QMainWindow):
             self.log_message(f"Error displaying {title}: {e}")
 
     @pyqtSlot()
-    def _on_help_clicked(self):
+    def _on_help_clicked(self) -> None:
         """Open Help dialog with program guidance (non-blocking)."""
         try:
             if not hasattr(self, '_help_dialog') or self._help_dialog is None:
@@ -1237,7 +1239,7 @@ class XBPMMainWindow(QMainWindow):
         self.set_analysis_running(False)
         self.show_error(title, message)
 
-    def _load_data_from_directory(self):
+    def _load_data_from_directory(self) -> None:
         """Load data from the selected directory without running analysis.
 
         This allows users to export raw data to HDF5 without analysis.
@@ -1275,7 +1277,7 @@ class XBPMMainWindow(QMainWindow):
         self.analyzer.load_data_only()
 
     @pyqtSlot()
-    def _on_run_clicked(self):
+    def _on_run_clicked(self) -> None:
         """Handle Run Analysis button click."""
         params = self.param_panel.get_parameters()
         if not self._validate_workdir(params):
@@ -1297,7 +1299,8 @@ class XBPMMainWindow(QMainWindow):
         )
         return False
 
-    def log_message(self, message: str):
+    @pyqtSlot(str)
+    def log_message(self, message: str) -> None:
         """Append a message to the console log.
 
         Args:
@@ -1305,7 +1308,8 @@ class XBPMMainWindow(QMainWindow):
         """
         self.console.append(message)
 
-    def set_analysis_running(self, running: bool):
+    @pyqtSlot(bool)
+    def set_analysis_running(self, running: bool) -> None:
         """Update UI state during analysis execution.
 
         Args:
@@ -1325,7 +1329,8 @@ class XBPMMainWindow(QMainWindow):
             self.progress_bar.setRange(0, 100)
             self.progress_bar.setValue(0)
 
-    def show_error(self, title: str, message: str):
+    @pyqtSlot(str, str)
+    def show_error(self, title: str, message: str) -> None:
         """Display error dialog.
 
         Args:
@@ -1335,7 +1340,8 @@ class XBPMMainWindow(QMainWindow):
         QMessageBox.critical(self, title, message)
         self.log_message(f"ERROR: {message}")
 
-    def show_results_tab(self, tab_name: str):
+    @pyqtSlot(str)
+    def show_results_tab(self, tab_name: str) -> None:
         """Switch to a specific results tab.
 
         Args:
@@ -1346,14 +1352,14 @@ class XBPMMainWindow(QMainWindow):
                 self.results_tabs.setCurrentIndex(i)
                 break
 
-    def _create_canvas_tab(self):
+    def _create_canvas_tab(self) -> tuple[QWidget, MatplotlibCanvas]:
         widget = QWidget()
         layout = QVBoxLayout(widget)
         canvas = MatplotlibCanvas()
         layout.addWidget(canvas)
         return widget, canvas
 
-    def _update_canvases(self, results: dict):
+    def _update_canvases(self, results: dict) -> None:
         """Render available results into canvases."""
         for canvas in self.canvases.values():
             canvas.clear()
