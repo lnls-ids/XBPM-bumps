@@ -5,8 +5,8 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 
-from .parameters  import Prm                     # noqa: E272
-from .visualizers import PositionVisualizer as PSV, plot_blade_center_from_dicts  # noqa: E272
+from .parameters  import Prm
+from .visualizers import PositionVisualizer as PSV
 from .visualizers import SweepVisualizer as SWV
 from .visualizers import BladeCurrentVisualizer as BCV
 
@@ -142,8 +142,6 @@ class XBPMProcessor:
     def _central_sweeps_show(self, pos_ch_v: np.ndarray, fit_ch_v: np.ndarray,
                              pos_cv_h: np.ndarray, fit_cv_h: np.ndarray):
         """Plot results from fittings on central sweeps."""
-        from .visualizers import SweepVisualizer
-
         # Extract fit coefficients if available
         fit_h = fit_ch_v[:, 0] if fit_ch_v is not None else None
         fit_v = fit_cv_h[:, 0] if fit_cv_h is not None else None
@@ -152,7 +150,7 @@ class XBPMProcessor:
         pos_h = pos_ch_v[:, 0] if pos_ch_v is not None else None
         pos_v = pos_cv_h[:, 0] if pos_cv_h is not None else None
 
-        fig = SweepVisualizer.plot_from_arrays(
+        fig = SWV.plot_from_arrays(
             self.range_h, self.range_v,
             pos_h, pos_v,
             fit_h, fit_v,
@@ -295,7 +293,7 @@ class XBPMProcessor:
             diffroi = diffxyroi
 
         # Visualize
-        visualizer = PSV.PositionVisualizer(self.prm, titles=title_map)
+        visualizer = PSV(self.prm, titles=title_map)
         visualizer.show_position_results(
             pos_nom_h, pos_nom_v,
             pos_all_h_scaled, pos_all_v_scaled,
