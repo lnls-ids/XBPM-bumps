@@ -343,6 +343,7 @@ notebooks*
 .pytest_cache/
 __pycache__/
 *.pyc
+.vscode
 
 # OS
 .DS_Store
