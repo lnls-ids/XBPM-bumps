@@ -668,9 +668,20 @@ class HDF5DataReader:
             if dset is None:
                 return None
             attrs = {}
-            for key in ('scale_kx', 'scale_ky', 'scale_dx', 'scale_dy'):
+            for key in (
+                'scale_kx', 'scale_skx', 'scale_dx', 'scale_sdx',
+                'scale_ky', 'scale_sky', 'scale_dy', 'scale_sdy',
+                'scale_s_kx', 'scale_s_dx', 'scale_s_ky', 'scale_s_dy',
+            ):
                 if key in dset.attrs:
-                    attrs[key.replace('scale_', '')] = dset.attrs[key]
+                    normalized = key.replace('scale_', '')
+                    legacy_map = {
+                        's_kx': 'skx',
+                        's_dx': 'sdx',
+                        's_ky': 'sky',
+                        's_dy': 'sdy',
+                    }
+                    attrs[legacy_map.get(normalized, normalized)] = dset.attrs[key]
             return attrs or None
 
         result = {}

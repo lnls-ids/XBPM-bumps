@@ -1432,11 +1432,12 @@ class Exporter:
         supmat_standard = results.get('supmat_standard')
         central_sweeps = results.get('sweeps_data')
         bpm_stats = results.get('bpm_stats')
+        raw_full = results.get('positions_raw_full')
+        scaled_full = results.get('positions_scaled_full')
 
         if not any([positions, supmat, supmat_standard,
                     central_sweeps, bpm_stats,
-                    results.get('positions_raw_full'),
-                    results.get('positions_scaled_full')]):
+                    raw_full, scaled_full]):
             return
 
         beamline = getattr(self.prm, 'beamline', None) or 'unknown'
@@ -1444,6 +1445,7 @@ class Exporter:
         analysis = h5file.create_group(analysis_name)
         self._write_analysis_attributes(analysis, beamline, results)
         self._write_positions_group(analysis, positions, bpm_stats, results)
+        self._write_scales(analysis, raw_full, scaled_full)
         self._write_analysis_datasets(analysis, supmat, stddevmat,
                                       supmat_standard, central_sweeps)
 
@@ -1722,7 +1724,7 @@ class Exporter:
             if not isinstance(val, dict):
                 continue
             child = sub.create_group(key)
-            for attr in ('kx', 'ky', 'dx', 'dy'):
+            for attr in ('kx', 'skx', 'dx', 'sdx', 'ky', 'sky', 'dy', 'sdy'):
                 if attr in val and val[attr] is not None:
                     child.attrs[attr] = float(val[attr])
 
@@ -1733,7 +1735,7 @@ class Exporter:
         vals = scales.get(key)
         if not isinstance(vals, dict):
             return
-        for attr in ('kx', 'ky', 'dx', 'dy'):
+        for attr in ('kx', 'skx', 'dx', 'sdx', 'ky', 'sky', 'dy', 'sdy'):
             if attr in vals and vals[attr] is not None:
                 dset.attrs[f'scale_{attr}'] = float(vals[attr])
                 dset.attrs[f'scale_{attr}_description'] = (
