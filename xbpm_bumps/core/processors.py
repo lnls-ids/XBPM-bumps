@@ -696,6 +696,9 @@ class XBPMProcessor:
                 deltas = np.sqrt(np.diag(covs))
             else:
                 deltas = np.zeros(self.polydeg + 1)
+        else:
+            coeffs = np.zeros(self.polydeg + 1)
+            deltas = np.zeros(self.polydeg + 1)
         return (coeffs, deltas)
 
     @staticmethod
