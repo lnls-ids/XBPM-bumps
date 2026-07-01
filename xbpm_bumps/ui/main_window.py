@@ -51,7 +51,7 @@ class XBPMMainWindow(QMainWindow):
         'diff_max_v'  : 'Max vert. |y_meas - y_nom| [μm]',
     }
 
-    def __init__(self):
+    def __init__(self: "XBPMMainWindow") -> None:
         """Initialize the main window."""
         super().__init__()
         from ..core.parameters import Prm, ParameterBuilder
@@ -785,7 +785,7 @@ class XBPMMainWindow(QMainWindow):
         Returns:
             True if at least one matrix was written.
         """
-        from ..core.processors import XBPMProcessor
+        from ..core.processors import XBPMProcessor as XPROC
         from ..core.exporters import Exporter
 
         exporter = Exporter(self.analyzer.app.prm)
@@ -793,7 +793,7 @@ class XBPMMainWindow(QMainWindow):
         wrote_any = False
 
         # --- Standard (1/-1) suppression matrix ---
-        supmat_std, _ = XBPMProcessor.standard_suppression_matrix()
+        supmat_std, _ = XPROC.standard_suppression_matrix()
         std_path = os.path.join(
             outdir,
             f"xbpm_supmat_standard_{self.analyzer.app.prm.beamline}.dat"
