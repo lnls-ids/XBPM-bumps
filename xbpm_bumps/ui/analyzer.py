@@ -445,6 +445,14 @@ class XBPMAnalyzer(QObject):
                       if isinstance(result_data, dict) else None)
         if supmat_std is not None:
             results['supmat_standard'] = supmat_std
+        # Capture standard deviation matrix for standard matrix (zeros for fixed 1/-1 pattern)
+        stddevmat_std = (result_data.get('stddevmat')
+                         if isinstance(result_data, dict) else None)
+        if stddevmat_std is None and supmat_std is not None:
+            # Standard matrix has no uncertainty; create zeros matrix
+            stddevmat_std = np.zeros_like(supmat_std)
+        if stddevmat_std is not None:
+            results['stddevmat_standard'] = stddevmat_std
         # Capture XBPM statistics
         xbpm_stats = (result_data.get('xbpm_stats')
                       if isinstance(result_data, dict) else None)

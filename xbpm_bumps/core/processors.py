@@ -476,11 +476,17 @@ class XBPMProcessor:
         stddevmat = np.zeros_like(supmat)  # No standard deviation for fixed matrix
         return supmat, stddevmat
 
-    def suppression_matrix(self, showmatrix=False, nosuppress=False):
+    def suppression_matrix(self, showmatrix: bool = False,
+                           nosuppress: bool =   False) -> tuple:
         """Calculate the suppression matrix from blade behavior.
 
-        When nosuppress=True (raw), returns the standard 1/-1 matrix.
-        When nosuppress=False (scaled), calculates from fitted slopes.
+        Args:
+            showmatrix: If True, prints the suppression matrix.
+            nosuppress: If True, returns the standard 1/-1 matrix.
+                        If False, calculates from fitted slopes.
+
+        Returns:
+            Tuple of (suppression matrix, standard deviation matrix)
         """
         if nosuppress:
             # Return standard matrix for raw calculations
@@ -521,7 +527,7 @@ class XBPMProcessor:
         ])
 
         if showmatrix:
-            print(f'Undulator phase or gap: {self.prm.phaseorgap}')
+            print(f'\nUndulator phase or gap: {self.prm.phaseorgap}')
             print("\nSuppression matrix:")
             for ii, lin in enumerate(supmat):
                 for jj, col in enumerate(lin):
@@ -533,8 +539,18 @@ class XBPMProcessor:
         return supmat, stddevmat
 
     @staticmethod
-    def central_line_fit(blades, range_vals, direction):
-        """Linear fittings to each blade's data through central line."""
+    def central_line_fit(blades: dict, range_vals: np.ndarray,
+                         direction: str) -> tuple:
+        """Linear fittings to each blade's data through central line.
+        
+        Args:
+            blades: Dictionary of blade measurements along a central line.
+            range_vals: Array of sweep positions (angles or distances).
+            direction: 'h' for horizontal, 'v' for vertical.
+
+        Returns:
+            Tuple of (fit coefficients, std dev values) for each blade.
+        """
         if blades is None:
             dr = 'horizontal' if direction == 'h' else 'vertical'
             print(f"\n WARNING: (central_line_fit) {dr} blades' values"
@@ -668,8 +684,9 @@ class XBPMProcessor:
         return ((qx, kx, deltax), (sqx, skx, sdeltax),
                 (qy, ky, deltay), (sqy, sky, sdeltay))
 
-    def _poly_fitting(self, nom_val: np.ndarray, nom_cln: np.ndarray,
-                            pos_cln: np.ndarray):
+    def _poly_fitting(self, nom_val: np.ndarray,
+                      nom_cln: np.ndarray,
+                      pos_cln: np.ndarray) -> tuple:
         """Return fitting parameters for scaling fit."""
         if len(set(nom_val.ravel())) > 1 and pos_cln.size >= 2:
             coeffs = None

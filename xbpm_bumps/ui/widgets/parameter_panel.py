@@ -16,7 +16,7 @@ class ParameterPanel(QWidget):
     Emits parametersChanged signal when any parameter is modified.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: QWidget = None):
         """Initialize the parameter panel.
 
         Args:
@@ -38,7 +38,7 @@ class ParameterPanel(QWidget):
         """Get the currently set beamline, if any."""
         return getattr(self, '_beamline', None)
 
-    def setup_ui(self):
+    def setup_ui(self) -> None:
         """Initialize the UI layout and widgets."""
         layout = QVBoxLayout(self)
 
@@ -112,6 +112,15 @@ class ParameterPanel(QWidget):
         self.skip_spin.setMaximumWidth(115)
         self.skip_spin.valueChanged.connect(self.parametersChanged.emit)
         layout.addRow("Skip Initial:", self.skip_spin)
+
+        # Polynomial degree
+        self.polydeg = QSpinBox()
+        self.polydeg.setRange(1, 2)
+        self.polydeg.setValue(1)
+        # self.polydeg.setSuffix("")
+        self.polydeg.setMaximumWidth(115)
+        self.polydeg.valueChanged.connect(self.parametersChanged.emit)
+        layout.addRow("Polynomial degree:", self.polydeg)
 
         group.setLayout(layout)
         return group
