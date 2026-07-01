@@ -808,11 +808,16 @@ class XBPMMainWindow(QMainWindow):
         if supmat_calc is None:
             # Compute directly from processor if analysis was run
             try:
-                supmat_calc = self.analyzer.app.processor.suppression_matrix(
+                supmat_calc, stddevmat_calc = (
+                    self.analyzer.app.processor.suppression_matrix(
                     showmatrix=False, nosuppress=False
+                )
                 )
             except Exception as exc:
                 logger.warning("Could not compute calculated supmat: %s", exc)
+                stddevmat_calc = None
+        else:
+            stddevmat_calc = results.get('stddevmat')
 
         if supmat_calc is not None:
             calc_path = os.path.join(
@@ -820,7 +825,8 @@ class XBPMMainWindow(QMainWindow):
                 f"xbpm_supmat_calculated_{self.analyzer.app.prm.beamline}.dat"
             )
             exporter.write_supmat(supmat_calc, write_file=True,
-                                  outpath=calc_path)
+                                  outpath=calc_path,
+                                  stddevmat=stddevmat_calc)
             logger.info("Calculated suppression matrix saved to %s",
                         calc_path)
 

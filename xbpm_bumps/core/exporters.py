@@ -110,8 +110,9 @@ class Exporter:
 
     def write_supmat(self, supmat: np.ndarray,
                      write_file: bool = False,
-                     outpath: str = None) -> None:
-        """Write suppression matrix to disk.
+                     outpath: str = None,
+                     stddevmat: np.ndarray = None) -> None:
+        """Write suppression matrix to disk with optional uncertainties.
 
         Args:
             supmat: Suppression matrix numpy array
@@ -119,13 +120,17 @@ class Exporter:
                        Supmat is always exported to HDF5 by write_hdf5().
             outpath: Optional explicit output file path. When None, writes
                      ``supmat_<beamline>.dat`` in the current directory.
+            stddevmat: Optional standard deviation matrix. If provided,
+                      uncertainties are appended to the matrix file.
         """
         if not write_file:
             return
 
         # Accept both plain matrix and legacy tuple payload
-        # (supmat, stddevmat).
+        # (supmat, stddevmat). Legacy tuple takes precedence for backward compatibility.
         if isinstance(supmat, tuple):
+            if len(supmat) >= 2 and stddevmat is None:
+                stddevmat = supmat[1]
             supmat = supmat[0]
 
         mat = np.asarray(supmat, dtype=float)
@@ -136,6 +141,15 @@ class Exporter:
                 for col in lin:
                     fs.write(f" {col:12.6f}")
                 fs.write("\n")
+            
+            # Append uncertainties if provided
+            if stddevmat is not None:
+                stddev_arr = np.asarray(stddevmat, dtype=float)
+                fs.write("\n# Standard deviations\n")
+                for lin in stddev_arr:
+                    for col in lin:
+                        fs.write(f" {col:12.6f}")
+                    fs.write("\n")
 
     def data_dump(self, data, positions, sup: str = "") -> None:
         """Dump blades data and calculated positions to files."""

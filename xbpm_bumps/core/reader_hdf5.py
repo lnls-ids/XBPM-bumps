@@ -549,6 +549,7 @@ class HDF5DataReader:
             std = mats.get('standard')
             calc = mats.get('calculated')
             opt = mats.get('optimized')
+            stddev = mats.get('stddev')
             if std is not None:
                 meta['supmat_standard'] = np.array(std)
                 loaded_any = True
@@ -557,6 +558,9 @@ class HDF5DataReader:
                 loaded_any = True
             if opt is not None:
                 meta['supmat_optimized'] = np.array(opt)
+                loaded_any = True
+            if stddev is not None:
+                meta['stddevmat'] = np.array(stddev)
                 loaded_any = True
         if loaded_any:
             return
@@ -570,9 +574,18 @@ class HDF5DataReader:
             meta['supmat_optimized'] = np.array(opt_supmat)
         if 'supmat_standard' not in meta:
             from .processors import XBPMProcessor
-            meta['supmat_standard'] = (
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                "Recalculating standard suppression matrix from processor "
+                "(not found in HDF5). If this is unexpected, verify HDF5 "
+                "file contains matrices/standard dataset."
+            )
+            supmat_standard, stddevmat_standard = (
                 XBPMProcessor.standard_suppression_matrix()
-                )
+            )
+            meta['supmat_standard'] = supmat_standard
+            meta.setdefault('stddevmat', stddevmat_standard)
 
     @staticmethod
     def _load_bpm_stats_meta(analysis, meta):
