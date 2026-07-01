@@ -1870,9 +1870,9 @@ class XBPMMainWindow(QMainWindow):
             for jj, val in enumerate(row):
                 uncertainty = std[ii, jj] if ii < std.shape[0] and jj < std.shape[1] else 0.0
                 if uncertainty > 0:
-                    row_parts.append(f"{val:8.4f}(±{uncertainty:8.4f})")
+                    row_parts.append(f"{val:8.2f}({uncertainty:4.2f})")
                 else:
-                    row_parts.append(f"{val:8.4f}(±0.000000)")
+                    row_parts.append(f"{val:8.2f}(0.00)")
             lines.append("  " + "  ".join(row_parts))
         return lines
 
