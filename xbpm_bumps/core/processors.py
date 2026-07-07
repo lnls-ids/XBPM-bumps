@@ -55,7 +55,7 @@ class XBPMProcessor:
         self.roi_h_size = prm.roisize[0] if prm.roisize else ROI_SIZE_H
         self.roi_v_size = prm.roisize[1] if prm.roisize else ROI_SIZE_V
 
-    def _initialize_ranges(self) ->  None:
+    def _initialize_ranges(self) -> None:
         """Initialize horizontal and vertical sweep ranges from data keys."""
         keys = np.array(list(self.data.keys()))
         self.range_h = np.unique(keys[:, 0])
@@ -97,47 +97,47 @@ class XBPMProcessor:
 
     def _central_sweep_horizontal(self) -> tuple:
         """Extract blade measurements along horizontal center line."""
-        try:
-            to_ch = np.array([self.data[jj, 0][0] for jj in self.range_h])
-            ti_ch = np.array([self.data[jj, 0][1] for jj in self.range_h])
-            bi_ch = np.array([self.data[jj, 0][2] for jj in self.range_h])
-            bo_ch = np.array([self.data[jj, 0][3] for jj in self.range_h])
-            blades_h = {"to": to_ch, "ti": ti_ch, "bi": bi_ch, "bo": bo_ch}
-        except Exception as err:
-            print("\n WARNING: horizontal sweeping interrupted,"
-                  f" data grid may be incomplete: {err}")
-            blades = {bl: np.array([[1., 0] for _ in self.range_h])
-                      for bl in ["to", "ti", "bi", "bo"]}
-            return None, None, blades
-
-        pos_to_ti_v = (to_ch + ti_ch)
-        pos_bi_bo_v = (bo_ch + bi_ch)
-        pos_ch_v = (pos_to_ti_v - pos_bi_bo_v) / (pos_to_ti_v + pos_bi_bo_v)
-        fit_ch_v = np.polyfit(self.range_h, pos_ch_v,  deg=1)
-
-        return pos_ch_v, fit_ch_v, blades_h
+        return self._central_sweep_profile(
+            self.range_h,
+            lambda jj: (jj, 0),
+            lambda to, ti, bi, bo:
+                ((to + ti) - (bo + bi)) / ((to + ti) + (bo + bi)),
+            "horizontal",
+        )
 
     def _central_sweep_vertical(self) -> tuple:
         """Extract blade measurements along vertical center line."""
+        return self._central_sweep_profile(
+            self.range_v,
+            lambda jj: (0, jj),
+            lambda to, ti, bi, bo:
+                ((to + bo) - (ti + bi)) / ((to + bo) + (ti + bi)),
+            "vertical",
+        )
+
+    def _central_sweep_profile(self, sweep_range, key_builder,
+                               position_formula, axis_name: str) -> tuple:
+        """Extract central-sweep blade profiles and fit the position curve."""
         try:
-            to_cv = np.array([self.data[0, jj][0] for jj in self.range_v])
-            ti_cv = np.array([self.data[0, jj][1] for jj in self.range_v])
-            bi_cv = np.array([self.data[0, jj][2] for jj in self.range_v])
-            bo_cv = np.array([self.data[0, jj][3] for jj in self.range_v])
-            blades_v = {"to": to_cv, "ti": ti_cv, "bi": bi_cv, "bo": bo_cv}
+            to = np.array([self.data[key_builder(jj)][0]
+                           for jj in sweep_range])
+            ti = np.array([self.data[key_builder(jj)][1]
+                           for jj in sweep_range])
+            bi = np.array([self.data[key_builder(jj)][2]
+                           for jj in sweep_range])
+            bo = np.array([self.data[key_builder(jj)][3]
+                           for jj in sweep_range])
+            blades = {"to": to, "ti": ti, "bi": bi, "bo": bo}
         except Exception as err:
-            print("\n WARNING: vertical sweeping interrupted,"
+            print(f"\n WARNING: {axis_name} sweeping interrupted,"
                   f" data grid may be incomplete: {err}")
-            blades = {bl: np.array([[1., 0] for _ in self.range_v])
+            blades = {bl: np.array([[1., 0] for _ in sweep_range])
                       for bl in ["to", "ti", "bi", "bo"]}
             return None, None, blades
 
-        pos_to_bo_h = (to_cv + bo_cv)
-        pos_ti_bi_h = (ti_cv + bi_cv)
-        pos_cv_h = (pos_to_bo_h - pos_ti_bi_h) / (pos_to_bo_h + pos_ti_bi_h)
-        fit_cv_h = np.polyfit(self.range_v, pos_cv_h, deg=1)
-
-        return pos_cv_h, fit_cv_h, blades_v
+        pos = position_formula(to, ti, bi, bo)
+        fit = np.polyfit(sweep_range, pos, deg=1)
+        return pos, fit, blades
 
     def _central_sweeps_show(self, pos_ch_v: np.ndarray, fit_ch_v: np.ndarray,
                              pos_cv_h: np.ndarray, fit_cv_h: np.ndarray):
@@ -251,8 +251,8 @@ class XBPMProcessor:
         (scalesx, sigmasx, scalesy, sigmasy) = self.scaling_fit(
             pos_roi_h, pos_roi_v, pos_nom_h_roi, pos_nom_v_roi, label
         )
-        (kx, deltax), (skx, sdeltax) = scalesx, sigmasx
-        (ky, deltay), (sky, sdeltay) = scalesy, sigmasy
+        (qx, kx, deltax), (sqx, skx, sdeltax) = scalesx, sigmasx
+        (qy, ky, deltay), (sqy, sky, sdeltay) = scalesy, sigmasy
 
         # Set raw (R) or transformed (T) graph type.
         transform = "R" if nosuppress else "T"
@@ -274,10 +274,10 @@ class XBPMProcessor:
         }
 
         # Scale full positions
-        pos_all_h_scaled = kx * pos_all_h + deltax
-        pos_all_v_scaled = ky * pos_all_v + deltay
-        pos_roi_h_scaled = kx * pos_roi_h + deltax
-        pos_roi_v_scaled = ky * pos_roi_v + deltay
+        pos_all_h_scaled = qx * pos_all_h**2 + kx * pos_all_h + deltax
+        pos_all_v_scaled = qy * pos_all_v**2 + ky * pos_all_v + deltay
+        pos_roi_h_scaled = qx * pos_roi_h**2 + kx * pos_roi_h + deltax
+        pos_roi_v_scaled = qy * pos_roi_v**2 + ky * pos_roi_v + deltay
 
         # Compute statistics
         diffx2_roi = (pos_roi_h_scaled - pos_nom_h_roi) ** 2
@@ -307,8 +307,12 @@ class XBPMProcessor:
             'v_scaled'     : pos_all_v_scaled,
             'h_roi_scaled' : pos_roi_h_scaled,
             'v_roi_scaled' : pos_roi_v_scaled,
+            'qx'           : qx,
+            'sqx'          : sqx,
             'kx'           : kx,
             'skx'          : skx,
+            'qy'           : qy,
+            'sqy'          : sqy,
             'ky'           : ky,
             'sky'          : sky,
             'dx'           : deltax,
@@ -369,22 +373,30 @@ class XBPMProcessor:
             'cross_figure'    : cross_visualizer.fig,
             'scales' : {
                 'pair'    : {
+                    'qx'  : pair_result['qx'],
+                    'sqx' : pair_result['sqx'],
                     'kx'  : pair_result['kx'],
                     'skx' : pair_result['skx'],
-                    'ky'  : pair_result['ky'],
-                    'sky' : pair_result['sky'],
                     'dx'  : pair_result['dx'],
                     'sdx' : pair_result['sdx'],
+                    'qy'  : pair_result['qy'],
+                    'sqy' : pair_result['sqy'],
+                    'ky'  : pair_result['ky'],
+                    'sky' : pair_result['sky'],
                     'dy'  : pair_result['dy'],
                     'sdy' : pair_result['sdy'],
                 },
                 'cross'   : {
+                    'qx'  : cross_result['qx'],
+                    'sqx' : cross_result['sqx'],
                     'kx'  : cross_result['kx'],
                     'skx' : cross_result['skx'],
-                    'ky'  : cross_result['ky'],
-                    'sky' : cross_result['sky'],
                     'dx'  : cross_result['dx'],
                     'sdx' : cross_result['sdx'],
+                    'qy'  : cross_result['qy'],
+                    'sqy' : cross_result['sqy'],
+                    'ky'  : cross_result['ky'],
+                    'sky' : cross_result['sky'],
                     'dy'  : cross_result['dy'],
                     'sdy' : cross_result['sdy'],
                 },
@@ -530,7 +542,7 @@ class XBPMProcessor:
             print("\nSuppression matrix:")
             for ii, lin in enumerate(supmat):
                 for jj, col in enumerate(lin):
-                    print(f" {col:12.6f} ({stddevmat[ii, jj]:.1e})", end='')
+                    print(f" {col:12.6f} (±{stddevmat[ii, jj]:10.6f})", end='')
                 print()
             print()
 
@@ -575,7 +587,7 @@ class XBPMProcessor:
             pc = np.array([[1, 0] for _ in range(4)]) 
         return pc, covs
 
-    def beam_position_pair(self, supmat):
+    def beam_position_pair(self, supmat: np.ndarray) -> dict:
         """Calculate beam position from blades' currents (pairwise)."""
         positions = dict()
         for pos, bld in self.data.items():
@@ -583,7 +595,7 @@ class XBPMProcessor:
             positions[pos] = np.array([dsps[0] / dsps[1], dsps[2] / dsps[3]])
         return positions
 
-    def position_dict_parse(self, data) -> tuple:
+    def position_dict_parse(self, data: dict) -> tuple:
         """Parse XBPM position dict into structured arrays."""
         gridlist = np.array(list(data.keys()))
 
@@ -658,20 +670,31 @@ class XBPMProcessor:
         nom_v_cln = nom_v[v_finitemask]
 
         coeffs_x, deltas_x = self._poly_fitting(nom_h, nom_h_cln, pos_h_cln)
-        kx, deltax         = coeffs_x[0], coeffs_x[1]
-        skx, sdeltax       = deltas_x[0], deltas_x[1]
-
         coeffs_y, deltas_y = self._poly_fitting(nom_v, nom_v_cln, pos_v_cln)
-        ky, deltay         = coeffs_y[0], coeffs_y[1]
-        sky, sdeltay       = deltas_y[0], deltas_y[1]
-        qxtxt, qytxt = "", ""
+        if self.prm.scalepolydeg == 1:
+            qx, kx, deltax    = 0., coeffs_x[0], coeffs_x[1]
+            sqx, skx, sdeltax = 0., deltas_x[0], deltas_x[1]
+
+            qy, ky, deltay    = 0., coeffs_y[0], coeffs_y[1]
+            sqy, sky, sdeltay = 0., deltas_y[0], deltas_y[1]
+
+            qxtxt, qytxt = "", ""
+        elif self.prm.scalepolydeg == 2:
+            qx, kx, deltax    = coeffs_x
+            sqx, skx, sdeltax = deltas_x
+
+            qy, ky, deltay    = coeffs_y
+            sqy, sky, sdeltay = deltas_y
+
+            qxtxt = f"qx = {qx:12.4f} ({sqx:4.1f}),\t"
+            qytxt = f"qy = {qy:12.4f} ({sqy:4.1f}),\t"
 
         print(qxtxt, f"kx = {kx:12.4f} ({skx:4.1f}),"
               f"   deltax = {deltax:12.4f} ({sdeltax:4.1f})")
         print(qytxt, f"ky = {ky:12.4f} ({sky:4.1f}),"
               f"   deltay = {deltay:12.4f} ({sdeltay:4.1f})\n")
-        return ((kx, deltax), (skx, sdeltax),
-                (ky, deltay), (sky, sdeltay))
+        return ((qx, kx, deltax), (sqx, skx, sdeltax),
+                (qy, ky, deltay), (sqy, sky, sdeltay))
 
     def _poly_fitting(self, nom_val: np.ndarray,
                       nom_cln: np.ndarray,
@@ -679,30 +702,35 @@ class XBPMProcessor:
         """Return fitting parameters for scaling fit."""
         if len(set(nom_val.ravel())) > 1 and pos_cln.size >= 2:
             coeffs = None
-            covs = None
+            covs   = None
             try:
-                # polyfit(cov=True) returns (coeffs, cov_matrix), not 3 values.
-                coeffs, covs = np.polyfit(pos_cln, nom_cln, deg=1, cov=True)
+                coeffs, covs = np.polyfit(
+                    pos_cln, nom_cln, deg=self.prm.scalepolydeg, cov=True
+                )
             except Exception:
                 # Keep fitted coefficients even if covariance cannot be
                 # estimated (e.g., small sample count), so scaling is still
                 # applied (polyfit crashes if covariance cannot be estimated).
                 try:
-                    coeffs = np.polyfit(pos_cln, nom_cln, deg=1)
+                    coeffs = np.polyfit(
+                        pos_cln, nom_cln, deg=self.prm.scalepolydeg
+                        )
                     covs = None
                 except Exception as err:
                     print(f"\n WARNING: when calculating horizontal scaling"
                           f" coefficients:\n{err}\n"
                           " Setting to default values.")
+                    coeffs = np.zeros(self.prm.scalepolydeg + 1)
+                    covs   = None
 
             # Extract standard deviations from covariance matrix if available.
             if covs is not None:
                 deltas = np.sqrt(np.diag(covs))
             else:
-                deltas = np.zeros(2)
+                deltas = np.zeros(self.prm.scalepolydeg + 1)
         else:
-            coeffs = np.zeros(2)
-            deltas = np.zeros(2)
+            coeffs = np.zeros(self.prm.scalepolydeg + 1)
+            deltas = np.zeros(self.prm.scalepolydeg + 1)
         return (coeffs, deltas)
 
     @staticmethod
@@ -797,14 +825,10 @@ class BPMProcessor:
         self.rawdata = rawdata
         self.prm     = prm
 
-        # DEBUG
-        # print("\n\n", "#" * 10)
-        # print("# DEBUG BPMProcessor init ")
-        # print(f"\n BPMProcessor initialized for beamline {self.prm.beamline}"
-        #       f" section {self.prm.section}.\n")
-        # END DEBUG
+        self.roi_h_size = prm.roisize[0] if prm.roisize else ROI_SIZE_H
+        self.roi_v_size = prm.roisize[1] if prm.roisize else ROI_SIZE_V
 
-    def calculate_positions(self):
+    def calculate_positions(self) -> tuple:
         """Calculate and plot XBPM positions derived from BPM data.
 
         Returns:
@@ -886,7 +910,7 @@ class BPMProcessor:
 
         return self._compile_measurement_results()
 
-    def _extract_roi_positions(self):
+    def _extract_roi_positions(self) -> tuple:
         """Extract ROI positions from full grid for closeup view.
 
         Returns:
@@ -900,7 +924,7 @@ class BPMProcessor:
             self.ypos[rows, cols],
         )
 
-    def _compile_measurement_results(self):
+    def _compile_measurement_results(self) -> tuple:
         """Compile measured and nominal coordinates into return format.
 
         Returns:
@@ -912,7 +936,9 @@ class BPMProcessor:
                    if self.xnom.size else None)
         return measured, nominal
 
-    def _plot_roi_differences(self, axdiff, pos_nom_h, pos_nom_v):
+    def _plot_roi_differences(self, axdiff: 'matplotlib.axes.Axes',
+                              pos_nom_h: np.ndarray,
+                              pos_nom_v: np.ndarray) -> None:
         """Plot ROI differences as scatter (1D) or heatmap (2D).
 
         Args:
@@ -997,8 +1023,10 @@ class BPMProcessor:
                 )
             axdiff.grid(False)
 
-    def _plot_position_scatter(self, ax, pos_nom_h, pos_nom_v,
-                               pos_h, pos_v, title):
+    def _plot_position_scatter(self, ax: 'matplotlib.axes.Axes',
+                               pos_nom_h: np.ndarray, pos_nom_v: np.ndarray,
+                               pos_h: np.ndarray, pos_v: np.ndarray,
+                               title: str) -> None:
         """Plot measured vs nominal positions scatter plot.
 
         Args:
@@ -1061,7 +1089,7 @@ class BPMProcessor:
             ax.legend(handles, labels)
         ax.grid()
 
-    def _position_grid_assemble(self):
+    def _position_grid_assemble(self) -> None:
         """Assemble position data into structured grid numpy arrays."""
         # Get unique sorted indices for x and y from the position keys.
         xidx = sorted(set([key[0] for key in self.xbpm_pos.keys()]))
@@ -1092,7 +1120,7 @@ class BPMProcessor:
                   f" {missing} points missing from nominal mesh."
                   " Missing points were set to NaN.")
 
-    def _roi_slices(self, shape):
+    def _roi_slices(self, shape: tuple[int, int]) -> tuple[slice, slice]:
         """Return row/column slices for the centered ROI."""
         nv, nh = shape
         roi_h = min(self.roi_h_size, nh)
@@ -1108,10 +1136,11 @@ class BPMProcessor:
         return slice(fromv, uptov), slice(fromh, uptoh)
 
     def _sector_index(self) -> int:
+        """Extract sector index from the section string."""
         sector = int(self.prm.section.split(':')[1][:2])
         return 8 * (sector - 1) - 1
 
-    def _tangents_calc(self, idx):
+    def _tangents_calc(self, idx: int) -> dict:
         """Calculate tangents of beam angles between neighbour BPMs."""
         nextidx = idx + 1
         offset_x_sect, offset_y_sect = 0, 0
@@ -1145,7 +1174,7 @@ class BPMProcessor:
             tangents[agx, agy] = np.array([tx, ty])
         return tangents
 
-    def _offset_search(self, idx):
+    def _offset_search(self, idx: int) -> tuple[float, float, float, float]:
         """Extrapolate offsets when reference orbit is missing."""
         # Get the angle and orbit data for the current and next BPMs
         # across all measurements.
@@ -1206,7 +1235,8 @@ class BPMProcessor:
 
         return (offset_x_sect, offset_x_next, offset_y_sect, offset_y_next)
 
-    def _positions_from_tangents(self, tangents, xbpm_dist):
+    def _positions_from_tangents(self, tangents: dict,
+                                 xbpm_dist: float) -> dict:
         """Calculate beam positions from tangents at BPMs."""
         positions = dict()
         for key, tg in tangents.items():
@@ -1214,7 +1244,8 @@ class BPMProcessor:
             positions[newkey] = tg * xbpm_dist
         return positions
 
-    def _std_dev_estimate(self, xnom, ynom, xpos, ypos):
+    def _std_dev_estimate(self, xnom: np.ndarray, ynom: np.ndarray,
+                          xpos: np.ndarray, ypos: np.ndarray) -> tuple:
         """Estimate RMS deviations between measured and nominal positions.
         
         Args:

@@ -3,11 +3,11 @@
 import matplotlib.pyplot as plt
 from typing import Optional
 
-from .parameters import Prm, ParameterBuilder
-from .readers import DataReader
-from .processors import XBPMProcessor, BPMProcessor
+from .exporters   import Exporter
+from .parameters  import ParameterBuilder
+from .processors  import XBPMProcessor, BPMProcessor
+from .readers     import DataReader
 from .visualizers import BladeMapVisualizer
-from .exporters import Exporter
 
 
 class XBPMApp:
@@ -15,11 +15,11 @@ class XBPMApp:
 
     def __init__(self: "XBPMApp") -> None:
         """Initialize app with empty state; components created during run()."""
-        self.builder   : Optional[ParameterBuilder] = None
-        self.reader    : Optional[DataReader] = None
-        self.processor : Optional[XBPMProcessor] = None
-        self.exporter  : Optional[Exporter] = None
-        self.bpm_reference : Optional[tuple] = None
+        self.builder       : Optional[ParameterBuilder] = None
+        self.reader        : Optional[DataReader]       = None
+        self.processor     : Optional[XBPMProcessor]    = None
+        self.exporter      : Optional[Exporter]         = None
+        self.bpm_reference : Optional[tuple]            = None
         self.data = None
         self.prm  = None
 
@@ -35,6 +35,7 @@ class XBPMApp:
         self.reader    = DataReader(self.prm, self.builder)
         self.reader.read()
         self.data, self.rawblades = self.reader._blades_fetch()
+
         self.processor = XBPMProcessor(self.data, self.prm)
         self.exporter  = Exporter(self.prm)
 
@@ -47,7 +48,7 @@ class XBPMApp:
         plt.show()
 
     @staticmethod
-    def cli_prompt(beamlines):
+    def cli_prompt(beamlines : list[str]) -> str:
         """Prompt the user to select a beamline from the CLI."""
         print("Available beamlines:")
         for i, b in enumerate(beamlines):
@@ -65,7 +66,8 @@ class XBPMApp:
 
     def _maybe_bpm_positions(self) -> None:
         if self.prm.section is None:
-            print("### ERROR: section not defined for BPM analysis. Skipping.")
+            print("### ERROR: section not defined for BPM analysis."
+                  " Skipping.")
             return
         raw = (
             self.reader.rawdata
@@ -161,7 +163,11 @@ class XBPMApp:
                                         sup="raw")
                 supmat = positions.get('supmat')
                 if supmat is not None:
-                    self.exporter.write_supmat(supmat, write_file=True)
+                    self.exporter.write_supmat(
+                        supmat,
+                        write_file=True,
+                        stddevmat=positions.get('stddevmat'),
+                    )
 
         if self.prm.xbpmpositions:
             positions = self.processor.xbpm_position_calculation(
@@ -174,4 +180,8 @@ class XBPMApp:
                                         sup="scaled")
                 supmat = positions.get('supmat')
                 if supmat is not None:
-                    self.exporter.write_supmat(supmat, write_file=True)
+                    self.exporter.write_supmat(
+                        supmat,
+                        write_file=True,
+                        stddevmat=positions.get('stddevmat'),
+                    )

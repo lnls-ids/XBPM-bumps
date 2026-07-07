@@ -26,7 +26,7 @@ class BeamlineSelectionDialog(QDialog):
         self.beamlines = beamlines
         self.setup_ui()
 
-    def setup_ui(self):
+    def setup_ui(self) -> None:
         """Build UI with radio buttons for each beamline."""
         layout = QVBoxLayout()
 

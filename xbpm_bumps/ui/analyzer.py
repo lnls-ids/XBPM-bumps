@@ -7,13 +7,13 @@ from io import StringIO
 import traceback
 import numpy as np
 
-from ..core.app import XBPMApp
-from ..core.parameters import Prm
-from ..core.processors import XBPMProcessor
-from ..core.exporters import Exporter
-# from ..core.visualizers import SweepVisualizer as SWV
 from ..core.visualizers import BladeCurrentVisualizer as BCV
 from ..core.visualizers import BladeMapVisualizer as BMV
+from ..core.exporters   import Exporter
+from ..core.parameters  import Prm
+from ..core.app         import XBPMApp
+from ..core.processors  import XBPMProcessor
+# from ..core.visualizers import SweepVisualizer as SWV
 
 class XBPMAnalyzer(QObject):
     """Qt wrapper for XBPMApp with signals for async execution.
@@ -31,23 +31,23 @@ class XBPMAnalyzer(QObject):
 
     # (No longer needed: beamline selection is centralized)
 
-    def __init__(self, prm: Prm, builder: Any, reader: Any,
-                 rawdata: Any, parent=None):
+    def __init__(self, prm: Prm, builder: Any, reader: Any, rawdata: Any,
+                 parent=None):
         """Initialize the analyzer.
 
         Args:
-            prm:     persistent Prm instance to use.
-            builder: ParameterBuilder instance (enriched, canonical).
-            reader:  Canonical DataReader instance.
-            rawdata: Canonical rawdata.
-            parent:  Optional parent QObject.
+            prm      : persistent Prm instance to use.
+            builder  : ParameterBuilder instance (enriched, canonical).
+            reader   : Canonical DataReader instance.
+            rawdata  : Canonical rawdata.
+            parent   : Optional parent QObject.
         """
         super().__init__(parent)
-        self.app: Optional[XBPMApp] = None
-        self.prm: Prm = prm
-        self.builder = builder
-        self.reader = reader
-        self.rawdata = rawdata
+        self.app          : Optional[XBPMApp] = None
+        self.prm          : Prm = prm
+        self.builder      = builder
+        self.reader       = reader
+        self.rawdata      = rawdata
         self._should_stop = False
         # self._preselected_beamline: Optional[str] = None
 
@@ -122,13 +122,13 @@ class XBPMAnalyzer(QObject):
         try:
             # The main window/controller must have already set up Prm and
             # builder
-            self.app = XBPMApp()
-            self.app.prm = self.prm
+            self.app         = XBPMApp()
+            self.app.prm     = self.prm
             self.app.builder = self.builder
-            self.app.reader = self.reader
+            self.app.reader  = self.reader
             self.app.data, self.app.rawblades = self.reader._blades_fetch()
-            # Beamline is now always set in canonical Prm
 
+            # Beamline is now always set in canonical Prm
             # Capture stdout/stderr for logging
             old_stdout = sys.stdout
             old_stderr = sys.stderr
@@ -137,9 +137,7 @@ class XBPMAnalyzer(QObject):
             try:
                 sys.stdout = log_capture
                 sys.stderr = log_capture
-
                 self._initialize_and_run_analysis()
-
             finally:
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
@@ -150,7 +148,6 @@ class XBPMAnalyzer(QObject):
                     for line in output.split('\n'):
                         if line.strip():
                             self.logMessage.emit(line)
-
         except Exception as e:
             error_msg = f"{str(e)}\n\n{traceback.format_exc()}"
             self.analysisError.emit("Analysis Failed", error_msg)
@@ -173,6 +170,8 @@ class XBPMAnalyzer(QObject):
         # Optional numeric parameters
         if params.get('xbpmdist') is not None:
             argv.extend(['-d', str(params['xbpmdist'])])
+        if params.get('scalepolydeg') is not None:
+            argv.extend(['-p', str(params['scalepolydeg'])])
         if params.get('gridstep') is not None:
             argv.extend(['-g', str(params['gridstep'])])
         if params.get('skip', 0) > 0:
@@ -222,7 +221,13 @@ class XBPMAnalyzer(QObject):
             if self._should_stop:
                 return results
             if condition:
-                step_method(results)
+                try:
+                    step_method(results)
+                except Exception as err:
+                    print("### ERROR: Exception occurred in step"
+                          f" {step_method.__name__}: {err}\n")
+                    traceback.print_exc()
+                    raise err  # Re-raise to be caught by outer try-except
 
         self.analysisProgress.emit("Analysis complete!")
         return results
@@ -347,7 +352,7 @@ class XBPMAnalyzer(QObject):
             rawdata = (getattr(self.app.reader, "rawdata", None) or
                        self.app.data)
             self.app.builder.rawdata = rawdata
-            self.app.builder._add_beamline_parameters()
+            self.app.builder.add_beamline_parameters()
 
     def _extract_position_coordinates(self, pos_list: list):
         """Extract coordinates from position result dictionary.
@@ -445,6 +450,14 @@ class XBPMAnalyzer(QObject):
                       if isinstance(result_data, dict) else None)
         if supmat_std is not None:
             results['supmat_standard'] = supmat_std
+        # Capture standard deviation matrix for standard matrix (zeros for fixed 1/-1 pattern)
+        stddevmat_std = (result_data.get('stddevmat')
+                         if isinstance(result_data, dict) else None)
+        if stddevmat_std is None and supmat_std is not None:
+            # Standard matrix has no uncertainty; create zeros matrix
+            stddevmat_std = np.zeros_like(supmat_std)
+        if stddevmat_std is not None:
+            results['stddevmat_standard'] = stddevmat_std
         # Capture XBPM statistics
         xbpm_stats = (result_data.get('xbpm_stats')
                       if isinstance(result_data, dict) else None)

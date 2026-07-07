@@ -1,23 +1,27 @@
 """Main window for XBPM analysis application."""
 
+
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTextEdit, QSplitter, QTabWidget,
     QStatusBar, QProgressBar, QMessageBox, QFileDialog
 )
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot, QThread, QTimer
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui  import QFont
+from PyQt5.QtGui  import QCloseEvent
+
 import numpy as np
 import logging
 import os
+# import traceback
 
 from .widgets.parameter_panel import ParameterPanel
-from .widgets.mpl_canvas import MatplotlibCanvas
+from .widgets.mpl_canvas      import MatplotlibCanvas
 from .dialogs.beamline_dialog import BeamlineSelectionDialog
-from .dialogs.help_dialog import HelpDialog
-from .analyzer import XBPMAnalyzer
-from ..core.config import Config
-from ..core.constants import FIGDPI
+from .dialogs.help_dialog     import HelpDialog
+from .analyzer                import XBPMAnalyzer
+from ..core.config            import Config
+from ..core.constants         import FIGDPI
 
 
 logger = logging.getLogger(__name__)
@@ -61,8 +65,7 @@ class XBPMMainWindow(QMainWindow):
         self.reader          = None  # Canonical DataReader instance
         self.rawdata         = None  # Canonical rawdata
         self._last_workdir   = ""
-        self._last_meta      = {}
-        self._last_hdf5_meta = {}
+        self.results         = {}  # Single unified results storage (analysis or HDF5)
         self._last_roisize   = None
         self._analysis_running = False
         self._roi_rerun_timer = QTimer(self)
@@ -286,7 +289,7 @@ class XBPMMainWindow(QMainWindow):
 
     def _on_parameters_changed(self) -> None:
         """React to parameter changes; pre-select beamline on workdir set."""
-        params = self.param_panel.get_parameters()
+        params  = self.param_panel.get_parameters()
         workdir = params.get('workdir') or ""
         if workdir and workdir != self._last_workdir:
             self._last_workdir = workdir
@@ -359,20 +362,6 @@ class XBPMMainWindow(QMainWindow):
         except Exception as exc:  # pragma: no cover - defensive
             self.log_message(f"Could not set XBPM distance: {exc}")
 
-    # def _handle_fallback_beamline_selection(self, reader,
-    #                                         workdir: str) -> None:
-    #     """Handle beamline selection when initial read doesn't set it."""
-    #     import os
-
-    #     beamlines = []
-    #     if (os.path.isfile(workdir) and getattr(reader, "rawdata", None)):
-    #         from xbpm_bumps.core.reader_pickle import extract_beamlines
-    #         beamlines = extract_beamlines(reader.rawdata)
-
-    #     if len(beamlines) == 1:
-    #         self.log_message(f"Auto-selected beamline: {beamlines[0]}")
-    #         self._update_xbpmdist_from_beamline(beamlines[0])
-
     def setup_worker_thread(self) -> None:
         """Initialize worker thread for analysis execution."""
         self.worker_thread = QThread()
@@ -399,7 +388,7 @@ class XBPMMainWindow(QMainWindow):
         self.analyzer.logMessage.connect(self.log_message)
         self.worker_thread.start()
 
-    def _run_analysis_with_canonical_params(self, params: dict):
+    def _run_analysis_with_canonical_params(self, params: dict) -> None:
         """Build and enrich canonical ParameterBuilder/Prm, run analysis."""
         # Set canonical Prm fields directly from params
         for k, v in params.items():
@@ -408,7 +397,7 @@ class XBPMMainWindow(QMainWindow):
 
         # Use canonical rawdata for parameter enrichment
         self.builder.rawdata = self.rawdata
-        self.builder._add_beamline_parameters()
+        self.builder.add_beamline_parameters()
 
         # Update persistent Prm reference
         self.prm = self.builder.prm
@@ -420,10 +409,11 @@ class XBPMMainWindow(QMainWindow):
         self.analyzer.moveToThread(self.worker_thread)
         self.analyzer.app = None  # Reset to force re-init
 
-        def set_app_reader_data():
+        def set_app_reader_data() -> None:
             if self.analyzer.app is not None:
                 self.analyzer.app.reader = self.reader
-                self.analyzer.app.data = analysis_data
+                self.analyzer.app.data   = analysis_data
+
         self.analyzer.analysisStarted.connect(set_app_reader_data)
         self.stop_btn.clicked.connect(self.analyzer.stop_analysis)
         self.analyzer.analysisStarted.connect(self._on_analysis_started)
@@ -466,7 +456,8 @@ class XBPMMainWindow(QMainWindow):
         self.log_message("=" * 60 + "\n")
 
         self._update_canvases(results)
-        self._last_meta = self._collect_meta_from_results(results)
+        self.results = results
+        self.results['_source'] = 'analysis'
         self._refresh_analysis_info()
 
         self.status_bar.showMessage("Analysis complete", 5000)
@@ -513,9 +504,11 @@ class XBPMMainWindow(QMainWindow):
             # Always export BPM positions when they were computed
             exported_any |= self._export_bpm_positions(prefix, results)
 
-            # Export XBPM data and figures
-            exported_any |= self._export_xbpm_raw(prefix, params, results)
-            exported_any |= self._export_xbpm_scaled(prefix, params, results)
+            # Export XBPM data and figures for both raw and scaled scopes
+            exported_any |= self._export_xbpm_positions('raw', prefix,
+                                                        params, results)
+            exported_any |= self._export_xbpm_positions('scaled', prefix,
+                                                        params, results)
 
             # Export other analysis figures and data
             exported_any |= self._export_other_figures(prefix, params, results)
@@ -655,9 +648,10 @@ class XBPMMainWindow(QMainWindow):
             self.analyzer.reader = self.reader
             self.analyzer.rawdata = self.rawdata
             self.analyzer.load_data_only()
-            # Assign analysis metadata for UI display
-            self._last_hdf5_meta = getattr(self.reader, 'analysis_meta', {})
-            self._last_meta = self._last_hdf5_meta
+            # Assign analysis metadata from HDF5 for UI display
+            hdf5_analysis_meta = getattr(self.reader, 'analysis_meta', {})
+            self.results = hdf5_analysis_meta
+            self.results['_source'] = 'hdf5'
 
             # Automatically load and display figures after import
             self._on_load_hdf5_figures(workdir)
@@ -788,8 +782,8 @@ class XBPMMainWindow(QMainWindow):
         from ..core.processors import XBPMProcessor as XPROC
         from ..core.exporters import Exporter
 
-        exporter = Exporter(self.analyzer.app.prm)
-        outdir = os.path.dirname(prefix) or '.'
+        exporter  = Exporter(self.analyzer.app.prm)
+        outdir    = os.path.dirname(prefix) or '.'
         wrote_any = False
 
         # --- Standard (1/-1) suppression matrix ---
@@ -807,11 +801,16 @@ class XBPMMainWindow(QMainWindow):
         if supmat_calc is None:
             # Compute directly from processor if analysis was run
             try:
-                supmat_calc = self.analyzer.app.processor.suppression_matrix(
+                supmat_calc, stddevmat_calc = (
+                    self.analyzer.app.processor.suppression_matrix(
                     showmatrix=False, nosuppress=False
+                )
                 )
             except Exception as exc:
                 logger.warning("Could not compute calculated supmat: %s", exc)
+                stddevmat_calc = None
+        else:
+            stddevmat_calc = results.get('stddevmat')
 
         if supmat_calc is not None:
             calc_path = os.path.join(
@@ -819,14 +818,15 @@ class XBPMMainWindow(QMainWindow):
                 f"xbpm_supmat_calculated_{self.analyzer.app.prm.beamline}.dat"
             )
             exporter.write_supmat(supmat_calc, write_file=True,
-                                  outpath=calc_path)
+                                  outpath=calc_path,
+                                  stddevmat=stddevmat_calc)
             logger.info("Calculated suppression matrix saved to %s",
                         calc_path)
 
         return wrote_any
 
     def _write_position_info_file(self, path: str, calc_type: str, sup: str,
-                                    scales: dict, stats: dict) -> None:
+                                  scales: dict, stats: dict) -> None:
         """Write scale coefficients and statistics to a labeled text file."""
         beamline = self.analyzer.app.prm.beamline
         with open(path, 'w') as fp:
@@ -835,14 +835,28 @@ class XBPMMainWindow(QMainWindow):
                 f"# Beamline: {beamline}"
                 f" | Type: positions / {calc_type} / {sup}\n"
             )
+
+            if self.prm.scalepolydeg == 2:
+                fp.write("qx           ="
+                         f" {float(scales.get('qx', 1)):.6f}\n")
+                fp.write("sqx          ="
+                         f" {float(scales.get('sqx', 0)):.6f}\n")
+
             fp.write(f"kx           = {float(scales.get('kx', 1)):.6f}\n")
             fp.write(f"skx          = {float(scales.get('skx', 0)):.6f}\n")
             fp.write(f"dx           = {float(scales.get('dx', 0)):.6f}\n")
             fp.write(f"sdx          = {float(scales.get('sdx', 0)):.6f}\n")
+
+            if self.prm.scalepolydeg == 2:
+                fp.write("qy           ="
+                         f" {float(scales.get('qy', 1)):.6f}\n")
+                fp.write("sqy          ="
+                         f" {float(scales.get('sqy', 0)):.6f}\n")
             fp.write(f"ky           = {float(scales.get('ky', 1)):.6f}\n")
             fp.write(f"sky          = {float(scales.get('sky', 0)):.6f}\n")
             fp.write(f"dy           = {float(scales.get('dy', 0)):.6f}\n")
             fp.write(f"sdy          = {float(scales.get('sdy', 0)):.6f}\n")
+
             if stats:
                 fp.write("u\n# Position differences statistics ($\\mu$m)\n")
                 fp.write("RMS H diff.     = "
@@ -950,12 +964,13 @@ class XBPMMainWindow(QMainWindow):
 
         fig.set_size_inches(original_size[0], original_size[1], forward=False)
 
-    def _export_xbpm_raw(self, prefix: str,
-                         params: dict,
-                         results: dict) -> bool:
-        """Export raw XBPM positions and figures.
+    def _export_xbpm_positions(self, scope: str, prefix: str,
+                               params: dict,
+                               results: dict) -> bool:
+        """Export XBPM positions and figures for a given scope (raw or scaled).
 
         Args:
+            scope: 'raw' for raw positions, 'scaled' for suppression-corrected.
             prefix: Export filename prefix.
             params: Parameter dictionary from UI.
             results: Last analysis results dictionary.
@@ -963,129 +978,64 @@ class XBPMMainWindow(QMainWindow):
         Returns:
             True if export occurred, False otherwise.
         """
-        if not params.get('xbpmpositionsraw'):
+        # Check parameter for this scope
+        param_key = 'xbpmpositionsraw' if scope == 'raw' else 'xbpmpositions'
+        if not params.get(param_key):
             return False
 
         from ..core.exporters import Exporter
 
         exporter = Exporter(self.analyzer.app.prm)
-        result_raw = results.get('positions_raw_full')
-        if not result_raw:
-            logger.warning("Raw XBPM export skipped: no cached analysis data.")
+        result_key = f'positions_{scope}_full'
+        result_data = results.get(result_key)
+        if not result_data:
+            logger.warning("%s XBPM export skipped: no cached analysis data.",
+                          scope.capitalize())
             return False
 
         exporter.data_dump_with_prefix(
             prefix,
             self.analyzer.app.data,
-            result_raw['positions'],
-            sup="raw",
+            result_data['positions'],
+            sup=scope,
         )
 
         # Save figures
-        pairwise_fig = (result_raw.get('pairwise_figure') or
-                        results.get('xbpm_raw_pairwise_figure'))
+        pair_fig_key = f'xbpm_{scope}_pairwise_figure'
+        pairwise_fig = (result_data.get('pairwise_figure') or
+                        results.get(pair_fig_key))
         if pairwise_fig is not None:
             fig_pair = os.path.join(
                 os.path.dirname(prefix),
-                f"xbpm_positions_pair_raw_{self.analyzer.app.prm.beamline}.png"
+                f"xbpm_positions_pair_{scope}_{self.analyzer.app.prm.beamline}.png"
             )
             self._save_figure_for_export(pairwise_fig, fig_pair)
             logger.info("Pairwise figure saved to %s", fig_pair)
 
-        cross_fig = (result_raw.get('cross_figure') or
-                     results.get('xbpm_raw_cross_figure'))
+        cross_fig_key = f'xbpm_{scope}_cross_figure'
+        cross_fig = (result_data.get('cross_figure') or
+                     results.get(cross_fig_key))
         if cross_fig is not None:
             fig_cross = os.path.join(
                 os.path.dirname(prefix),
-                f"xbpm_positions_cross_raw_{self.analyzer.app.prm.beamline}.png"
+                f"xbpm_positions_cross_{scope}_{self.analyzer.app.prm.beamline}.png"
             )
             self._save_figure_for_export(cross_fig, fig_cross)
             logger.info("Cross figure saved to %s", fig_cross)
 
         # Export scaling factors and statistics
-        scales = result_raw.get('scales') or {}
-        stats = result_raw.get('xbpm_stats') or {}
+        scales = result_data.get('scales') or {}
+        stats = result_data.get('xbpm_stats') or {}
         bl = self.analyzer.app.prm.beamline
         for calc_type, stats_key in (('pair', 'pairwise'), ('cross', 'cross')):
             calc_scales = scales.get(calc_type)
             if calc_scales:
                 info_path = os.path.join(
                     os.path.dirname(prefix),
-                    f"xbpm_positions_{calc_type}_raw_{bl}_info.dat"
+                    f"xbpm_positions_{calc_type}_{scope}_{bl}_info.dat"
                 )
                 self._write_position_info_file(
-                    info_path, calc_type, 'raw',
-                    calc_scales, stats.get(stats_key) or {}
-                )
-                logger.info("Info file saved to %s", info_path)
-
-        return True
-
-    def _export_xbpm_scaled(self, prefix: str,
-                            params: dict,
-                            results: dict) -> bool:
-        """Export scaled XBPM positions and figures.
-
-        Args:
-            prefix: Export filename prefix.
-            params: Parameter dictionary from UI.
-            results: Last analysis results dictionary.
-
-        Returns:
-            True if export occurred, False otherwise.
-        """
-        if not params.get('xbpmpositions'):
-            return False
-
-        from ..core.exporters import Exporter
-
-        exporter = Exporter(self.analyzer.app.prm)
-        result_scaled = results.get('positions_scaled_full')
-        if not result_scaled:
-            logger.warning("Scaled XBPM export skipped: no cached analysis data.")
-            return False
-
-        exporter.data_dump_with_prefix(
-            prefix,
-            self.analyzer.app.data,
-            result_scaled['positions'],
-            sup="scaled",
-        )
-
-        # Save figures
-        pairwise_fig = (result_scaled.get('pairwise_figure') or
-                        results.get('xbpm_scaled_pairwise_figure'))
-        if pairwise_fig is not None:
-            fig_pair = os.path.join(
-                os.path.dirname(prefix),
-                f"xbpm_positions_pair_scaled_{self.analyzer.app.prm.beamline}.png"
-            )
-            self._save_figure_for_export(pairwise_fig, fig_pair)
-            logger.info("Pairwise figure saved to %s", fig_pair)
-
-        cross_fig = (result_scaled.get('cross_figure') or
-                     results.get('xbpm_scaled_cross_figure'))
-        if cross_fig is not None:
-            fig_cross = os.path.join(
-                os.path.dirname(prefix),
-                f"xbpm_positions_cross_scaled_{self.analyzer.app.prm.beamline}.png"
-            )
-            self._save_figure_for_export(cross_fig, fig_cross)
-            logger.info("Cross figure saved to %s", fig_cross)
-
-        # Export scaling factors and statistics
-        scales = result_scaled.get('scales') or {}
-        stats = result_scaled.get('xbpm_stats') or {}
-        bl = self.analyzer.app.prm.beamline
-        for calc_type, stats_key in (('pair', 'pairwise'), ('cross', 'cross')):
-            calc_scales = scales.get(calc_type)
-            if calc_scales:
-                info_path = os.path.join(
-                    os.path.dirname(prefix),
-                    f"xbpm_positions_{calc_type}_scaled_{bl}_info.dat"
-                )
-                self._write_position_info_file(
-                    info_path, calc_type, 'scaled',
+                    info_path, calc_type, scope,
                     calc_scales, stats.get(stats_key) or {}
                 )
                 logger.info("Info file saved to %s", info_path)
@@ -1260,7 +1210,7 @@ class XBPMMainWindow(QMainWindow):
         self.prm.beamline = chosen_beamline  # Set beamline programmatically
         # Use canonical rawdata for parameter enrichment
         self.builder.rawdata = self.rawdata
-        self.builder._add_beamline_parameters()
+        self.builder.add_beamline_parameters()
         # Update persistent Prm reference
         self.prm = self.builder.prm
         # Re-instantiate analyzer with canonical Prm and builder
@@ -1367,7 +1317,8 @@ class XBPMMainWindow(QMainWindow):
         positions = (results.get('positions', {})
                      if isinstance(results, dict) else {})
 
-        def _render_position(canvas_key, figure_key, position_key, title):
+        def _render_position(canvas_key: str, figure_key: str,
+                             position_key: str, title: str) -> None:
             canvas = self.canvases.get(canvas_key)
             if canvas is None:
                 return
@@ -1379,15 +1330,15 @@ class XBPMMainWindow(QMainWindow):
             if pos_data is not None:
                 self._plot_positions(canvas, pos_data, title=title)
 
-        def _render_figure(canvas_key, figure_key):
+        def _render_figure(canvas_key: str, figure_key: str) -> None:
             canvas = self.canvases.get(canvas_key)
             fig = results.get(figure_key)
             if canvas is not None and fig is not None:
                 self._embed_figure(canvas, fig)
 
         position_specs = [
-            ("xbpm_raw_pairwise", "xbpm_raw_pairwise_figure", "xbpm_raw",
-             "XBPM Raw Pairwise Positions"),
+            ("xbpm_raw_pairwise", "xbpm_raw_pairwise_figure",
+             "xbpm_raw", "XBPM Raw Pairwise Positions"),
             ("xbpm_scaled_pairwise", "xbpm_scaled_pairwise_figure",
              "xbpm_scaled", "XBPM Scaled Pairwise Positions"),
             ("bpm", "bpm_figure", "bpm", "BPM Positions"),
@@ -1407,72 +1358,8 @@ class XBPMMainWindow(QMainWindow):
         for canvas_key, fig_key in figure_specs:
             _render_figure(canvas_key, fig_key)
 
-    def _collect_meta_from_results(self, results: dict) -> dict:
-        """Extract analysis metadata from results for UI display."""
-        if not isinstance(results, dict):
-            return {}
-
-        meta: dict = {}
-        self._collect_scales_meta(results, meta)
-        self._collect_bpm_stats_meta(results, meta)
-        self._collect_sweeps_meta_from_results(results, meta)
-        self._collect_supmat_meta(results, meta)
-        self._collect_xbpm_stats_meta(results, meta)
-        return meta
-
-    def _collect_scales_meta(self, results: dict, meta: dict) -> None:
-        """Extract scaling coefficients from results."""
-        def _pick_scales(block):
-            if not isinstance(block, dict):
-                return None
-            return block.get('scales') or None
-
-        scales = {}
-        raw_scales = _pick_scales(results.get('positions_raw_full'))
-        scaled_scales = _pick_scales(results.get('positions_scaled_full'))
-        if raw_scales:
-            scales['raw'] = raw_scales
-        if scaled_scales:
-            scales['scaled'] = scaled_scales
-        if scales:
-            meta['scales'] = scales
-
-    def _collect_bpm_stats_meta(self, results: dict, meta: dict) -> None:
-        """Extract BPM statistics from results."""
-        bpm_stats = results.get('bpm_stats')
-        if bpm_stats:
-            meta['bpm_stats'] = bpm_stats
-
-    def _collect_sweeps_meta_from_results(self, results: dict,
-                                          meta: dict) -> None:
-        """Extract sweeps metadata from results."""
-        sweeps_meta = self._extract_sweeps_meta(results.get('sweeps_data'))
-        if sweeps_meta:
-            meta['sweeps'] = sweeps_meta
-
-    def _collect_supmat_meta(self, results: dict, meta: dict) -> None:
-        """Extract suppression matrices from results."""
-        if 'supmat_standard' in results:
-            meta['supmat_standard'] = results.get('supmat_standard')
-        if 'supmat' in results:
-            meta['supmat'] = results.get('supmat')
-
-    def _collect_xbpm_stats_meta(self, results: dict, meta: dict) -> None:
-        """Extract XBPM statistics from results."""
-        if 'xbpm_stats_raw' in results:
-            meta['xbpm_stats_raw'] = results.get('xbpm_stats_raw')
-        if 'xbpm_stats_scaled' in results:
-            meta['xbpm_stats_scaled'] = results.get('xbpm_stats_scaled')
-
     def _extract_sweeps_meta(self, sweeps_data: list) -> dict:
-        """Extract sweep metadata: positions fits and per-blade fits.
-        
-        Args:
-            sweeps_data (list): List containing sweep data arrays.
-
-        Returns:
-            dict: Dictionary containing sweep metadata or empty dict if     extraction fails.
-        """
+        """Extract sweep metadata: positions fits and per-blade fits."""
         if not sweeps_data or len(sweeps_data) < 8:
             return {}
 
@@ -1495,8 +1382,7 @@ class XBPMMainWindow(QMainWindow):
 
         return meta
 
-    def _extract_sweeps_positions(self, fit_h : np.ndarray,
-                                  fit_v : np.ndarray) -> dict:
+    def _extract_sweeps_positions(self, fit_h, fit_v) -> dict:
         """Extract global fit positions from horizontal and vertical fits."""
         positions = {}
         h_meta = self._parse_fit(fit_h)
@@ -1507,16 +1393,16 @@ class XBPMMainWindow(QMainWindow):
             positions['vertical'] = v_meta
         return positions
 
-    def _parse_fit(self, fit : np.ndarray) -> dict:
+    def _parse_fit(self, fit: np.ndarray) -> dict:
         """Parse fit parameters into k and delta values."""
         try:
             # Fit can be either [k, delta] or [[k, s_k], [delta, s_delta]].
             if hasattr(fit, "shape") and fit.shape == (2, 2):
                 return {
-                    'k'       : float(fit[0][0]),
-                    'delta'   : float(fit[1][0]),
-                    's_k'     : float(fit[0][1]),
-                    's_delta' : float(fit[1][1]),
+                    'k': float(fit[0][0]),
+                    'delta': float(fit[1][0]),
+                    's_k': float(fit[0][1]),
+                    's_delta': float(fit[1][1]),
                 }
 
             k_val = (float(fit[0][0])
@@ -1527,9 +1413,8 @@ class XBPMMainWindow(QMainWindow):
         except Exception:
             return None
 
-    def _extract_sweeps_blades(self, blades_h: dict, blades_v: dict,
-                               range_h: np.ndarray,
-                               range_v: np.ndarray) -> dict:
+    def _extract_sweeps_blades(self, blades_h, blades_v, range_h,
+                              range_v) -> dict:
         """Extract per-blade fits from blade data."""
         blades = {}
         h_blades = self._fit_blades(blades_h, range_h)
@@ -1540,17 +1425,9 @@ class XBPMMainWindow(QMainWindow):
             blades['vertical'] = v_blades
         return blades
 
-    def _fit_blades(self, blades_dict : dict,
-                    axis_range : np.ndarray) -> dict:
-        """Fit blade data to extract k and delta for each blade.
-        
-        Args:
-            blades_dict (dict): Dictionary containing blade data.
-            axis_range (np.ndarray): Array representing the axis range.
-
-        Returns:
-            dict: Dictionary containing fit parameters for each blade or None if fitting fails.
-        """
+    def _fit_blades(self, blades_dict: dict,
+                    axis_range: np.ndarray) -> dict:
+        """Fit blade data to extract k and delta for each blade."""
         if not isinstance(blades_dict, dict) or axis_range is None:
             return None
         fits = {}
@@ -1558,14 +1435,12 @@ class XBPMMainWindow(QMainWindow):
             arr = blades_dict.get(blade)
             if arr is None:
                 continue
-            y = (arr[:, 0]
-                 if hasattr(arr, 'ndim') and arr.ndim == 2
-                 else arr)
+            y = arr[:, 0] if hasattr(arr, 'ndim') and arr.ndim == 2 else arr
             try:
                 coef = np.polyfit(axis_range, y, deg=1)
                 fits[blade] = {
-                    'k'     : float(coef[0]),
-                    'delta' : float(coef[1])
+                    'k': float(coef[0]),
+                    'delta': float(coef[1])
                     }
             except Exception as exc:
                 logger.debug("Failed to fit blade %s: %s", blade, exc)
@@ -1613,12 +1488,18 @@ class XBPMMainWindow(QMainWindow):
             return scope, label
         return None
 
-    def _format_analysis_info(self, meta: dict, active_tab: str) -> str:
+    def _format_analysis_info(self, active_tab: str) -> str:
         """Format analysis metadata for UI display.
 
         Delegates to helper methods to reduce complexity.
+
+        Args:
+            active_tab: Name of the currently active results tab.
+
+        Returns:
+            Formatted string for display in the read-only analysis info panel.
         """
-        if not meta:
+        if not self.results:
             return "No analysis metadata available yet."
 
         active_section = self._tab_to_section(active_tab)
@@ -1627,29 +1508,61 @@ class XBPMMainWindow(QMainWindow):
             return ""
 
         sections: dict[str, list[str]] = {}
-        sections.update(self._format_scales_section(meta, pos_filter))
-        sections.update(self._format_sweeps_positions_section(meta))
-        sections.update(self._format_blades_section(meta))
-        sections.update(self._format_bpm_stats_section(meta))
+        sections.update(self._format_scales_section(pos_filter))
+        sections.update(self._format_sweeps_positions_section())
+        sections.update(self._format_blades_section())
+        sections.update(self._format_bpm_stats_section())
 
         # Add XBPM stats to positions section if present
-        xbpm_stats_dict = self._format_xbpm_stats_section(meta, active_tab)
+        xbpm_stats_dict = self._format_xbpm_stats_section(active_tab)
         if xbpm_stats_dict:
             sections.setdefault('positions', []).extend(
                 xbpm_stats_dict.get('xbpm', [])
                 )
 
-        supmat_lines = self._format_supmat_lines(meta, active_tab)
+        supmat_lines = self._format_supmat_lines(active_tab)
         if supmat_lines:
             sections.setdefault('positions', []).extend(supmat_lines)
 
         return self._format_sections_output(sections, active_section)
 
-    def _format_scales_section(self, meta: dict,
-                               pos_filter=None) -> dict[str, list[str]]:
-        """Format scales (positions) metadata section."""
+    def _format_scales_section(self, pos_filter=None) -> dict[str, list[str]]:
+        """Format scales (positions) metadata section.
+        
+        Inlines coefficient and error formatting for cleaner code.
+        Supports both legacy (s_kx/s_dx) and current (skx/sdx) error key formats.
+
+        Args:
+            pos_filter: Optional tuple of (scope, label) to filter scales.
+
+        Returns:
+            Dictionary with 'positions' key containing formatted lines.
+        """
         scale_lines: list[str] = []
-        scales = meta.get('scales', {}) if isinstance(meta, dict) else {}
+
+        # Build unified scales view from both legacy and
+        # current result layouts.
+        scales: dict[str, dict] = {}
+
+        if isinstance(self.results, dict):
+            legacy_scales = self.results.get('scales')
+            if isinstance(legacy_scales, dict):
+                for scope in ('raw', 'scaled'):
+                    block = legacy_scales.get(scope)
+                    if isinstance(block, dict):
+                        scales[scope] = block
+
+            raw_full = self.results.get('positions_raw_full')
+            if isinstance(raw_full, dict):
+                raw_scales = raw_full.get('scales')
+                if isinstance(raw_scales, dict):
+                    scales['raw'] = raw_scales
+
+            scaled_full = self.results.get('positions_scaled_full')
+            if isinstance(scaled_full, dict):
+                scaled_scales = scaled_full.get('scales')
+                if isinstance(scaled_scales, dict):
+                    scales['scaled'] = scaled_scales
 
         for scope in ('scaled', 'raw'):
             scope_block = scales.get(scope)
@@ -1665,7 +1578,30 @@ class XBPMMainWindow(QMainWindow):
                     if filt_label and label != filt_label:
                         continue
 
-                lines_to_add = self._format_scale_entry(coeffs)
+                # Format coefficient lines inline
+                lines_to_add: list[str] = []
+
+                # Format qx/kx/dx pair
+                coeffnames1 = (
+                    ('qx', ('sqx', 's_qx')),
+                    ('kx', ('skx', 's_kx')),
+                    ('dx', ('sdx', 's_dx')),
+                )
+                line1 = self._format_coefficent_lines(coeffnames1, coeffs)
+
+                # Format qy/ky/dy pair
+                coeffnames2 = (
+                    ('qy', ('sqy', 's_qy')),
+                    ('ky', ('sky', 's_ky')),
+                    ('dy', ('sdy', 's_dy')),
+                )
+                line2 = self._format_coefficent_lines(coeffnames2, coeffs)
+
+                if line1:
+                    lines_to_add.append(",\n".join(line1))
+                if line2:
+                    lines_to_add.append("\n" + ",\n".join(line2))
+
                 if lines_to_add:
                     subject = Config.get_position_subject(scope, label)
                     scale_lines.append(f"  * {subject}:")
@@ -1673,70 +1609,53 @@ class XBPMMainWindow(QMainWindow):
 
         return {'positions': scale_lines} if scale_lines else {}
 
-    def _format_scale_entry(self, coeffs: dict) -> list[str]:
-        """Format individual scale coefficient entry."""
-        lines_to_add: list[str] = []
-        line1 = []
-        line2 = []
+    def _format_coefficent_lines(self, coeffnames: tuple,
+                                 coeffs: dict) -> list[str]:
+        """Format coefficient lines for a given coefficient set.
 
-        for key, err_keys in (
-            ('kx', ('skx', 's_kx')),
-            ('dx', ('sdx', 's_dx')),
-        ):
-            item = self._format_value_with_optional_error(coeffs, key, err_keys)
-            if item:
-                line1.append(item)
+        Args:
+            coeffnames  : Tuple of polynomial coefficient strings.
+            coeffs    : Dictionary of coefficient values.
 
-        for key, err_keys in (
-            ('ky', ('sky', 's_ky')),
-            ('dy', ('sdy', 's_dy')),
-        ):
-            item = self._format_value_with_optional_error(coeffs, key, err_keys)
-            if item:
-                line2.append(item)
+        Returns:
+            List of formatted coefficient lines.
+        """
+        line = []
+        # Format k/d pair
+        for key, err_keys in coeffnames:
+            val = coeffs.get(key)
+            if val is not None:
+                err = None
+                for ek in (err_keys
+                           if isinstance(err_keys, (tuple, list))
+                           else (err_keys,)):
+                    if ek in coeffs and coeffs.get(ek) is not None:
+                        err = coeffs.get(ek)
+                        break
+                try:
+                    val_num = float(val)
+                    if err is not None:
+                        rel_err = float(err) / abs(val_num)
+                        line.append(
+                            f"{key:>8} = {val_num:8.3g}  "
+                            f"({float(err):2.0e} : {rel_err:.2%})"
+                            )
+                    else:
+                        line.append(f"{key:>8} =  {val_num:8.3g}")
+                except Exception:
+                    if err is not None:
+                        line.append(f"{key:>8} =  {val} ({err})")
+                    else:
+                        line.append(f"{key:>8} =  {val}")
+        return line
 
-        if line1:
-            lines_to_add.append("   " + ", ".join(line1))
-        if line2:
-            lines_to_add.append("   " + ", ".join(line2))
-
-        return lines_to_add
-
-    @staticmethod
-    def _format_value_with_optional_error(coeffs: dict,
-                                          key: str,
-                                          err_keys) -> str:
-        """Format coeff as value or value and error when available."""
-        val = coeffs.get(key)
-        if val is None:
-            return ""
-
-        # Accept both legacy keys (s_kx/s_dx/...) and current keys
-        # (skx/sdx/...) to support old and new result payloads.
-        if isinstance(err_keys, (tuple, list)):
-            err = None
-            for ek in err_keys:
-                if ek in coeffs and coeffs.get(ek) is not None:
-                    err = coeffs.get(ek)
-                    break
-        else:
-            err = coeffs.get(err_keys)
-
-        try:
-            val_num = float(val)
-            if err is not None:
-                return f"{key:>10} = {val_num:.6f} ({float(err):.3g})"
-            return f"{key:>10} = {val_num:.6f}"
-        except Exception:
-            if err is not None:
-                return f"{key:>10} = {val} ({err})"
-            return f"{key:>10} = {val}"
-
-    def _format_sweeps_positions_section(
-            self, meta: dict) -> dict[str, list[str]]:
-        """Format sweeps positions (global fits) metadata section."""
+    def _format_sweeps_positions_section(self) -> dict[str, list[str]]:
+        """Format sweeps positions (global fits) metadata section.
+        
+        Inlines fit entry formatting for cleaner code structure.
+        """
         sweeps_pos_lines: list[str] = []
-        sweeps = meta.get('sweeps', {}) if isinstance(meta, dict) else {}
+        sweeps = self.results.get('sweeps', {}) if isinstance(self.results, dict) else {}
         positions_meta = (sweeps.get('positions', {})
                          if isinstance(sweeps, dict) else {})
 
@@ -1745,7 +1664,24 @@ class XBPMMainWindow(QMainWindow):
             if not isinstance(fit, dict):
                 continue
 
-            lines_to_add = self._format_sweeps_fit_entry(fit)
+            # Format fit entry inline
+            lines_to_add: list[str] = []
+            line1 = []
+            line2 = []
+
+            for key, bucket in (('k', line1), ('delta', line1),
+                               ('s_k', line2), ('s_delta', line2)):
+                if key in fit and fit[key] is not None:
+                    try:
+                        bucket.append(f"{key:>10} = {float(fit[key]):.4g}")
+                    except Exception:
+                        bucket.append(f"{key:>10} = {fit[key]}")
+
+            if line1:
+                lines_to_add.append("  " + ",  ".join(line1))
+            if line2:
+                lines_to_add.append("  " + ",  ".join(line2))
+
             if lines_to_add:
                 sweeps_pos_lines.append(f"  * {label}:")
                 sweeps_pos_lines.extend(lines_to_add)
@@ -1753,31 +1689,13 @@ class XBPMMainWindow(QMainWindow):
         return ({'sweep_positions': sweeps_pos_lines}
                 if sweeps_pos_lines else {})
 
-    def _format_sweeps_fit_entry(self, fit: dict) -> list[str]:
-        """Format sweeps fit entry for a single orientation."""
-        lines_to_add: list[str] = []
-        line1 = []
-        line2 = []
-
-        for key, bucket in (('k', line1), ('delta', line1),
-                           ('s_k', line2), ('s_delta', line2)):
-            if key in fit and fit[key] is not None:
-                try:
-                    bucket.append(f"{key:>10} = {float(fit[key]):.4g}")
-                except Exception:
-                    bucket.append(f"{key:>10} = {fit[key]}")
-
-        if line1:
-            lines_to_add.append("  " + ",  ".join(line1))
-        if line2:
-            lines_to_add.append("  " + ",  ".join(line2))
-
-        return lines_to_add
-
-    def _format_blades_section(self, meta: dict) -> dict[str, list[str]]:
-        """Format blades-at-sweeps per-blade fits metadata section."""
+    def _format_blades_section(self) -> dict[str, list[str]]:
+        """Format blades-at-sweeps per-blade fits metadata section.
+        
+        Inlines blade fit entry formatting for cleaner code structure.
+        """
         blades_lines: list[str] = []
-        sweeps = meta.get('sweeps', {}) if isinstance(meta, dict) else {}
+        sweeps = self.results.get('sweeps', {}) if isinstance(self.results, dict) else {}
         blades_meta = (sweeps.get('blades', {})
                        if isinstance(sweeps, dict) else {})
 
@@ -1790,28 +1708,25 @@ class XBPMMainWindow(QMainWindow):
                 if not isinstance(fit, dict):
                     continue
 
-                parts = self._format_blade_fit_entry(fit)
+                # Format blade fit inline
+                parts = []
+                for key in ('k', 'delta'):
+                    if key in fit and fit[key] is not None:
+                        try:
+                            parts.append(f"{key}={float(fit[key]):.4g}")
+                        except Exception:
+                            parts.append(f"{key}={fit[key]}")
+
                 if parts:
                     blades_lines.append(f"  * {label} {blade}:")
                     blades_lines.append("   " + ", ".join(parts))
 
         return {'blades_sweeps': blades_lines} if blades_lines else {}
 
-    def _format_blade_fit_entry(self, fit: dict) -> list[str]:
-        """Format blade fit entry for a single blade."""
-        parts = []
-        for key in ('k', 'delta'):
-            if key in fit and fit[key] is not None:
-                try:
-                    parts.append(f"{key}={float(fit[key]):.4g}")
-                except Exception:
-                    parts.append(f"{key}={fit[key]}")
-        return parts
-
-    def _format_bpm_stats_section(self, meta: dict) -> dict[str, list[str]]:
+    def _format_bpm_stats_section(self) -> dict[str, list[str]]:
         """Format BPM statistics metadata section."""
         bpm_lines: list[str] = []
-        bpm_stats = meta.get('bpm_stats', {}) if isinstance(meta, dict) else {}
+        bpm_stats = self.results.get('bpm_stats', {}) if isinstance(self.results, dict) else {}
 
         if isinstance(bpm_stats, dict):
             roi_size = getattr(self.prm, 'roisize', None)
@@ -1873,7 +1788,7 @@ class XBPMMainWindow(QMainWindow):
 
         return {'bpm': bpm_lines} if bpm_lines else {}
 
-    def _format_xbpm_stats_section(self, meta: dict,
+    def _format_xbpm_stats_section(self,
                                    active_tab: str) -> dict[str, list[str]]:
         """Format XBPM statistics metadata section.
 
@@ -1887,11 +1802,11 @@ class XBPMMainWindow(QMainWindow):
         # Determine which stats to display based on active tab
         xbpm_stats = None
         if 'raw' in text:
-            xbpm_stats = (meta.get('xbpm_stats_raw', {})
-                          if isinstance(meta, dict) else {})
+            xbpm_stats = (self.results.get('xbpm_stats_raw', {})
+                          if isinstance(self.results, dict) else {})
         elif 'scaled' in text or ' tr' in text:
-            xbpm_stats = (meta.get('xbpm_stats_scaled', {})
-                          if isinstance(meta, dict) else {})
+            xbpm_stats = (self.results.get('xbpm_stats_scaled', {})
+                          if isinstance(self.results, dict) else {})
         else:
             xbpm_stats = {}
 
@@ -1950,42 +1865,67 @@ class XBPMMainWindow(QMainWindow):
 
         return {'xbpm': xbpm_lines} if xbpm_lines else {}
 
-    def _format_supmat_lines(self, meta: dict, active_tab: str) -> list[str]:
-        """Format suppression matrix lines for the active tab."""
+    def _format_supmat_lines(self, active_tab: str) -> list[str]:
+        """Format suppression matrix lines for the active tab with uncertainties."""
         lines: list[str] = []
         text = (active_tab or "").lower()
 
-        # Raw pairwise tab: show standard suppression matrix
+        # Raw pairwise tab: show standard suppression matrix with uncertainties
         is_pairwise = ('pair' in text) or ('xbpm' in text and 'part.' not in text)
         if 'raw' in text and is_pairwise:
-            supmat = meta.get('supmat_standard')
+            supmat = self.results.get('supmat_standard')
+            stddevmat = self.results.get('stddevmat_standard')
             if supmat is not None:
                 lines.append("\n  ** Standard Suppression Matrix:")
-                lines.extend(self._format_matrix(supmat))
+                if stddevmat is not None:
+                    lines.extend(self._format_matrix_with_uncertainties(supmat, stddevmat))
+                else:
+                    lines.extend(self._format_matrix(supmat))
 
-        # Scaled pairwise tab: show calculated suppression matrix
+        # Scaled pairwise tab: show calculated suppression matrix with uncertainties
         elif ('scaled' in text or ' tr' in text) and is_pairwise:
-            supmat = meta.get('supmat')
+            supmat = self.results.get('supmat')
+            stddevmat = self.results.get('stddevmat')
             if supmat is not None:
                 lines.append("\n  ** Calculated Suppression Matrix:")
-                lines.extend(self._format_matrix(supmat))
+                if stddevmat is not None:
+                    lines.extend(self._format_matrix_with_uncertainties(supmat, stddevmat))
+                else:
+                    lines.extend(self._format_matrix(supmat))
 
         return lines
 
     def _format_matrix(self, supmat) -> list[str]:
         """Pretty-print suppression matrix rows."""
-        try:
-            arr = np.asarray(supmat, dtype=float)
-        except Exception:
-            return [f"  {supmat}"]
-
-        if arr.ndim != 2 or arr.size == 0:
-            return [f"  {arr}"]
-
+        arr = np.asarray(supmat, dtype=float)
         return [
             "  " + " ".join(f"{val:8.4f}" for val in row)
             for row in arr
         ]
+
+    def _format_matrix_with_uncertainties(self, supmat, stddevmat) -> list[str]:
+        """Pretty-print suppression matrix rows with standard deviations.
+        
+        Args:
+            supmat: Suppression matrix (4x4 array)
+            stddevmat: Standard deviation matrix (4x4 array)
+            
+        Returns:
+            List of formatted strings showing value (±uncertainty) format
+        """
+        arr = np.asarray(supmat, dtype=float)
+        std = np.asarray(stddevmat, dtype=float)
+        lines = []
+        for ii, row in enumerate(arr):
+            row_parts = []
+            for jj, val in enumerate(row):
+                uncertainty = std[ii, jj] if ii < std.shape[0] and jj < std.shape[1] else 0.0
+                if uncertainty > 0:
+                    row_parts.append(f"{val:8.2f} ({uncertainty:1.0e})")
+                else:
+                    row_parts.append(f"{val:8.2f} (0.0)")
+            lines.append("  " + "  ".join(row_parts))
+        return lines
 
     def _format_sections_output(self, sections: dict[str, list[str]],
                                 active_section: str) -> str:
@@ -2014,12 +1954,17 @@ class XBPMMainWindow(QMainWindow):
             return "No metadata for this tab."
         return "No analysis metadata available yet."
 
-    def _refresh_analysis_info(self, tab_index=None):
+    def _refresh_analysis_info(self, tab_index: int = None) -> None:
+        """Update the analysis info panel based on the current tab.
+        
+        Args:
+            tab_index: Optional index of the tab to refresh.
+                       If None, uses the current tab index.
+        """
         # If UI not fully built yet, skip
         if not hasattr(self, 'analysis_info') or self.analysis_info is None:
             return
 
-        meta = self._last_meta or self._last_hdf5_meta or {}
         try:
             current_tab = (
                 self.results_tabs.tabText(tab_index)
@@ -2028,7 +1973,7 @@ class XBPMMainWindow(QMainWindow):
             )
         except Exception:
             current_tab = ""
-        text = self._format_analysis_info(meta, current_tab)
+        text = self._format_analysis_info(current_tab)
         self.analysis_info.setText(text)
 
     @pyqtSlot(int)
@@ -2221,7 +2166,7 @@ class XBPMMainWindow(QMainWindow):
             logger.exception("Failed to show detail figure %s", title)
             self.log_message(f"Error displaying {title}: {exc}")
 
-    def closeEvent(self, event):  # noqa: N802
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         """Clean up worker thread and detail windows on close."""
         # Close all detail windows
         if hasattr(self, '_detail_windows'):

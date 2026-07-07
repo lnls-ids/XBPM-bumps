@@ -56,7 +56,7 @@ class BladeMapVisualizer:
         self.data = data
         self.prm = prm
 
-    def show(self) -> plt.Figure:
+    def show(self) -> "matplotlib.figure.Figure":
         """Display blade intensity maps for all four blades.
 
         Creates a 2x2 subplot figure showing heatmaps for:
@@ -123,7 +123,7 @@ class BladeMapVisualizer:
         return fig
 
     @staticmethod
-    def plot_from_hdf5(blade_grp) -> 'matplotlib.figure.Figure':
+    def plot_from_hdf5(blade_grp: np.ndarray) -> "matplotlib.figure.Figure":
         """Create blade map figure from HDF5 dataset.
 
         Args:
