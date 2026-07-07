@@ -41,6 +41,7 @@ class Prm:
     current          : Optional[Any]       = None
     phaseorgap       : Optional[Any]       = None
     bpmdist          : Optional[float]     = None
+    scalepolydeg     : Optional[int]       = 1
     section          : Optional[str]       = None
     blademap         : Optional[Any]       = None
     roisize          : Optional[List[int]] = field(
@@ -88,6 +89,7 @@ class ParameterBuilder:
             usebpmref        = bool(args.usebpmref),
             outputfile       = bool(args.outputfile),
             xbpmdist         = args.xbpmdist,
+            scalepolydeg     = args.scalepolydeg,
             workdir          = args.workdir,
             skip             = int(args.skip),
             gridstep         = float(args.gridstep),
@@ -100,7 +102,8 @@ class ParameterBuilder:
         )
         return self.prm
 
-    def _parse_args(self, argv=None):
+    def _parse_args(self,
+                    argv: Optional[list[str]] = None) -> argparse.Namespace:
         """Parse command-line arguments using argparse.
 
         Args:
@@ -148,6 +151,10 @@ class ParameterBuilder:
             help='Distance from source to XBPM [m]'
         )
         parser.add_argument(
+            '-p', '--scalepolydeg', type=int, default=1,
+            help='Scaling polynomial degree'
+        )
+        parser.add_argument(
             '-g', '--gridstep', type=float, default=GRIDSTEP,
             help=("""Step between neighbour sites in the grid.
                 Usually inferred from data, but might be provided
@@ -177,7 +184,7 @@ class ParameterBuilder:
 
         return parser.parse_args(argv)
 
-    def _add_beamline_parameters(self) -> None:
+    def add_beamline_parameters(self) -> None:
         """Add beamline-specific parameters to prm."""
         self.prm.current = self.rawdata[0][2]["current"]
 

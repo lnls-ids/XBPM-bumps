@@ -5,14 +5,16 @@ Includes HDF5 export with figures and derived results.
 
 import numpy as np
 import os
-from dataclasses import asdict
-from datetime import datetime, timezone
-from io import BytesIO
 import logging
-from typing import Optional
+import h5py  # type: ignore
+
+from dataclasses import asdict
+from datetime    import datetime, timezone
+from io          import BytesIO
+from typing      import Optional
 
 from .parameters import Prm
-from .config import Config
+from .config     import Config
 
 logger = logging.getLogger(__name__)
 
@@ -484,8 +486,9 @@ class Exporter:
                 break  # one sweep is enough to discover beamlines
         return beamlines
 
-    def _detect_beamlines_and_params(self, raw_grp, rawdata,
-                                     analyzed_beamline):
+    def _detect_beamlines_and_params(self, raw_grp: h5py.Group,
+                                     rawdata: list,
+                                     analyzed_beamline: str) -> tuple:
         if rawdata:
             beamlines = self._extract_beamlines_from_rawdata(rawdata)
             beamline_params = self._extract_beamline_specific_params(rawdata)
@@ -1149,7 +1152,7 @@ class Exporter:
         Exporter._write_prefix_attr(ds, prefix)
 
     @staticmethod
-    def _split_value_and_unit(value):
+    def _split_value_and_unit(value: any) -> tuple:
         """Extract values and units from parameter data.
 
         Handles two formats:
@@ -1221,7 +1224,8 @@ class Exporter:
         return fields, values, prefix, n_rows
 
     @staticmethod
-    def _build_machine_array(fields, values, n_rows):
+    def _build_machine_array(fields: list, values: dict,
+                             n_rows: int) -> np.ndarray:
         import numpy as np
 
         dtype = np.dtype(fields)
@@ -1248,7 +1252,7 @@ class Exporter:
         return data
 
     @staticmethod
-    def _write_prefix_attr(dataset, prefix):
+    def _write_prefix_attr(dataset: h5py.Dataset, prefix: str) -> None:
         if prefix is None:
             return
         try:
@@ -1263,7 +1267,7 @@ class Exporter:
             )
 
     @staticmethod
-    def _write_unit_attrs(dataset, values: dict) -> None:
+    def _write_unit_attrs(dataset: h5py.Dataset, values: dict) -> None:
         for name, (_value, unit) in values.items():
             # Only write units for parameters that have them
             # (e.g., val_A, val_B).
@@ -1449,7 +1453,8 @@ class Exporter:
         self._write_analysis_datasets(analysis, supmat, stddevmat,
                                       supmat_standard, central_sweeps)
 
-    def _write_analysis_attributes(self, analysis, beamline, results):
+    def _write_analysis_attributes(self, analysis: 'h5py.Group',
+                                   beamline: str, results: dict) -> None:
         analysis.attrs['description'] = (
             'Analysis results including positions, matrices, and sweep data'
         )
@@ -1484,7 +1489,8 @@ class Exporter:
                 except Exception:
                     analysis.attrs[k] = str(v)
 
-    def _write_positions_group(self, analysis, positions, bpm_stats, results):
+    def _write_positions_group(self, analysis: h5py.Group, positions: dict,
+                            bpm_stats: dict, results: dict) -> None:
         apos = analysis.create_group('positions')
         apos.attrs['description'] = self.ANALYSIS_DESCRIPTIONS['positions']
         raw_full = results.get('positions_raw_full')
@@ -1495,16 +1501,19 @@ class Exporter:
                                        raw_full, scaled_full)
         self._attach_roi_bounds_attrs(apos, bpm_stats)
 
-    def _write_analysis_datasets(self, analysis, supmat, stddevmat,
-                                 supmat_standard, central_sweeps):
-        self._write_supmat_dataset(analysis, supmat, stddevmat, supmat_standard)
+    def _write_analysis_datasets(self, analysis: h5py.Group, supmat: dict,
+                                 stddevmat: dict, supmat_standard: dict,
+                                 central_sweeps: dict) -> None:
+        self._write_supmat_dataset(analysis, supmat, stddevmat,
+                                   supmat_standard)
         self._write_sweeps_group(analysis, central_sweeps)
 
-    def _write_full_positions(self, apos, raw_full, scaled_full) -> None:
+    def _write_full_positions(self, apos: h5py.Group, raw_full: dict,
+                              scaled_full: dict) -> None:
         self._write_raw_full(apos, raw_full)
         self._write_scaled_full(apos, scaled_full)
 
-    def _write_raw_full(self, apos, raw_full) -> None:
+    def _write_raw_full(self, apos: h5py.Group, raw_full: dict) -> None:
         if not (raw_full and isinstance(raw_full, dict)):
             return
         raw_positions = raw_full.get('positions')
@@ -1724,7 +1733,8 @@ class Exporter:
             if not isinstance(val, dict):
                 continue
             child = sub.create_group(key)
-            for attr in ('kx', 'skx', 'dx', 'sdx', 'ky', 'sky', 'dy', 'sdy'):
+            for attr in ('qx', 'sqx', 'kx', 'skx', 'dx', 'sdx',
+                         'qy', 'sqy', 'ky', 'sky', 'dy', 'sdy'):
                 if attr in val and val[attr] is not None:
                     child.attrs[attr] = float(val[attr])
 
@@ -1735,7 +1745,8 @@ class Exporter:
         vals = scales.get(key)
         if not isinstance(vals, dict):
             return
-        for attr in ('kx', 'skx', 'dx', 'sdx', 'ky', 'sky', 'dy', 'sdy'):
+        for attr in ('qx', 'sqx','kx', 'skx', 'dx', 'sdx',
+                     'qy', 'sqy','ky', 'sky', 'dy', 'sdy'):
             if attr in vals and vals[attr] is not None:
                 dset.attrs[f'scale_{attr}'] = float(vals[attr])
                 dset.attrs[f'scale_{attr}_description'] = (
@@ -2236,7 +2247,7 @@ class Exporter:
         blade_grp.attrs['title'] = 'Blade Intensity Map'
 
     @staticmethod
-    def _fig_to_array(fig):
+    def _fig_to_array(fig: object) -> np.ndarray:
         """Render matplotlib figure to an RGB numpy array (H × W × 3, uint8).
 
         Uses PNG format at 300 DPI with a white background.  The result is

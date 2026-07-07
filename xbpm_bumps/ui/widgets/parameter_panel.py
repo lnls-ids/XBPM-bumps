@@ -52,27 +52,20 @@ class ParameterPanel(QWidget):
         workdir_row.addWidget(self.workdir_field, 1)
         layout.addLayout(workdir_row)
 
-        # Input source selection moved to File menu; no input field here.
-
         # Parameters group
-        params_group = self._create_parameters_group()
-        layout.addWidget(params_group)
+        layout.addWidget(self._create_parameters_group())
 
         # Reference selection group (BPM vs nominal)
-        reference_group = self._create_reference_group()
-        layout.addWidget(reference_group)
+        layout.addWidget(self._create_reference_group())
 
         # Analysis options group
-        options_group = self._create_options_group()
-        layout.addWidget(options_group)
+        layout.addWidget(self._create_options_group())
 
         layout.addStretch()
 
-    # No files group: selection handled via main menu.
-
     def _create_parameters_group(self) -> QGroupBox:
         """Create the numerical parameters group."""
-        group = QGroupBox("Parameters")
+        group  = QGroupBox("Parameters")
         layout = QFormLayout()
         layout.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
 
@@ -114,14 +107,14 @@ class ParameterPanel(QWidget):
         layout.addRow("Skip Initial:", self.skip_spin)
 
         # Polynomial degree
-        self.polydeg = QSpinBox()
-        self.polydeg.setRange(1, 2)
-        self.polydeg.setValue(1)
-        # self.polydeg.setSuffix("")
-        self.polydeg.setMaximumWidth(115)
-        self.polydeg.valueChanged.connect(self.parametersChanged.emit)
-        layout.addRow("Polynomial degree:", self.polydeg)
+        self.scalepolydeg = QSpinBox()
+        self.scalepolydeg.setRange(1, 2)
+        self.scalepolydeg.setValue(1)
+        # self.scalepolydeg.setSuffix("")
+        self.scalepolydeg.setMaximumWidth(115)
+        self.scalepolydeg.valueChanged.connect(self.parametersChanged.emit)
 
+        layout.addRow("Polynomial degree:", self.scalepolydeg)
         group.setLayout(layout)
         return group
 
@@ -191,7 +184,7 @@ class ParameterPanel(QWidget):
         group.setLayout(layout)
         return group
 
-    def _check_all_options(self):
+    def _check_all_options(self) -> None:
         """Toggle all analysis option checkboxes."""
         self._all_checked = not self._all_checked
         self.bpm_check.setChecked(self._all_checked)
@@ -248,19 +241,21 @@ class ParameterPanel(QWidget):
                 int(self.roi_h_spin.value()),
                 int(self.roi_v_spin.value()),
             ],
-            'skip': self.skip_spin.value(),
-            'xbpmpositionsraw': self.xbpm_raw_check.isChecked(),
-            'xbpmpositions': self.xbpm_check.isChecked(),
-            'xbpmfrombpm': self.bpm_check.isChecked(),
-            'usebpmref': self.bpm_ref_check.isChecked(),
-            'showblademap': self.blademap_check.isChecked(),
-            'centralsweep': self.central_check.isChecked(),
-            'showbladescenter': self.center_check.isChecked(),
+            'skip'             : self.skip_spin.value(),
+            'scalepolydeg'     : self.scalepolydeg.value(),
+            'xbpmpositionsraw' : self.xbpm_raw_check.isChecked(),
+            'xbpmpositions'    : self.xbpm_check.isChecked(),
+            'xbpmfrombpm'      : self.bpm_check.isChecked(),
+            'usebpmref'        : self.bpm_ref_check.isChecked(),
+            'showblademap'     : self.blademap_check.isChecked(),
+            'centralsweep'     : self.central_check.isChecked(),
+            'showbladescenter' : self.center_check.isChecked(),
         }
         # Include beamline if set
         beamline = getattr(self, '_beamline', None)
         if beamline:
             params['beamline'] = beamline
+
         return params
 
     def set_parameters(self, params: dict):
@@ -274,6 +269,8 @@ class ParameterPanel(QWidget):
             self.set_workdir(params['workdir'])
         if 'xbpmdist' in params and params['xbpmdist'] is not None:
             self.xbpmdist_spin.setValue(params['xbpmdist'])
+        if 'scalepolydeg' in params and params['scalepolydeg'] is not None:
+            self.scalepolydeg.setValue(params['scalepolydeg'])
         if 'roisize' in params and params['roisize']:
             try:
                 self.roi_h_spin.setValue(int(params['roisize'][0]))

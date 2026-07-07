@@ -1,23 +1,27 @@
 """Main window for XBPM analysis application."""
 
+
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTextEdit, QSplitter, QTabWidget,
     QStatusBar, QProgressBar, QMessageBox, QFileDialog
 )
 from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot, QThread, QTimer
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui  import QFont
+from PyQt5.QtGui  import QCloseEvent
+
 import numpy as np
 import logging
 import os
+# import traceback
 
 from .widgets.parameter_panel import ParameterPanel
-from .widgets.mpl_canvas import MatplotlibCanvas
+from .widgets.mpl_canvas      import MatplotlibCanvas
 from .dialogs.beamline_dialog import BeamlineSelectionDialog
-from .dialogs.help_dialog import HelpDialog
-from .analyzer import XBPMAnalyzer
-from ..core.config import Config
-from ..core.constants import FIGDPI
+from .dialogs.help_dialog     import HelpDialog
+from .analyzer                import XBPMAnalyzer
+from ..core.config            import Config
+from ..core.constants         import FIGDPI
 
 
 logger = logging.getLogger(__name__)
@@ -285,7 +289,7 @@ class XBPMMainWindow(QMainWindow):
 
     def _on_parameters_changed(self) -> None:
         """React to parameter changes; pre-select beamline on workdir set."""
-        params = self.param_panel.get_parameters()
+        params  = self.param_panel.get_parameters()
         workdir = params.get('workdir') or ""
         if workdir and workdir != self._last_workdir:
             self._last_workdir = workdir
@@ -358,20 +362,6 @@ class XBPMMainWindow(QMainWindow):
         except Exception as exc:  # pragma: no cover - defensive
             self.log_message(f"Could not set XBPM distance: {exc}")
 
-    # def _handle_fallback_beamline_selection(self, reader,
-    #                                         workdir: str) -> None:
-    #     """Handle beamline selection when initial read doesn't set it."""
-    #     import os
-
-    #     beamlines = []
-    #     if (os.path.isfile(workdir) and getattr(reader, "rawdata", None)):
-    #         from xbpm_bumps.core.reader_pickle import extract_beamlines
-    #         beamlines = extract_beamlines(reader.rawdata)
-
-    #     if len(beamlines) == 1:
-    #         self.log_message(f"Auto-selected beamline: {beamlines[0]}")
-    #         self._update_xbpmdist_from_beamline(beamlines[0])
-
     def setup_worker_thread(self) -> None:
         """Initialize worker thread for analysis execution."""
         self.worker_thread = QThread()
@@ -398,7 +388,7 @@ class XBPMMainWindow(QMainWindow):
         self.analyzer.logMessage.connect(self.log_message)
         self.worker_thread.start()
 
-    def _run_analysis_with_canonical_params(self, params: dict):
+    def _run_analysis_with_canonical_params(self, params: dict) -> None:
         """Build and enrich canonical ParameterBuilder/Prm, run analysis."""
         # Set canonical Prm fields directly from params
         for k, v in params.items():
@@ -407,7 +397,7 @@ class XBPMMainWindow(QMainWindow):
 
         # Use canonical rawdata for parameter enrichment
         self.builder.rawdata = self.rawdata
-        self.builder._add_beamline_parameters()
+        self.builder.add_beamline_parameters()
 
         # Update persistent Prm reference
         self.prm = self.builder.prm
@@ -419,10 +409,11 @@ class XBPMMainWindow(QMainWindow):
         self.analyzer.moveToThread(self.worker_thread)
         self.analyzer.app = None  # Reset to force re-init
 
-        def set_app_reader_data():
+        def set_app_reader_data() -> None:
             if self.analyzer.app is not None:
                 self.analyzer.app.reader = self.reader
-                self.analyzer.app.data = analysis_data
+                self.analyzer.app.data   = analysis_data
+
         self.analyzer.analysisStarted.connect(set_app_reader_data)
         self.stop_btn.clicked.connect(self.analyzer.stop_analysis)
         self.analyzer.analysisStarted.connect(self._on_analysis_started)
@@ -514,8 +505,10 @@ class XBPMMainWindow(QMainWindow):
             exported_any |= self._export_bpm_positions(prefix, results)
 
             # Export XBPM data and figures for both raw and scaled scopes
-            exported_any |= self._export_xbpm_positions('raw', prefix, params, results)
-            exported_any |= self._export_xbpm_positions('scaled', prefix, params, results)
+            exported_any |= self._export_xbpm_positions('raw', prefix,
+                                                        params, results)
+            exported_any |= self._export_xbpm_positions('scaled', prefix,
+                                                        params, results)
 
             # Export other analysis figures and data
             exported_any |= self._export_other_figures(prefix, params, results)
@@ -789,8 +782,8 @@ class XBPMMainWindow(QMainWindow):
         from ..core.processors import XBPMProcessor as XPROC
         from ..core.exporters import Exporter
 
-        exporter = Exporter(self.analyzer.app.prm)
-        outdir = os.path.dirname(prefix) or '.'
+        exporter  = Exporter(self.analyzer.app.prm)
+        outdir    = os.path.dirname(prefix) or '.'
         wrote_any = False
 
         # --- Standard (1/-1) suppression matrix ---
@@ -833,7 +826,7 @@ class XBPMMainWindow(QMainWindow):
         return wrote_any
 
     def _write_position_info_file(self, path: str, calc_type: str, sup: str,
-                                    scales: dict, stats: dict) -> None:
+                                  scales: dict, stats: dict) -> None:
         """Write scale coefficients and statistics to a labeled text file."""
         beamline = self.analyzer.app.prm.beamline
         with open(path, 'w') as fp:
@@ -842,14 +835,28 @@ class XBPMMainWindow(QMainWindow):
                 f"# Beamline: {beamline}"
                 f" | Type: positions / {calc_type} / {sup}\n"
             )
+
+            if self.prm.scalepolydeg == 2:
+                fp.write("qx           ="
+                         f" {float(scales.get('qx', 1)):.6f}\n")
+                fp.write("sqx          ="
+                         f" {float(scales.get('sqx', 0)):.6f}\n")
+
             fp.write(f"kx           = {float(scales.get('kx', 1)):.6f}\n")
             fp.write(f"skx          = {float(scales.get('skx', 0)):.6f}\n")
             fp.write(f"dx           = {float(scales.get('dx', 0)):.6f}\n")
             fp.write(f"sdx          = {float(scales.get('sdx', 0)):.6f}\n")
+
+            if self.prm.scalepolydeg == 2:
+                fp.write("qy           ="
+                         f" {float(scales.get('qy', 1)):.6f}\n")
+                fp.write("sqy          ="
+                         f" {float(scales.get('sqy', 0)):.6f}\n")
             fp.write(f"ky           = {float(scales.get('ky', 1)):.6f}\n")
             fp.write(f"sky          = {float(scales.get('sky', 0)):.6f}\n")
             fp.write(f"dy           = {float(scales.get('dy', 0)):.6f}\n")
             fp.write(f"sdy          = {float(scales.get('sdy', 0)):.6f}\n")
+
             if stats:
                 fp.write("u\n# Position differences statistics ($\\mu$m)\n")
                 fp.write("RMS H diff.     = "
@@ -1203,7 +1210,7 @@ class XBPMMainWindow(QMainWindow):
         self.prm.beamline = chosen_beamline  # Set beamline programmatically
         # Use canonical rawdata for parameter enrichment
         self.builder.rawdata = self.rawdata
-        self.builder._add_beamline_parameters()
+        self.builder.add_beamline_parameters()
         # Update persistent Prm reference
         self.prm = self.builder.prm
         # Re-instantiate analyzer with canonical Prm and builder
@@ -1310,7 +1317,8 @@ class XBPMMainWindow(QMainWindow):
         positions = (results.get('positions', {})
                      if isinstance(results, dict) else {})
 
-        def _render_position(canvas_key, figure_key, position_key, title):
+        def _render_position(canvas_key: str, figure_key: str,
+                             position_key: str, title: str) -> None:
             canvas = self.canvases.get(canvas_key)
             if canvas is None:
                 return
@@ -1322,15 +1330,15 @@ class XBPMMainWindow(QMainWindow):
             if pos_data is not None:
                 self._plot_positions(canvas, pos_data, title=title)
 
-        def _render_figure(canvas_key, figure_key):
+        def _render_figure(canvas_key: str, figure_key: str) -> None:
             canvas = self.canvases.get(canvas_key)
             fig = results.get(figure_key)
             if canvas is not None and fig is not None:
                 self._embed_figure(canvas, fig)
 
         position_specs = [
-            ("xbpm_raw_pairwise", "xbpm_raw_pairwise_figure", "xbpm_raw",
-             "XBPM Raw Pairwise Positions"),
+            ("xbpm_raw_pairwise", "xbpm_raw_pairwise_figure",
+             "xbpm_raw", "XBPM Raw Pairwise Positions"),
             ("xbpm_scaled_pairwise", "xbpm_scaled_pairwise_figure",
              "xbpm_scaled", "XBPM Scaled Pairwise Positions"),
             ("bpm", "bpm_figure", "bpm", "BPM Positions"),
@@ -1385,7 +1393,7 @@ class XBPMMainWindow(QMainWindow):
             positions['vertical'] = v_meta
         return positions
 
-    def _parse_fit(self, fit):
+    def _parse_fit(self, fit: np.ndarray) -> dict:
         """Parse fit parameters into k and delta values."""
         try:
             # Fit can be either [k, delta] or [[k, s_k], [delta, s_delta]].
@@ -1417,7 +1425,8 @@ class XBPMMainWindow(QMainWindow):
             blades['vertical'] = v_blades
         return blades
 
-    def _fit_blades(self, blades_dict, axis_range):
+    def _fit_blades(self, blades_dict: dict,
+                    axis_range: np.ndarray) -> dict:
         """Fit blade data to extract k and delta for each blade."""
         if not isinstance(blades_dict, dict) or axis_range is None:
             return None
@@ -1522,9 +1531,38 @@ class XBPMMainWindow(QMainWindow):
         
         Inlines coefficient and error formatting for cleaner code.
         Supports both legacy (s_kx/s_dx) and current (skx/sdx) error key formats.
+
+        Args:
+            pos_filter: Optional tuple of (scope, label) to filter scales.
+
+        Returns:
+            Dictionary with 'positions' key containing formatted lines.
         """
         scale_lines: list[str] = []
-        scales = self.results.get('scales', {}) if isinstance(self.results, dict) else {}
+
+        # Build unified scales view from both legacy and
+        # current result layouts.
+        scales: dict[str, dict] = {}
+
+        if isinstance(self.results, dict):
+            legacy_scales = self.results.get('scales')
+            if isinstance(legacy_scales, dict):
+                for scope in ('raw', 'scaled'):
+                    block = legacy_scales.get(scope)
+                    if isinstance(block, dict):
+                        scales[scope] = block
+
+            raw_full = self.results.get('positions_raw_full')
+            if isinstance(raw_full, dict):
+                raw_scales = raw_full.get('scales')
+                if isinstance(raw_scales, dict):
+                    scales['raw'] = raw_scales
+
+            scaled_full = self.results.get('positions_scaled_full')
+            if isinstance(scaled_full, dict):
+                scaled_scales = scaled_full.get('scales')
+                if isinstance(scaled_scales, dict):
+                    scales['scaled'] = scaled_scales
 
         for scope in ('scaled', 'raw'):
             scope_block = scales.get(scope)
@@ -1542,61 +1580,27 @@ class XBPMMainWindow(QMainWindow):
 
                 # Format coefficient lines inline
                 lines_to_add: list[str] = []
-                line1 = []
-                line2 = []
 
-                # Format kx/dx pair
-                for key, err_keys in (
+                # Format qx/kx/dx pair
+                coeffnames1 = (
+                    ('qx', ('sqx', 's_qx')),
                     ('kx', ('skx', 's_kx')),
                     ('dx', ('sdx', 's_dx')),
-                ):
-                    val = coeffs.get(key)
-                    if val is not None:
-                        err = None
-                        for ek in (err_keys if isinstance(err_keys, (tuple, list)) else (err_keys,)):
-                            if ek in coeffs and coeffs.get(ek) is not None:
-                                err = coeffs.get(ek)
-                                break
-                        try:
-                            val_num = float(val)
-                            if err is not None:
-                                line1.append(f"{key:>10} = {val_num:.6f} ({float(err):.3g})")
-                            else:
-                                line1.append(f"{key:>10} = {val_num:.6f}")
-                        except Exception:
-                            if err is not None:
-                                line1.append(f"{key:>10} = {val} ({err})")
-                            else:
-                                line1.append(f"{key:>10} = {val}")
+                )
+                line1 = self._format_coefficent_lines(coeffnames1, coeffs)
 
-                # Format ky/dy pair
-                for key, err_keys in (
+                # Format qy/ky/dy pair
+                coeffnames2 = (
+                    ('qy', ('sqy', 's_qy')),
                     ('ky', ('sky', 's_ky')),
                     ('dy', ('sdy', 's_dy')),
-                ):
-                    val = coeffs.get(key)
-                    if val is not None:
-                        err = None
-                        for ek in (err_keys if isinstance(err_keys, (tuple, list)) else (err_keys,)):
-                            if ek in coeffs and coeffs.get(ek) is not None:
-                                err = coeffs.get(ek)
-                                break
-                        try:
-                            val_num = float(val)
-                            if err is not None:
-                                line2.append(f"{key:>10} = {val_num:.6f} ({float(err):.3g})")
-                            else:
-                                line2.append(f"{key:>10} = {val_num:.6f}")
-                        except Exception:
-                            if err is not None:
-                                line2.append(f"{key:>10} = {val} ({err})")
-                            else:
-                                line2.append(f"{key:>10} = {val}")
+                )
+                line2 = self._format_coefficent_lines(coeffnames2, coeffs)
 
                 if line1:
-                    lines_to_add.append("   " + ", ".join(line1))
+                    lines_to_add.append(",\n".join(line1))
                 if line2:
-                    lines_to_add.append("   " + ", ".join(line2))
+                    lines_to_add.append("\n" + ",\n".join(line2))
 
                 if lines_to_add:
                     subject = Config.get_position_subject(scope, label)
@@ -1604,6 +1608,46 @@ class XBPMMainWindow(QMainWindow):
                     scale_lines.extend(lines_to_add)
 
         return {'positions': scale_lines} if scale_lines else {}
+
+    def _format_coefficent_lines(self, coeffnames: tuple,
+                                 coeffs: dict) -> list[str]:
+        """Format coefficient lines for a given coefficient set.
+
+        Args:
+            coeffnames  : Tuple of polynomial coefficient strings.
+            coeffs    : Dictionary of coefficient values.
+
+        Returns:
+            List of formatted coefficient lines.
+        """
+        line = []
+        # Format k/d pair
+        for key, err_keys in coeffnames:
+            val = coeffs.get(key)
+            if val is not None:
+                err = None
+                for ek in (err_keys
+                           if isinstance(err_keys, (tuple, list))
+                           else (err_keys,)):
+                    if ek in coeffs and coeffs.get(ek) is not None:
+                        err = coeffs.get(ek)
+                        break
+                try:
+                    val_num = float(val)
+                    if err is not None:
+                        rel_err = float(err) / abs(val_num)
+                        line.append(
+                            f"{key:>8} = {val_num:8.3g}  "
+                            f"({float(err):2.0e} : {rel_err:.2%})"
+                            )
+                    else:
+                        line.append(f"{key:>8} =  {val_num:8.3g}")
+                except Exception:
+                    if err is not None:
+                        line.append(f"{key:>8} =  {val} ({err})")
+                    else:
+                        line.append(f"{key:>8} =  {val}")
+        return line
 
     def _format_sweeps_positions_section(self) -> dict[str, list[str]]:
         """Format sweeps positions (global fits) metadata section.
@@ -1744,7 +1788,8 @@ class XBPMMainWindow(QMainWindow):
 
         return {'bpm': bpm_lines} if bpm_lines else {}
 
-    def _format_xbpm_stats_section(self, active_tab: str) -> dict[str, list[str]]:
+    def _format_xbpm_stats_section(self,
+                                   active_tab: str) -> dict[str, list[str]]:
         """Format XBPM statistics metadata section.
 
         Only shows the relevant calculation type based on active tab:
@@ -1876,7 +1921,7 @@ class XBPMMainWindow(QMainWindow):
             for jj, val in enumerate(row):
                 uncertainty = std[ii, jj] if ii < std.shape[0] and jj < std.shape[1] else 0.0
                 if uncertainty > 0:
-                    row_parts.append(f"{val:8.2f} ({uncertainty:.1e})")
+                    row_parts.append(f"{val:8.2f} ({uncertainty:1.0e})")
                 else:
                     row_parts.append(f"{val:8.2f} (0.0)")
             lines.append("  " + "  ".join(row_parts))
@@ -2121,7 +2166,7 @@ class XBPMMainWindow(QMainWindow):
             logger.exception("Failed to show detail figure %s", title)
             self.log_message(f"Error displaying {title}: {exc}")
 
-    def closeEvent(self, event):  # noqa: N802
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         """Clean up worker thread and detail windows on close."""
         # Close all detail windows
         if hasattr(self, '_detail_windows'):
