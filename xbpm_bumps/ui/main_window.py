@@ -1464,8 +1464,15 @@ class XBPMMainWindow(QMainWindow):
         if 'xbpm_stats_scaled' in results:
             meta['xbpm_stats_scaled'] = results.get('xbpm_stats_scaled')
 
-    def _extract_sweeps_meta(self, sweeps_data):
-        """Extract sweep metadata: positions fits and per-blade fits."""
+    def _extract_sweeps_meta(self, sweeps_data: list) -> dict:
+        """Extract sweep metadata: positions fits and per-blade fits.
+        
+        Args:
+            sweeps_data (list): List containing sweep data arrays.
+
+        Returns:
+            dict: Dictionary containing sweep metadata or empty dict if     extraction fails.
+        """
         if not sweeps_data or len(sweeps_data) < 8:
             return {}
 
@@ -1488,7 +1495,8 @@ class XBPMMainWindow(QMainWindow):
 
         return meta
 
-    def _extract_sweeps_positions(self, fit_h, fit_v) -> dict:
+    def _extract_sweeps_positions(self, fit_h : np.ndarray,
+                                  fit_v : np.ndarray) -> dict:
         """Extract global fit positions from horizontal and vertical fits."""
         positions = {}
         h_meta = self._parse_fit(fit_h)
@@ -1499,16 +1507,16 @@ class XBPMMainWindow(QMainWindow):
             positions['vertical'] = v_meta
         return positions
 
-    def _parse_fit(self, fit):
+    def _parse_fit(self, fit : np.ndarray) -> dict:
         """Parse fit parameters into k and delta values."""
         try:
             # Fit can be either [k, delta] or [[k, s_k], [delta, s_delta]].
             if hasattr(fit, "shape") and fit.shape == (2, 2):
                 return {
-                    'k': float(fit[0][0]),
-                    'delta': float(fit[1][0]),
-                    's_k': float(fit[0][1]),
-                    's_delta': float(fit[1][1]),
+                    'k'       : float(fit[0][0]),
+                    'delta'   : float(fit[1][0]),
+                    's_k'     : float(fit[0][1]),
+                    's_delta' : float(fit[1][1]),
                 }
 
             k_val = (float(fit[0][0])
@@ -1519,8 +1527,9 @@ class XBPMMainWindow(QMainWindow):
         except Exception:
             return None
 
-    def _extract_sweeps_blades(self, blades_h, blades_v, range_h,
-                              range_v) -> dict:
+    def _extract_sweeps_blades(self, blades_h: dict, blades_v: dict,
+                               range_h: np.ndarray,
+                               range_v: np.ndarray) -> dict:
         """Extract per-blade fits from blade data."""
         blades = {}
         h_blades = self._fit_blades(blades_h, range_h)
@@ -1531,8 +1540,17 @@ class XBPMMainWindow(QMainWindow):
             blades['vertical'] = v_blades
         return blades
 
-    def _fit_blades(self, blades_dict, axis_range):
-        """Fit blade data to extract k and delta for each blade."""
+    def _fit_blades(self, blades_dict : dict,
+                    axis_range : np.ndarray) -> dict:
+        """Fit blade data to extract k and delta for each blade.
+        
+        Args:
+            blades_dict (dict): Dictionary containing blade data.
+            axis_range (np.ndarray): Array representing the axis range.
+
+        Returns:
+            dict: Dictionary containing fit parameters for each blade or None if fitting fails.
+        """
         if not isinstance(blades_dict, dict) or axis_range is None:
             return None
         fits = {}
@@ -1540,12 +1558,14 @@ class XBPMMainWindow(QMainWindow):
             arr = blades_dict.get(blade)
             if arr is None:
                 continue
-            y = arr[:, 0] if hasattr(arr, 'ndim') and arr.ndim == 2 else arr
+            y = (arr[:, 0]
+                 if hasattr(arr, 'ndim') and arr.ndim == 2
+                 else arr)
             try:
                 coef = np.polyfit(axis_range, y, deg=1)
                 fits[blade] = {
-                    'k': float(coef[0]),
-                    'delta': float(coef[1])
+                    'k'     : float(coef[0]),
+                    'delta' : float(coef[1])
                     }
             except Exception as exc:
                 logger.debug("Failed to fit blade %s: %s", blade, exc)

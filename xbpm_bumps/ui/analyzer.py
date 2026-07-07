@@ -383,7 +383,7 @@ class XBPMAnalyzer(QObject):
             Tuple of (measured_coords, nominal_coords) arrays.
         """
         measured = None
-        nominal = None
+        nominal  = None
 
         if not pos_list or len(pos_list) == 0:
             return measured, nominal
@@ -395,7 +395,7 @@ class XBPMAnalyzer(QObject):
 
         try:
             measured_coords = []
-            nominal_coords = []
+            nominal_coords  = []
             for (nom_x, nom_y), (meas_x, meas_y) in pos_dict.items():
                 measured_coords.append([meas_x, meas_y])
                 nominal_coords.append([nom_x, nom_y])
@@ -437,8 +437,8 @@ class XBPMAnalyzer(QObject):
         # Extract pairwise for backward compatibility display
         measured, nominal = self._extract_measured_and_nominal(positions)
         results['positions']['xbpm_raw'] = {
-            'measured': measured,
-            'nominal': nominal,
+            'measured' : measured,
+            'nominal'  : nominal,
         }
         # Capture standard matrix (1/-1 pattern) from raw calculation
         supmat_std = (result_data.get('supmat')
@@ -488,8 +488,8 @@ class XBPMAnalyzer(QObject):
         # Extract pairwise for backward compatibility display
         measured, nominal = self._extract_measured_and_nominal(positions)
         results['positions']['xbpm_scaled'] = {
-            'measured': measured,
-            'nominal': nominal,
+            'measured' : measured,
+            'nominal'  : nominal,
         }
         # Capture calculated matrix (from slopes) from scaled calculation
         supmat_calc = (result_data.get('supmat')

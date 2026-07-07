@@ -40,7 +40,7 @@ class XBPMProcessor:
         blades_v (dict): Blade measurements along vertical center line.
     """
 
-    def __init__(self, data: dict, prm: Prm, polydeg=1):
+    def __init__(self, data: dict, prm: Prm):
         """Initialize processor with data and parameters.
 
         Args:
@@ -49,14 +49,13 @@ class XBPMProcessor:
         """
         self.data     = data
         self.prm      = prm
-        self.polydeg  = polydeg
         self.blades_h = None
         self.blades_v = None
         self._initialize_ranges()
         self.roi_h_size = prm.roisize[0] if prm.roisize else ROI_SIZE_H
         self.roi_v_size = prm.roisize[1] if prm.roisize else ROI_SIZE_V
 
-    def _initialize_ranges(self):
+    def _initialize_ranges(self) ->  None:
         """Initialize horizontal and vertical sweep ranges from data keys."""
         keys = np.array(list(self.data.keys()))
         self.range_h = np.unique(keys[:, 0])
@@ -114,7 +113,7 @@ class XBPMProcessor:
         pos_to_ti_v = (to_ch + ti_ch)
         pos_bi_bo_v = (bo_ch + bi_ch)
         pos_ch_v = (pos_to_ti_v - pos_bi_bo_v) / (pos_to_ti_v + pos_bi_bo_v)
-        fit_ch_v = np.polyfit(self.range_h, pos_ch_v, deg=self.polydeg)
+        fit_ch_v = np.polyfit(self.range_h, pos_ch_v,  deg=1)
 
         return pos_ch_v, fit_ch_v, blades_h
 
@@ -136,7 +135,7 @@ class XBPMProcessor:
         pos_to_bo_h = (to_cv + bo_cv)
         pos_ti_bi_h = (ti_cv + bi_cv)
         pos_cv_h = (pos_to_bo_h - pos_ti_bi_h) / (pos_to_bo_h + pos_ti_bi_h)
-        fit_cv_h = np.polyfit(self.range_v, pos_cv_h, deg=self.polydeg)
+        fit_cv_h = np.polyfit(self.range_v, pos_cv_h, deg=1)
 
         return pos_cv_h, fit_cv_h, blades_v
 
@@ -252,8 +251,8 @@ class XBPMProcessor:
         (scalesx, sigmasx, scalesy, sigmasy) = self.scaling_fit(
             pos_roi_h, pos_roi_v, pos_nom_h_roi, pos_nom_v_roi, label
         )
-        (qx, kx, deltax), (sqx, skx, sdeltax) = scalesx, sigmasx
-        (qy, ky, deltay), (sqy, sky, sdeltay) = scalesy, sigmasy
+        (kx, deltax), (skx, sdeltax) = scalesx, sigmasx
+        (ky, deltay), (sky, sdeltay) = scalesy, sigmasy
 
         # Set raw (R) or transformed (T) graph type.
         transform = "R" if nosuppress else "T"
@@ -275,10 +274,10 @@ class XBPMProcessor:
         }
 
         # Scale full positions
-        pos_all_h_scaled = qx * pos_all_h**2 + kx * pos_all_h + deltax
-        pos_all_v_scaled = qy * pos_all_v**2 + ky * pos_all_v + deltay
-        pos_roi_h_scaled = qx * pos_roi_h**2 + kx * pos_roi_h + deltax
-        pos_roi_v_scaled = qy * pos_roi_v**2 + ky * pos_roi_v + deltay
+        pos_all_h_scaled = kx * pos_all_h + deltax
+        pos_all_v_scaled = ky * pos_all_v + deltay
+        pos_roi_h_scaled = kx * pos_roi_h + deltax
+        pos_roi_v_scaled = ky * pos_roi_v + deltay
 
         # Compute statistics
         diffx2_roi = (pos_roi_h_scaled - pos_nom_h_roi) ** 2
@@ -659,30 +658,20 @@ class XBPMProcessor:
         nom_v_cln = nom_v[v_finitemask]
 
         coeffs_x, deltas_x = self._poly_fitting(nom_h, nom_h_cln, pos_h_cln)
-        if self.polydeg == 1:
-            qx, kx, deltax    = 0., coeffs_x[0], coeffs_x[1]
-            sqx, skx, sdeltax = 0., deltas_x[0], deltas_x[1]
-        elif self.polydeg == 2:
-            qx, kx, deltax    = coeffs_x
-            sqx, skx, sdeltax = deltas_x
+        kx, deltax         = coeffs_x[0], coeffs_x[1]
+        skx, sdeltax       = deltas_x[0], deltas_x[1]
 
         coeffs_y, deltas_y = self._poly_fitting(nom_v, nom_v_cln, pos_v_cln)
-        if self.polydeg == 1:
-            qy, ky, deltay    = 0., coeffs_y[0], coeffs_y[1]
-            sqy, sky, sdeltay = 0., deltas_y[0], deltas_y[1]
-            qxtxt, qytxt = "", ""
-        elif self.polydeg == 2:
-            qy, ky, deltay    = coeffs_y
-            sqy, sky, sdeltay = deltas_y
-            qxtxt = f"qx = {qx:12.4f} ({sqx:4.1f}),\t"
-            qytxt = f"qy = {qy:12.4f} ({sqy:4.1f}),\t"
+        ky, deltay         = coeffs_y[0], coeffs_y[1]
+        sky, sdeltay       = deltas_y[0], deltas_y[1]
+        qxtxt, qytxt = "", ""
 
         print(qxtxt, f"kx = {kx:12.4f} ({skx:4.1f}),"
               f"   deltax = {deltax:12.4f} ({sdeltax:4.1f})")
         print(qytxt, f"ky = {ky:12.4f} ({sky:4.1f}),"
               f"   deltay = {deltay:12.4f} ({sdeltay:4.1f})\n")
-        return ((qx, kx, deltax), (sqx, skx, sdeltax),
-                (qy, ky, deltay), (sqy, sky, sdeltay))
+        return ((kx, deltax), (skx, sdeltax),
+                (ky, deltay), (sky, sdeltay))
 
     def _poly_fitting(self, nom_val: np.ndarray,
                       nom_cln: np.ndarray,
@@ -693,15 +682,13 @@ class XBPMProcessor:
             covs = None
             try:
                 # polyfit(cov=True) returns (coeffs, cov_matrix), not 3 values.
-                coeffs, covs = np.polyfit(
-                    pos_cln, nom_cln, deg=self.polydeg, cov=True
-                )
+                coeffs, covs = np.polyfit(pos_cln, nom_cln, deg=1, cov=True)
             except Exception:
                 # Keep fitted coefficients even if covariance cannot be
                 # estimated (e.g., small sample count), so scaling is still
                 # applied (polyfit crashes if covariance cannot be estimated).
                 try:
-                    coeffs = np.polyfit(pos_cln, nom_cln, deg=self.polydeg)
+                    coeffs = np.polyfit(pos_cln, nom_cln, deg=1)
                     covs = None
                 except Exception as err:
                     print(f"\n WARNING: when calculating horizontal scaling"
@@ -712,10 +699,10 @@ class XBPMProcessor:
             if covs is not None:
                 deltas = np.sqrt(np.diag(covs))
             else:
-                deltas = np.zeros(self.polydeg + 1)
+                deltas = np.zeros(2)
         else:
-            coeffs = np.zeros(self.polydeg + 1)
-            deltas = np.zeros(self.polydeg + 1)
+            coeffs = np.zeros(2)
+            deltas = np.zeros(2)
         return (coeffs, deltas)
 
     @staticmethod
