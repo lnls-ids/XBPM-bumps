@@ -13,17 +13,17 @@ from .exporters import Exporter
 class XBPMApp:
     """Top-level orchestrator for XBPM analysis workflow."""
 
-    def __init__(self):
+    def __init__(self: "XBPMApp") -> None:
         """Initialize app with empty state; components created during run()."""
-        self.prm: Optional[Prm] = None
-        self.builder: Optional[ParameterBuilder] = None
-        self.reader: Optional[DataReader] = None
+        self.builder   : Optional[ParameterBuilder] = None
+        self.reader    : Optional[DataReader] = None
+        self.processor : Optional[XBPMProcessor] = None
+        self.exporter  : Optional[Exporter] = None
+        self.bpm_reference : Optional[tuple] = None
         self.data = None
-        self.processor: Optional[XBPMProcessor] = None
-        self.exporter: Optional[Exporter] = None
-        self._bpm_reference = None
+        self.prm  = None
 
-    def run(self, argv, builder) -> None:
+    def run(self, argv: list[str], builder: ParameterBuilder) -> None:
         """'Parse args, load data, run analyses, and render outputs.
 
         Args:
@@ -76,13 +76,14 @@ class XBPMApp:
             print("### ERROR: no raw data available for BPM analysis."
                   " Skipping.")
             return
-        bpm_processor = BPMProcessor(raw, self.prm)
-        measured, nominal = bpm_processor.calculate_positions()
-        self._bpm_reference = (bpm_processor.xpos, bpm_processor.ypos)
-        if self.prm.outputfile and measured is not None and nominal is not None:
+        bpmproc = BPMProcessor(raw, self.prm)
+        measured, nominal = bpmproc.calculate_positions()
+        self.bpm_reference = (bpmproc.xpos, bpmproc.ypos)
+        if (self.prm.outputfile and measured is not None and
+            nominal is not None):
             self.exporter.data_dump_bpm(measured, nominal)
 
-    def _compute_nominal_grid(self):
+    def _compute_nominal_grid(self) -> tuple:
         """Compute nominal position grid from beam position pair.
 
         Returns:
@@ -100,7 +101,7 @@ class XBPMApp:
         pos_nom_v *= self.prm.xbpmdist
         return pos_nom_h, pos_nom_v
 
-    def _resolve_reference_positions(self):
+    def _resolve_reference_positions(self) -> Optional[tuple]:
         """Resolve reference positions for XBPM analysis.
 
         Uses the usebpmref parameter to determine whether to use BPM
@@ -114,8 +115,8 @@ class XBPMApp:
             return self._compute_nominal_grid()
 
         # Use BPM measured positions as reference
-        if self._bpm_reference is not None:
-            return self._bpm_reference
+        if self.bpm_reference is not None:
+            return self.bpm_reference
         if self.prm.section is None:
             print("### ERROR: section not defined for BPM analysis. Skipping.")
             return None
@@ -126,10 +127,9 @@ class XBPMApp:
             print("### ERROR: no raw data available for BPM analysis."
                   " Skipping.")
             return None
-        bpm_processor = BPMProcessor(raw, self.prm)
-        bpm_processor.calculate_positions()
-        self._bpm_reference = (bpm_processor.xpos, bpm_processor.ypos)
-        return self._bpm_reference
+        bpmproc = BPMProcessor(raw, self.prm)
+        bpmproc.calculate_positions()
+        self.bpm_reference = (bpmproc.xpos, bpmproc.ypos)
 
     def _maybe_show_blade_map(self) -> None:
         if not self.prm.showblademap:
@@ -148,7 +148,8 @@ class XBPMApp:
         self.processor.show_blades_at_center()
 
     def _maybe_xbpm_positions(self) -> None:
-        pos_nom_h, pos_nom_v = self._resolve_reference_positions()
+        self._resolve_reference_positions()
+        pos_nom_h, pos_nom_v = self.bpm_reference
         if self.prm.xbpmpositionsraw:
             positions = self.processor.xbpm_position_calculation(
                 pos_nom_h, pos_nom_v,

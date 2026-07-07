@@ -5,8 +5,11 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 
-from .parameters  import Prm                     # noqa: E272
-from .visualizers import PositionVisualizer
+from .parameters  import Prm
+from .visualizers import PositionVisualizer as PSV
+from .visualizers import SweepVisualizer as SWV
+from .visualizers import BladeCurrentVisualizer as BCV
+
 from .constants   import ROI_SIZE_V, ROI_SIZE_H, FIGDPI    # noqa: E272
 from .config      import Config                  # noqa: E272
 
@@ -35,7 +38,6 @@ class XBPMProcessor:
         range_v (np.ndarray): Vertical sweep range.
         blades_h (dict): Blade measurements along horizontal center line.
         blades_v (dict): Blade measurements along vertical center line.
-        suppression_matrix_val: Calculated suppression matrix.
     """
 
     def __init__(self, data: dict, prm: Prm):
@@ -47,13 +49,17 @@ class XBPMProcessor:
         """
         self.data     = data
         self.prm      = prm
-        self.range_h  = None
-        self.range_v  = None
         self.blades_h = None
         self.blades_v = None
-        self.suppression_matrix_val = None
+        self._initialize_ranges()
         self.roi_h_size = prm.roisize[0] if prm.roisize else ROI_SIZE_H
         self.roi_v_size = prm.roisize[1] if prm.roisize else ROI_SIZE_V
+
+    def _initialize_ranges(self) ->  None:
+        """Initialize horizontal and vertical sweep ranges from data keys."""
+        keys = np.array(list(self.data.keys()))
+        self.range_h = np.unique(keys[:, 0])
+        self.range_v = np.unique(keys[:, 1])
 
     def analyze_central_sweeps(self, show: bool = False) -> tuple:
         """Analyze blade behavior at central sweep positions.
@@ -68,10 +74,6 @@ class XBPMProcessor:
             Tuple of (range_h, range_v, blades_h, blades_v, pos_h, pos_v)
             where pos_h and pos_v are the calculated positions.
         """
-        keys = np.array(list(self.data.keys()))
-        self.range_h = np.unique(keys[:, 0])
-        self.range_v = np.unique(keys[:, 1])
-
         # Run through central horizontal line if data is not just a point
         if len(self.range_h) > 1:
             (pos_ch_v, fit_ch_v,
@@ -111,7 +113,7 @@ class XBPMProcessor:
         pos_to_ti_v = (to_ch + ti_ch)
         pos_bi_bo_v = (bo_ch + bi_ch)
         pos_ch_v = (pos_to_ti_v - pos_bi_bo_v) / (pos_to_ti_v + pos_bi_bo_v)
-        fit_ch_v = np.polyfit(self.range_h, pos_ch_v, deg=1)
+        fit_ch_v = np.polyfit(self.range_h, pos_ch_v,  deg=1)
 
         return pos_ch_v, fit_ch_v, blades_h
 
@@ -137,10 +139,9 @@ class XBPMProcessor:
 
         return pos_cv_h, fit_cv_h, blades_v
 
-    def _central_sweeps_show(self, pos_ch_v, fit_ch_v, pos_cv_h, fit_cv_h):
+    def _central_sweeps_show(self, pos_ch_v: np.ndarray, fit_ch_v: np.ndarray,
+                             pos_cv_h: np.ndarray, fit_cv_h: np.ndarray):
         """Plot results from fittings on central sweeps."""
-        from .visualizers import SweepVisualizer
-
         # Extract fit coefficients if available
         fit_h = fit_ch_v[:, 0] if fit_ch_v is not None else None
         fit_v = fit_cv_h[:, 0] if fit_cv_h is not None else None
@@ -149,7 +150,7 @@ class XBPMProcessor:
         pos_h = pos_ch_v[:, 0] if pos_ch_v is not None else None
         pos_v = pos_cv_h[:, 0] if pos_cv_h is not None else None
 
-        fig = SweepVisualizer.plot_from_arrays(
+        fig = SWV.plot_from_arrays(
             self.range_h, self.range_v,
             pos_h, pos_v,
             fit_h, fit_v,
@@ -163,8 +164,6 @@ class XBPMProcessor:
 
     def show_blades_at_center(self) -> None:
         """Display blade measurements along central sweeping points."""
-        from .visualizers import BladeCurrentVisualizer
-
         # Ensure we have sweep data
         if self.range_h is None or self.range_v is None:
             self.analyze_central_sweeps(show=False)
@@ -175,11 +174,11 @@ class XBPMProcessor:
                   " Skipping central analysis.")
             return
 
-        fig = BladeCurrentVisualizer.plot_from_dicts(
+        fig = BCV.plot_blade_center_from_dicts(
             self.blades_h, self.blades_v,
             self.range_h, self.range_v,
             beamline=self.prm.beamline
-        )
+            )
 
         if self.prm.outputfile:
             outfile = f"central_sweep_{self.prm.beamline}.png"
@@ -187,7 +186,7 @@ class XBPMProcessor:
             print("\n Figure of blades behaviour at central sweeps"
                   f" saved to file {outfile}.\n")
 
-    def _roi_slice_indices(self, array):
+    def _roi_slice_indices(self, array: np.ndarray) -> tuple:
         """Extract centered ROI slice indices from an array, handling 1D/2D."""
         n_lin, n_col = array.shape
         n_roi_h  = min(self.roi_h_size, n_col)
@@ -206,8 +205,9 @@ class XBPMProcessor:
 
         return (fr_col, up_col, fr_row, up_row), dim
 
-    def _extract_roi_slice(self, array, dim,
-                           fr_col, up_col, fr_row, up_row):
+    def _extract_roi_slice(self, array: np.ndarray, dim: str,
+                           fr_col: int, up_col: int,
+                           fr_row: int, up_row: int) -> np.ndarray:
         """Check whether array is 1D along one axis and extract accordingly.
         
         Args:
@@ -227,12 +227,12 @@ class XBPMProcessor:
         else:
             return array[fr_row:up_row, fr_col:up_col]
 
-    def _process_position_type(self, calc_type,  # noqa: D417
-                               pos_all_h, pos_all_v,
-                               pos_roi_h, pos_roi_v,
-                               pos_nom_h, pos_nom_v,
-                               pos_nom_h_roi,
-                               pos_nom_v_roi, nosuppress, dim):
+    def _process_position_type(self, calc_type: str,  # noqa: D417
+                               pos_all_h: np.ndarray, pos_all_v: np.ndarray,
+                               pos_roi_h: np.ndarray, pos_roi_v: np.ndarray,
+                               pos_nom_h: np.ndarray, pos_nom_v: np.ndarray,
+                               pos_nom_h_roi: np.ndarray,
+                               pos_nom_v_roi: np.ndarray, nosuppress: bool, dim: str) -> dict:
         """Process a single position type (pairwise or cross-blade).
 
         Args:
@@ -248,11 +248,11 @@ class XBPMProcessor:
         """
         # Perform scaling fit
         label = "Δ/Σ" if calc_type == "pairwise" else "Partial Δ/Σ"
-        (kx, skx, deltax, sdeltax,
-         ky, sky, deltay, sdeltay) = XBPMProcessor.scaling_fit(
-            pos_roi_h, pos_roi_v,
-            pos_nom_h_roi, pos_nom_v_roi, label
+        (scalesx, sigmasx, scalesy, sigmasy) = self.scaling_fit(
+            pos_roi_h, pos_roi_v, pos_nom_h_roi, pos_nom_v_roi, label
         )
+        (kx, deltax), (skx, sdeltax) = scalesx, sigmasx
+        (ky, deltay), (sky, sdeltay) = scalesy, sigmasy
 
         # Set raw (R) or transformed (T) graph type.
         transform = "R" if nosuppress else "T"
@@ -276,8 +276,8 @@ class XBPMProcessor:
         # Scale full positions
         pos_all_h_scaled = kx * pos_all_h + deltax
         pos_all_v_scaled = ky * pos_all_v + deltay
-        pos_roi_h_scaled = kx * pos_roi_h  + deltax
-        pos_roi_v_scaled = ky * pos_roi_v  + deltay
+        pos_roi_h_scaled = kx * pos_roi_h + deltax
+        pos_roi_v_scaled = ky * pos_roi_v + deltay
 
         # Compute statistics
         diffx2_roi = (pos_roi_h_scaled - pos_nom_h_roi) ** 2
@@ -293,7 +293,7 @@ class XBPMProcessor:
             diffroi = diffxyroi
 
         # Visualize
-        visualizer = PositionVisualizer(self.prm, titles=title_map)
+        visualizer = PSV(self.prm, titles=title_map)
         visualizer.show_position_results(
             pos_nom_h, pos_nom_v,
             pos_all_h_scaled, pos_all_v_scaled,
@@ -319,9 +319,10 @@ class XBPMProcessor:
             'visualizer'   : visualizer,
         }
 
-    def _compile_results(self, pair_result, cross_result,
-                         supmat, stddevmat, nosuppress,
-                         pos_nom_h, pos_nom_v):
+    def _compile_results(self, pair_result: dict, cross_result: dict,
+                         supmat: np.ndarray, stddevmat: np.ndarray,
+                         nosuppress: bool,
+                         pos_nom_h: np.ndarray, pos_nom_v: np.ndarray) -> dict:
         """Compile and save final results from pairwise and cross-blade."""
         pair_visualizer  = pair_result['visualizer']
         cross_visualizer = cross_result['visualizer']
@@ -397,7 +398,8 @@ class XBPMProcessor:
             },
         }
 
-    def xbpm_position_calculation(self, pos_nom_h, pos_nom_v,
+    def xbpm_position_calculation(self,
+                                  pos_nom_h: np.ndarray, pos_nom_v: np.ndarray,
                                   nosuppress: bool = False,
                                   showmatrix: bool = True) -> dict:
         """Orchestrate position calculation for pairwise and cross-blade.
@@ -407,7 +409,7 @@ class XBPMProcessor:
         """
         # Ensure sweep data is available for suppression matrix estimation.
         if (self.range_h is None or self.range_v is None or
-                self.blades_h is None or self.blades_v is None):
+            self.blades_h is None or self.blades_v is None):
             self.analyze_central_sweeps(show=False)
 
         # Parse and compute core data
@@ -454,7 +456,7 @@ class XBPMProcessor:
                                      nosuppress, pos_nom_h, pos_nom_v)
 
     @staticmethod
-    def standard_suppression_matrix():
+    def standard_suppression_matrix() -> tuple:
         """Return the standard suppression matrix with 1/-1 pattern.
 
         This is the fixed pattern used for raw position calculations,
@@ -473,11 +475,17 @@ class XBPMProcessor:
         stddevmat = np.zeros_like(supmat)  # No standard deviation for fixed matrix
         return supmat, stddevmat
 
-    def suppression_matrix(self, showmatrix=False, nosuppress=False):
+    def suppression_matrix(self, showmatrix: bool = False,
+                           nosuppress: bool =   False) -> tuple:
         """Calculate the suppression matrix from blade behavior.
 
-        When nosuppress=True (raw), returns the standard 1/-1 matrix.
-        When nosuppress=False (scaled), calculates from fitted slopes.
+        Args:
+            showmatrix: If True, prints the suppression matrix.
+            nosuppress: If True, returns the standard 1/-1 matrix.
+                        If False, calculates from fitted slopes.
+
+        Returns:
+            Tuple of (suppression matrix, standard deviation matrix)
         """
         if nosuppress:
             # Return standard matrix for raw calculations
@@ -518,11 +526,11 @@ class XBPMProcessor:
         ])
 
         if showmatrix:
-            print(f'Undulator phase or gap: {self.prm.phaseorgap}')
+            print(f'\nUndulator phase or gap: {self.prm.phaseorgap}')
             print("\nSuppression matrix:")
             for ii, lin in enumerate(supmat):
                 for jj, col in enumerate(lin):
-                    print(f" {col:12.6f} (±{stddevmat[ii, jj]:10.6f})", end='')
+                    print(f" {col:12.6f} ({stddevmat[ii, jj]:.1e})", end='')
                 print()
             print()
 
@@ -530,8 +538,18 @@ class XBPMProcessor:
         return supmat, stddevmat
 
     @staticmethod
-    def central_line_fit(blades, range_vals, direction):
-        """Linear fittings to each blade's data through central line."""
+    def central_line_fit(blades: dict, range_vals: np.ndarray,
+                         direction: str) -> tuple:
+        """Linear fittings to each blade's data through central line.
+        
+        Args:
+            blades: Dictionary of blade measurements along a central line.
+            range_vals: Array of sweep positions (angles or distances).
+            direction: 'h' for horizontal, 'v' for vertical.
+
+        Returns:
+            Tuple of (fit coefficients, std dev values) for each blade.
+        """
         if blades is None:
             dr = 'horizontal' if direction == 'h' else 'vertical'
             print(f"\n WARNING: (central_line_fit) {dr} blades' values"
@@ -565,7 +583,7 @@ class XBPMProcessor:
             positions[pos] = np.array([dsps[0] / dsps[1], dsps[2] / dsps[3]])
         return positions
 
-    def position_dict_parse(self, data):
+    def position_dict_parse(self, data) -> tuple:
         """Parse XBPM position dict into structured arrays."""
         gridlist = np.array(list(data.keys()))
 
@@ -603,7 +621,7 @@ class XBPMProcessor:
         return (xbpm_nom_h, xbpm_nom_v, xbpm_meas_h, xbpm_meas_v)
 
     @staticmethod
-    def beam_position_cross(blades):
+    def beam_position_cross(blades) -> list:
         """Calculate beam position from blades' currents (cross-blade)."""
         to, ti, bi, bo = blades
         v1 = (to - bi) / (to + bi)
@@ -612,8 +630,8 @@ class XBPMProcessor:
         vpos = (v1 + v2)
         return [hpos, vpos]
 
-    @staticmethod
-    def scaling_fit(pos_h, pos_v, nom_h, nom_v, calctype=""):
+    def scaling_fit(self, pos_h: np.ndarray, pos_v: np.ndarray,
+                    nom_h: np.ndarray, nom_v: np.ndarray, calctype=""):
         """Calculate scaling coefficients from fitted positions.
         
         Args:
@@ -639,90 +657,56 @@ class XBPMProcessor:
         pos_v_cln = pos_v[v_finitemask]
         nom_v_cln = nom_v[v_finitemask]
 
-        kx, deltax   = 1., 0.
-        skx, sdeltax = 0., 0.
-        if len(set(nom_h.ravel())) > 1 and pos_h_cln.size >= 2:
-            coeffs_x = None
-            covx = None
+        coeffs_x, deltas_x = self._poly_fitting(nom_h, nom_h_cln, pos_h_cln)
+        kx, deltax         = coeffs_x[0], coeffs_x[1]
+        skx, sdeltax       = deltas_x[0], deltas_x[1]
+
+        coeffs_y, deltas_y = self._poly_fitting(nom_v, nom_v_cln, pos_v_cln)
+        ky, deltay         = coeffs_y[0], coeffs_y[1]
+        sky, sdeltay       = deltas_y[0], deltas_y[1]
+        qxtxt, qytxt = "", ""
+
+        print(qxtxt, f"kx = {kx:12.4f} ({skx:4.1f}),"
+              f"   deltax = {deltax:12.4f} ({sdeltax:4.1f})")
+        print(qytxt, f"ky = {ky:12.4f} ({sky:4.1f}),"
+              f"   deltay = {deltay:12.4f} ({sdeltay:4.1f})\n")
+        return ((kx, deltax), (skx, sdeltax),
+                (ky, deltay), (sky, sdeltay))
+
+    def _poly_fitting(self, nom_val: np.ndarray,
+                      nom_cln: np.ndarray,
+                      pos_cln: np.ndarray) -> tuple:
+        """Return fitting parameters for scaling fit."""
+        if len(set(nom_val.ravel())) > 1 and pos_cln.size >= 2:
+            coeffs = None
+            covs = None
             try:
                 # polyfit(cov=True) returns (coeffs, cov_matrix), not 3 values.
-                coeffs_x, covx = np.polyfit(
-                    pos_h_cln, nom_h_cln, deg=1, cov=True
-                )
+                coeffs, covs = np.polyfit(pos_cln, nom_cln, deg=1, cov=True)
             except Exception:
-                # Keep fitted coefficients even if covariance cannot be estimated
-                # (e.g., small sample count), so scaling is still applied.
+                # Keep fitted coefficients even if covariance cannot be
+                # estimated (e.g., small sample count), so scaling is still
+                # applied (polyfit crashes if covariance cannot be estimated).
                 try:
-                    coeffs_x = np.polyfit(pos_h_cln, nom_h_cln, deg=1)
+                    coeffs = np.polyfit(pos_cln, nom_cln, deg=1)
+                    covs = None
                 except Exception as err:
                     print(f"\n WARNING: when calculating horizontal scaling"
                           f" coefficients:\n{err}\n"
                           " Setting to default values.")
 
-            if coeffs_x is not None:
-                kx, deltax = coeffs_x
-            if covx is not None:
-                skx     = np.sqrt(covx[0, 0])
-                sdeltax = np.sqrt(covx[1, 1])
-
-        ky, deltay   = 1., 0.
-        sky, sdeltay = 0., 0.
-        if len(set(nom_v.ravel())) > 1 and pos_v_cln.size >= 2:
-            coeffs_y = None
-            covy = None
-            try:
-                # polyfit(cov=True) returns (coeffs, cov_matrix), not 3 values.
-                coeffs_y, covy = np.polyfit(
-                    pos_v_cln, nom_v_cln, deg=1, cov=True
-                )
-            except Exception:
-                try:
-                    coeffs_y = np.polyfit(pos_v_cln, nom_v_cln, deg=1)
-                except Exception as err:
-                    print(f"\n WARNING: when calculating vertical scaling"
-                          f" coefficients:\n{err}\n"
-                          " Setting to default values.")
-
-            if coeffs_y is not None:
-                ky, deltay = coeffs_y
-            if covy is not None:
-                sky     = np.sqrt(covy[0, 0])
-                sdeltay = np.sqrt(covy[1, 1])
-
-        print(f"kx = {kx:12.4f} ({skx:4.1f}),"
-              f"   deltax = {deltax:12.4f} ({sdeltax:4.1f})")
-        print(f"ky = {ky:12.4f} ({sky:4.1f}),"
-              f"   deltay = {deltay:12.4f} ({sdeltay:4.1f})\n")
-        return kx, skx, deltax, sdeltax, ky, sky, deltay, sdeltay
+            # Extract standard deviations from covariance matrix if available.
+            if covs is not None:
+                deltas = np.sqrt(np.diag(covs))
+            else:
+                deltas = np.zeros(2)
+        else:
+            coeffs = np.zeros(2)
+            deltas = np.zeros(2)
+        return (coeffs, deltas)
 
     @staticmethod
-    def _estimate_spreaded_std_dev(pos_h_scaled, pos_v_scaled,
-                                   rawblades):
-        """Estimate standard deviations in ROI between scaled and nominal.
-
-        Args:
-            pos_h_scaled: Scaled horizontal positions array.
-            pos_v_scaled: Scaled vertical positions array.
-            rawblades: Dictionary of raw blade measurements in ROI.
-
-        Returns:
-            diffx2: Squared horizontal differences in ROI.
-            diffy2: Squared vertical differences in ROI.
-        """
-        # Calculate squared differences
-        # for key, val in rawblades.items():
-        #     to = val['to']
-        #     ti = val['ti']
-        #     bo = val['bo']
-        #     bi = val['bi']
-
-        # diffx2 = (pos_h_scaled - pos_nom_h) ** 2
-        # diffy2 = (pos_v_scaled - pos_nom_v) ** 2
-        # return diffx2, diffy2
-        pass
-
-    @staticmethod
-    def _calculate_roi_stats(diffx2, diffy2):
+    def _calculate_roi_stats(diffx2: np.ndarray, diffy2: np.ndarray) -> dict:
         """Calculate RMS statistics from squared position differences in ROI.
 
         Args:
@@ -755,7 +739,7 @@ class XBPMProcessor:
             'diff_min_v'  : diff_min_v,
         }
 
-    def data_parse(self):
+    def data_parse(self) -> tuple:
         """Extract each blade's data from whole data dict into arrays."""
         dk = np.array(list(self.data.keys()))
 
