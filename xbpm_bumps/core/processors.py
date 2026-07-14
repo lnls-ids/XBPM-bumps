@@ -227,21 +227,21 @@ class XBPMProcessor:
         else:
             return array[fr_row:up_row, fr_col:up_col]
 
-    def _process_position_type(self, calc_type: str,  # noqa: D417
+    def _scale_positions(self, calc_type: str,  # noqa: D417
                                pos_all_h: np.ndarray, pos_all_v: np.ndarray,
                                pos_roi_h: np.ndarray, pos_roi_v: np.ndarray,
                                pos_nom_h: np.ndarray, pos_nom_v: np.ndarray,
                                pos_nom_h_roi: np.ndarray,
                                pos_nom_v_roi: np.ndarray, nosuppress: bool, dim: str) -> dict:
-        """Process a single position type (pairwise or cross-blade).
+        """Scale positions, pairwise or cross-blade.
 
         Args:
-            calc_type: 'pairwise' or 'cross'
-            pos_all_h/v: Full position array (measured)
-            pos_nom_h/v: Nominal position array (reference)
-            pos_nom_h/v_roi: ROI slice of nominal positions
-            nosuppress: If True, label results as raw mode.
-            dim : Dimension of ROI ('h', 'v', or '2d') for RMS calculation.
+            calc_type       : 'pairwise' (Δ/Σ) or 'cross' (partial Δ/Σ).
+            pos_all_h/v     : Full position array (measured)
+            pos_nom_h/v     : Nominal position array (reference)
+            pos_nom_h/v_roi : ROI slice of nominal positions
+            nosuppress      : If True, label results as raw mode.
+            dim             : Dimension of ROI ('h', 'v', or '2d').
 
         Returns:
             Dict with scaled positions, scales, stats, visualizer.
@@ -411,7 +411,8 @@ class XBPMProcessor:
         }
 
     def xbpm_position_calculation(self,
-                                  pos_nom_h: np.ndarray, pos_nom_v: np.ndarray,
+                                  pos_nom_h: np.ndarray,
+                                  pos_nom_v: np.ndarray,
                                   nosuppress: bool = False,
                                   showmatrix: bool = True) -> dict:
         """Orchestrate position calculation for pairwise and cross-blade.
@@ -443,7 +444,7 @@ class XBPMProcessor:
         pos_roi_v = self._extract_roi_slice(pos_v, dim, *from_upto)
 
         # Process data: fitting, scaling, stats, visualization.
-        pairwise_result = self._process_position_type(
+        pairwise_result = self._scale_positions(
                 'pairwise', pos_h, pos_v, pos_roi_h, pos_roi_v,
                 pos_nom_h, pos_nom_v, pos_nom_h_roi, pos_nom_v_roi,
                 nosuppress, dim
@@ -457,15 +458,17 @@ class XBPMProcessor:
         pos_roi_v = self._extract_roi_slice(pos_v, dim, *from_upto)
 
         # Process data: fitting, scaling, stats, visualization.
-        cross_result = self._process_position_type(
+        cross_result = self._scale_positions(
             'cross', pos_h, pos_v, pos_roi_h, pos_roi_v,
             pos_nom_h, pos_nom_v, pos_nom_h_roi, pos_nom_v_roi,
             nosuppress, dim
             )
 
         # Compile and return results
-        return self._compile_results(pairwise_result, cross_result, supmat, stddevmat,
-                                     nosuppress, pos_nom_h, pos_nom_v)
+        return self._compile_results(pairwise_result,
+                                     cross_result, supmat,
+                                     stddevmat, nosuppress,
+                                     pos_nom_h, pos_nom_v)
 
     @staticmethod
     def standard_suppression_matrix() -> tuple:
