@@ -29,32 +29,38 @@ class Exporter:
         # Comprehensive parameter descriptions for HDF5 metadata
         self.PARAM_DESCRIPTIONS = {
             # Command-line/runtime flags
-            'showblademap': 'Display blade map visualization',
-            'centralsweep': 'Process only central sweep data',
-            'showbladescenter': 'Display blade center positions',
-            'xbpmpositions': 'Calculate XBPM positions from BPM data',
-            'showbpmpositions': 'Display BPM-calculated positions panel in GUI',
-            'xbpmpositionsraw': 'Calculate raw (unsuppressed) XBPM positions',
-            'usebpmref': 'Use BPM measured positions as nominal reference',
-            'outputfile': 'Path to output HDF5 file',
-            'workdir': 'Working directory for analysis',
-            'skip': 'Number of initial sweeps to skip in processing',
-            'gridstep': 'Grid step size for scan range',
-            'maxradangle': 'Maximum radiation angle for analysis (mrad)',
+            'showblademap'     : 'Display blade map visualization',
+            'centralsweep'     : 'Process only central sweep data',
+            'showbladescenter' : 'Display blade center positions',
+            'xbpmpositions'    : 'Calculate XBPM positions from BPM data',
+            'showbpmpositions' : (
+                'Display BPM-calculated positions panel in GUI'
+                ),
+            'xbpmpositionsraw' : 'Calculate raw (unsuppressed) XBPM positions',
+            'usebpmref'        : (
+                'Use BPM measured positions as nominal reference'
+                ),
+            'outputfile'       : 'Path to output HDF5 file',
+            'workdir'          : 'Working directory for analysis',
+            'skip'             : 'Number of initial sweeps to skip in processing',
+            # 'gridstep'         : 'Grid step size for scan range',
+            'maxradangle'      : 'Maximum radiation angle for analysis (mrad)',
 
             # Beamline configuration
-            'beamline': 'Beamline identifier (e.g., MANACA, CATERETE)',
-            'section': 'Beamline section/location',
-            'current': 'Storage ring current during measurement (mA)',
-            'phaseorgap': 'Undulator phase or gap value during measurement',
+            'beamline'         : 'Beamline identifier (e.g., MNC, CAT)',
+            'section'          : 'Beamline section/location',
+            'current'          : 'Storage ring current along measurement (mA)',
+            'phaseorgap'       : 'Undulator phase or gap value during measurement',
 
             # Distance parameters
-            'bpmdist': 'Distance between BPM detectors (m)',
-            'xbpmdist': 'Distance from radiation source to XBPM detector (m)',
+            'bpmdist'          : 'Distance between BPM detectors (m)',
+            'xbpmdist'         : (
+                'Distance from radiation source to XBPM detector (m)'
+                ),
 
             # Blade configuration
-            'blademap': 'XBPM blade configuration mapping',
-            'nroi': 'Number of regions of interest per blade',
+            'blademap'         : 'XBPM blade configuration mapping',
+            'nroi'             : 'Number of regions of interest per blade',
         }
 
         # Analysis group and dataset descriptions

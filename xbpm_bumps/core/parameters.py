@@ -1,17 +1,17 @@
 """Parameter handling and CLI parsing."""
 
 import argparse
-import sys
+# import sys
 from dataclasses import dataclass, field
 from typing import Optional, Any, List
 
-import numpy as np
+# import numpy as np
 
 # Import DataReader for canonical _extract_beamlines
 # from xbpm_bumps.core.readers import DataReader
 
 from .config import Config
-from .constants import GRIDSTEP, HELP_DESCRIPTION, ROI_SIZE_H, ROI_SIZE_V
+from .constants import HELP_DESCRIPTION, ROI_SIZE_H, ROI_SIZE_V
 
 
 @dataclass
@@ -33,13 +33,13 @@ class Prm:
     xbpmdist         : Optional[float]     = None
     workdir          : Optional[str]       = None
     skip             : int                 = 0
-    gridstep         : float               = GRIDSTEP
+    # gridstep         : float               = GRIDSTEP
     maxradangle      : float               = 20.0
 
     # runtime-filled fields
     beamline         : str                 = ""
-    current          : Optional[Any]       = None
-    phaseorgap       : Optional[Any]       = None
+    current          : Optional[float]     = None
+    phaseorgap       : Optional[float]     = None
     bpmdist          : Optional[float]     = None
     scalepolydeg     : Optional[int]       = 1
     section          : Optional[str]       = None
@@ -69,8 +69,8 @@ class ParameterBuilder:
 
     def __init__(self, prm: Optional[Prm] = None):
         """Initialize builder with optional pre-existing parameters."""
-        self.prm:     Prm = prm if prm is not None else Prm()
-        self.rawdata: Optional[list] = None
+        self.prm     : Prm = prm if prm is not None else Prm()
+        self.rawdata : Optional[list] = None
 
     def from_cli(self, argv=None) -> Prm:
         """Parse command-line arguments and build initial Prm instance.
@@ -92,7 +92,6 @@ class ParameterBuilder:
             scalepolydeg     = args.scalepolydeg,
             workdir          = args.workdir,
             skip             = int(args.skip),
-            gridstep         = float(args.gridstep),
             maxradangle      = 20.0,
             beamline         = "",
             roisize          = [
@@ -155,13 +154,6 @@ class ParameterBuilder:
             help='Scaling polynomial degree'
         )
         parser.add_argument(
-            '-g', '--gridstep', type=float, default=GRIDSTEP,
-            help=("""Step between neighbour sites in the grid.
-                Usually inferred from data, but might be provided
-                in some cases."""
-            ),
-        )
-        parser.add_argument(
             '--roi-h', type=int, default=None,
             help='ROI horizontal size (number of sites)'
         )
@@ -207,39 +199,31 @@ class ParameterBuilder:
                   f" {self.prm.beamline}'s XBPM set to"
                   f" {self.prm.xbpmdist:.3f} m (beamline default).")
 
-        self.prm.gridstep = self._infer_gridstep()
+        # self.prm.gridstep = self._infer_gridstep()
 
-    def _infer_gridstep(self) -> float:
-        """Calculate grid step from data."""
-        agx = [self.rawdata[ii][2]['agx'] for ii in range(len(self.rawdata))]
-        agy = [self.rawdata[ii][2]['agy'] for ii in range(len(self.rawdata))]
+    # def _infer_gridstep(self) -> float:
+    #     """Calculate grid step from data."""
+    #     agx = [self.rawdata[ii][2]['agx']
+    #            for ii in range(len(self.rawdata))]
+    #     agy = [self.rawdata[ii][2]['agy']
+    #            for ii in range(len(self.rawdata))]
 
-        xset = list(set(agx))
-        gridstepx = 0 if len(xset) == 1 else np.abs(xset[1] - xset[0])
-        yset = list(set(agy))
-        gridstepy = 0 if len(yset) == 1 else np.abs(yset[1] - yset[0])
+    #     xset = list(set(agx))
+    #     gridstepx = 0 if len(xset) == 1 else np.abs(xset[1] - xset[0])
+    #     yset = list(set(agy))
+    #     gridstepy = 0 if len(yset) == 1 else np.abs(yset[1] - yset[0])
 
-        if gridstepx != gridstepy:
-            print(f"\n WARNING: horizontal grid step ({gridstepx})"
-                  f" differs from vertical grid step ({gridstepy})."
-                  "\n I'll try it with the smaller value, if not zero.")
+    #     if gridstepx != gridstepy:
+    #         print(f"\n WARNING: horizontal grid step ({gridstepx})"
+    #               f" differs from vertical grid step ({gridstepy})."
+    #               "\n I'll try it with the smaller value, if not zero.")
 
-        if gridstepx < gridstepy and gridstepx != 0:
-            return gridstepx
-        elif gridstepy != 0:
-            return gridstepy
+    #     if gridstepx < gridstepy and gridstepx != 0:
+    #         return gridstepx
+    #     elif gridstepy != 0:
+    #         return gridstepy
 
-        print(" ERROR: I could not infer the grid step size. "
-              " Please, rerun and provide the value manually,"
-              " with option -g. Aborting.")
-        sys.exit(0)
-
-    def lastfield(self, name: str, fld: str = ' ') -> str:
-        """Get the last part of string separated by given character."""
-        return name.split(fld)[-1]
-
-    def found_key(self, my_dict: dict, target_value: str) -> str:
-        """Find key in dictionary by its value."""
-        return next(
-            key for key, value in my_dict.items() if value == target_value
-        )
+    #     print(" ERROR: I could not infer the grid step size. "
+    #           " Please, rerun and provide the value manually,"
+    #           " with option -g. Aborting.")
+    #     sys.exit(0)

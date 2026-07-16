@@ -44,8 +44,8 @@ class XBPMProcessor:
         """Initialize processor with data and parameters.
 
         Args:
-            data: Measurement data dictionary.
-            prm: Parameters dataclass instance.
+            data : Measurement data dictionary.
+            prm  : Parameters dataclass instance.
         """
         self.data     = data
         self.prm      = prm
@@ -187,25 +187,45 @@ class XBPMProcessor:
                   f" saved to file {outfile}.\n")
 
     def _roi_slice_indices(self, array: np.ndarray) -> tuple:
-        """Extract centered ROI slice indices from an array, handling 1D/2D."""
+        """Extract centered ROI slice indices from an array, handling 1D/2D.
+
+        Analyze 1D and 2D arrays to determine the appropriate slice indices
+        for the region of interest (ROI). The ROI is centered and sized according to the specified horizontal and vertical dimensions, while ensuring that the indices remain within the bounds of the input array.
+
+        Args:
+            array: Input array from which to extract ROI slice.
+
+        Returns:
+            A tuple containing the slice indices (fr_col, up_col, fr_row,
+            up_row).
+        """
         n_lin, n_col = array.shape
-        n_roi_h  = min(self.roi_h_size, n_col)
-        n_roi_v  = min(self.roi_v_size, n_lin)
-        fr_col     = max(0, int((n_col - n_roi_h) / 2))
-        up_col     = min(n_col, fr_col + n_roi_h)
-        fr_row     = max(0, int((n_lin - n_roi_v) / 2))
-        up_row     = min(n_lin, fr_row + n_roi_v)
+        n_roi_h = min(self.roi_h_size, n_col)
+        n_roi_v = min(self.roi_v_size, n_lin)
 
-        if fr_col == up_col:
-            dim = 'h'
-        elif fr_row == up_row:
-            dim = 'v'
-        else:
-            dim = '2d'
+        # DEBUG
+        # print("\n#####\n##### DEBUG: _roi_slice_indices, array shape = "
+        #       f" {array.shape}, ROI H = {n_roi_h}, ROI V = {n_roi_v}"
+        #       "\n#####\n")
+        # DEBUG
 
-        return (fr_col, up_col, fr_row, up_row), dim
+        fr_col  = max(0, int((n_col - n_roi_h) / 2))
+        up_col  = min(n_col, fr_col + n_roi_h)
 
-    def _extract_roi_slice(self, array: np.ndarray, dim: str,
+        fr_row  = max(0, int((n_lin - n_roi_v) / 2))
+        up_row  = min(n_lin, fr_row + n_roi_v)
+
+        # DEBUG
+        # print("#####\n##### DEBUG: _roi_slice_indices, "
+        #       f" col : {fr_col} - {up_col},"
+        #       f" row : {fr_row} - {up_row},"
+        #       "\n#####\n")
+        #     #   f" dim = {dim}"
+        # DEBUG
+
+        return (fr_col, up_col, fr_row, up_row)  #, dim
+
+    def _extract_roi_slice(self, array: np.ndarray,
                            fr_col: int, up_col: int,
                            fr_row: int, up_row: int) -> np.ndarray:
         """Check whether array is 1D along one axis and extract accordingly.
@@ -220,19 +240,20 @@ class XBPMProcessor:
         Returns:
             Extracted ROI slice from the input array.
         """
-        if dim == 'h':
-            return array[0, fr_col:up_col]
-        elif dim == 'v':
-            return array[fr_row:up_row, 0]
+        if array.shape[0] == 1:
+            return array[0:1, fr_col:up_col]
+        elif array.shape[1] == 1:
+            return array[fr_row:up_row, 0:1]
         else:
             return array[fr_row:up_row, fr_col:up_col]
 
-    def _scale_positions(self, calc_type: str,  # noqa: D417
-                               pos_all_h: np.ndarray, pos_all_v: np.ndarray,
-                               pos_roi_h: np.ndarray, pos_roi_v: np.ndarray,
-                               pos_nom_h: np.ndarray, pos_nom_v: np.ndarray,
-                               pos_nom_h_roi: np.ndarray,
-                               pos_nom_v_roi: np.ndarray, nosuppress: bool, dim: str) -> dict:
+    def _scale_positions(self, calc_type: str,
+                         pos_all_h: np.ndarray, pos_all_v: np.ndarray,
+                         pos_roi_h: np.ndarray, pos_roi_v: np.ndarray,
+                         pos_nom_h: np.ndarray, pos_nom_v: np.ndarray,
+                         pos_nom_h_roi: np.ndarray,
+                         pos_nom_v_roi: np.ndarray, nosuppress: bool
+                        ) -> dict:
         """Scale positions, pairwise or cross-blade.
 
         Args:
@@ -241,7 +262,6 @@ class XBPMProcessor:
             pos_nom_h/v     : Nominal position array (reference)
             pos_nom_h/v_roi : ROI slice of nominal positions
             nosuppress      : If True, label results as raw mode.
-            dim             : Dimension of ROI ('h', 'v', or '2d').
 
         Returns:
             Dict with scaled positions, scales, stats, visualizer.
@@ -283,14 +303,7 @@ class XBPMProcessor:
         diffx2_roi = (pos_roi_h_scaled - pos_nom_h_roi) ** 2
         diffy2_roi = (pos_roi_v_scaled - pos_nom_v_roi) ** 2
         stats      = self._calculate_roi_stats(diffx2_roi, diffy2_roi)
-        diffxyroi  = np.sqrt(diffx2_roi + diffy2_roi)
-
-        if dim == 'h':
-            diffroi = diffx2_roi
-        elif dim == 'v':
-            diffroi = diffy2_roi
-        else:
-            diffroi = diffxyroi
+        diffroi    = np.sqrt(diffx2_roi + diffy2_roi)
 
         # Visualize
         visualizer = PSV(self.prm, titles=title_map)
@@ -427,41 +440,45 @@ class XBPMProcessor:
 
         # Parse and compute core data
         blades, _ = self.data_parse()
-        supmat, stddevmat = self.suppression_matrix(showmatrix=showmatrix,
-                                         nosuppress=nosuppress)
+        supmat, stddevmat = self.suppression_matrix(
+            showmatrix=showmatrix, nosuppress=nosuppress
+            )
 
         # Extract nominal ROI slices.
-        from_upto, dim = self._roi_slice_indices(pos_nom_h)
-        pos_nom_h_roi  = self._extract_roi_slice(pos_nom_h, dim, *from_upto)
-        pos_nom_v_roi  = self._extract_roi_slice(pos_nom_v, dim, *from_upto)
+        from_upto     = self._roi_slice_indices(pos_nom_h)
+        pos_nom_h_roi = self._extract_roi_slice(pos_nom_h, *from_upto)
+        pos_nom_v_roi = self._extract_roi_slice(pos_nom_v, *from_upto)
 
         # Pairwise calculation (Delta/Sigma).
         pos_pair = self.beam_position_pair(supmat)
         (_, _, pos_h, pos_v) = self.position_dict_parse(pos_pair)
 
         # Extract ROI slices from measured data.
-        pos_roi_h = self._extract_roi_slice(pos_h, dim, *from_upto)
-        pos_roi_v = self._extract_roi_slice(pos_v, dim, *from_upto)
+        pos_roi_pair_h = self._extract_roi_slice(pos_h, *from_upto)
+        pos_roi_pair_v = self._extract_roi_slice(pos_v, *from_upto)
 
         # Process data: fitting, scaling, stats, visualization.
         pairwise_result = self._scale_positions(
-                'pairwise', pos_h, pos_v, pos_roi_h, pos_roi_v,
-                pos_nom_h, pos_nom_v, pos_nom_h_roi, pos_nom_v_roi,
-                nosuppress, dim
+                'pairwise', pos_h, pos_v,
+                pos_roi_pair_h, pos_roi_pair_v,
+                pos_nom_h, pos_nom_v,
+                pos_nom_h_roi, pos_nom_v_roi, nosuppress
             )
 
         # Cross-blade calculation (partial Delta/Sigma).
-        pos_h, pos_v = self.beam_position_cross(blades)
+        pos_cross_h, pos_cross_v = self.beam_position_cross(blades)
 
         # Extract ROI slices from measured data.
-        pos_roi_h = self._extract_roi_slice(pos_h, dim, *from_upto)
-        pos_roi_v = self._extract_roi_slice(pos_v, dim, *from_upto)
+        pos_roi_cross_h = self._extract_roi_slice(pos_cross_h, *from_upto)
+        pos_roi_cross_v = self._extract_roi_slice(pos_cross_v, *from_upto)
 
         # Process data: fitting, scaling, stats, visualization.
         cross_result = self._scale_positions(
-            'cross', pos_h, pos_v, pos_roi_h, pos_roi_v,
-            pos_nom_h, pos_nom_v, pos_nom_h_roi, pos_nom_v_roi,
-            nosuppress, dim
+            'cross', pos_cross_h, pos_cross_v,
+            pos_roi_cross_h, pos_roi_cross_v,
+            pos_nom_h, pos_nom_v,
+            pos_nom_h_roi, pos_nom_v_roi,
+            nosuppress
             )
 
         # Compile and return results
@@ -470,28 +487,8 @@ class XBPMProcessor:
                                      stddevmat, nosuppress,
                                      pos_nom_h, pos_nom_v)
 
-    @staticmethod
-    def standard_suppression_matrix() -> tuple:
-        """Return the standard suppression matrix with 1/-1 pattern.
-
-        This is the fixed pattern used for raw position calculations,
-        independent of blade behavior or data fitting.
-
-        Returns:
-            np.ndarray: 4x4 standard suppression matrix
-            np.ndarray: 4x4 zero matrix for standard deviation (no fit)
-        """
-        supmat =  np.array([
-            [1, -1, -1,  1],
-            [1,  1,  1,  1],
-            [1,  1, -1, -1],
-            [1,  1,  1,  1],
-        ], dtype=float)
-        stddevmat = np.zeros_like(supmat)  # No standard deviation for fixed matrix
-        return supmat, stddevmat
-
     def suppression_matrix(self, showmatrix: bool = False,
-                           nosuppress: bool =   False) -> tuple:
+                           nosuppress: bool = False) -> tuple:
         """Calculate the suppression matrix from blade behavior.
 
         Args:
@@ -504,13 +501,13 @@ class XBPMProcessor:
         """
         if nosuppress:
             # Return standard matrix for raw calculations
-            return self.standard_suppression_matrix()
+            return Config.standard_suppression_matrix()
 
         # Calculate from blade slopes for scaled calculations
-        pch, covs_h = XBPMProcessor.central_line_fit(self.blades_h,
-                                             self.range_h, 'h')
-        pcv, covs_v = XBPMProcessor.central_line_fit(self.blades_v,
-                                             self.range_v, 'v')
+        pch, covs_h = self.central_line_fit(self.blades_h,
+                                            self.range_h, 'h')
+        pcv, covs_v = self.central_line_fit(self.blades_v,
+                                            self.range_v, 'v')
 
         if len(self.range_h) > 1:
             sdevh = np.sqrt(covs_h) * pch[0, 0] / (pch[:, 0]**2)
@@ -552,8 +549,7 @@ class XBPMProcessor:
         # Exporter(self.prm).write_supmat(supmat)
         return supmat, stddevmat
 
-    @staticmethod
-    def central_line_fit(blades: dict, range_vals: np.ndarray,
+    def central_line_fit(self, blades: dict, range_vals: np.ndarray,
                          direction: str) -> tuple:
         """Linear fittings to each blade's data through central line.
         

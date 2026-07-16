@@ -172,8 +172,8 @@ class XBPMAnalyzer(QObject):
             argv.extend(['-d', str(params['xbpmdist'])])
         if params.get('scalepolydeg') is not None:
             argv.extend(['-p', str(params['scalepolydeg'])])
-        if params.get('gridstep') is not None:
-            argv.extend(['-g', str(params['gridstep'])])
+        # if params.get('gridstep') is not None:
+        #     argv.extend(['-g', str(params['gridstep'])])
         if params.get('skip', 0) > 0:
             argv.extend(['-k', str(params['skip'])])
 
@@ -478,23 +478,22 @@ class XBPMAnalyzer(QObject):
         self.analysisProgress.emit("\n# Calculating scaled XBPM positions...")
         pos_nom_h, pos_nom_v = self._resolve_reference_positions(results)
         result_data = self.app.processor.xbpm_position_calculation(
-            pos_nom_h, pos_nom_v,
-            nosuppress=False,
-            showmatrix=True,
-        )
+            pos_nom_h, pos_nom_v, nosuppress=False, showmatrix=True,
+            )
+
         # Handle both dict and list returns for backward compatibility
         if isinstance(result_data, dict):
             # New format: positions is [pairwise_dict, cross_dict]
-            positions = result_data.get('positions', [])
+            positions    = result_data.get('positions', [])
             pairwise_fig = result_data.get('pairwise_figure')
-            cross_fig = result_data.get('cross_figure')
+            cross_fig    = result_data.get('cross_figure')
             # Store the full dict including positions list for HDF5 export
             results['positions_scaled_full'] = result_data
         else:
             # Old format: positions is list [pairwise_dict, cross_dict]
-            positions = result_data
+            positions    = result_data
             pairwise_fig = None
-            cross_fig = None
+            cross_fig    = None
             # Wrap in dict format for HDF5 export
             results['positions_scaled_full'] = {'positions': positions}
 

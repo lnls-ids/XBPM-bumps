@@ -220,3 +220,25 @@ class Config:
         calc_label  = cls.POSITION_CALC_LABELS.get(calc_type,
                                                    str(calc_type or ""))
         return f"{scope_label} {calc_label}".strip()
+
+    @staticmethod
+    def standard_suppression_matrix() -> tuple:
+        """Return the standard suppression matrix with 1/-1 pattern.
+
+        This is the fixed pattern used for raw position calculations,
+        independent of blade behavior or data fitting.
+
+        Returns:
+            np.ndarray: 4x4 standard suppression matrix
+            np.ndarray: 4x4 zero matrix for standard deviation (no fit)
+        """
+        import numpy as np
+        supmat =  np.array([
+            [1, -1, -1,  1],
+            [1,  1,  1,  1],
+            [1,  1, -1, -1],
+            [1,  1,  1,  1],
+        ], dtype=float)
+        # No standard deviation for fixed matrix
+        stddevmat = np.zeros_like(supmat)
+        return supmat, stddevmat

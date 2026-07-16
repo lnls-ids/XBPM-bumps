@@ -349,3 +349,4 @@ __pycache__/
 .DS_Store
 *.swp
 *~
+*legacy*

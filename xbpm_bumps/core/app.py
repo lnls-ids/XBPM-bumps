@@ -13,7 +13,7 @@ from .visualizers import BladeMapVisualizer
 class XBPMApp:
     """Top-level orchestrator for XBPM analysis workflow."""
 
-    def __init__(self: "XBPMApp") -> None:
+    def __init__(self) -> None:
         """Initialize app with empty state; components created during run()."""
         self.builder       : Optional[ParameterBuilder] = None
         self.reader        : Optional[DataReader]       = None
@@ -27,23 +27,23 @@ class XBPMApp:
         """'Parse args, load data, run analyses, and render outputs.
 
         Args:
-            argv: Command-line arguments (list of strings).
-            builder: Canonical ParameterBuilder instance (must be provided)
+            argv    : command-line arguments (list of strings).
+            builder : canonical ParameterBuilder instance
         """
         self.builder   = builder
         self.prm       = self.builder.from_cli(argv)
         self.reader    = DataReader(self.prm, self.builder)
-        self.reader.read()
+        self.reader.read_data()
         self.data, self.rawblades = self.reader._blades_fetch()
 
         self.processor = XBPMProcessor(self.data, self.prm)
         self.exporter  = Exporter(self.prm)
 
-        self._maybe_bpm_positions()
-        self._maybe_show_blade_map()
-        self._maybe_central_sweeps()
-        self._maybe_show_blades_at_center()
-        self._maybe_xbpm_positions()
+        self._bpm_positions()
+        self._show_blade_map()
+        self._central_sweeps()
+        self._show_blades_at_center()
+        self._xbpm_positions()
 
         plt.show()
 
@@ -64,7 +64,8 @@ class XBPMApp:
             except ValueError:
                 print("Invalid input. Please enter a number.")
 
-    def _maybe_bpm_positions(self) -> None:
+    def _bpm_positions(self) -> None:
+        """Calculate and optionally export BPM positions if requested."""
         if self.prm.section is None:
             print("### ERROR: section not defined for BPM analysis."
                   " Skipping.")
@@ -133,23 +134,23 @@ class XBPMApp:
         bpmproc.calculate_positions()
         self.bpm_reference = (bpmproc.xpos, bpmproc.ypos)
 
-    def _maybe_show_blade_map(self) -> None:
+    def _show_blade_map(self) -> None:
         if not self.prm.showblademap:
             return
         blade_map = BladeMapVisualizer(self.data, self.prm)
         blade_map.show()
 
-    def _maybe_central_sweeps(self) -> None:
+    def _central_sweeps(self) -> None:
         if not self.prm.centralsweep:
             return
         self.processor.analyze_central_sweeps(show=True)
 
-    def _maybe_show_blades_at_center(self) -> None:
+    def _show_blades_at_center(self) -> None:
         if not self.prm.showbladescenter:
             return
         self.processor.show_blades_at_center()
 
-    def _maybe_xbpm_positions(self) -> None:
+    def _xbpm_positions(self) -> None:
         self._resolve_reference_positions()
         pos_nom_h, pos_nom_v = self.bpm_reference
         if self.prm.xbpmpositionsraw:

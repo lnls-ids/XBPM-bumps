@@ -9,11 +9,12 @@ import numpy as np
 class HDF5FigureReconstructor:
     """Encapsulates figure reconstruction from HDF5 files."""
 
-    def __init__(self, hdf5_path):
+    def __init__(self, hdf5_path: str) -> None:
         """Initialize with the path to the HDF5 file."""
         self.hdf5_path = hdf5_path
 
-    def load_figures(self, analysis_meta_loader=None):
+    def load_figures(self,
+                     analysis_meta_loader: callable = None) -> dict:
         """Load and reconstruct figures from the HDF5 file.
 
         Args:
@@ -573,7 +574,7 @@ class HDF5DataReader:
         if opt_supmat is not None:
             meta['supmat_optimized'] = np.array(opt_supmat)
         if 'supmat_standard' not in meta:
-            from .processors import XBPMProcessor
+            from .config import Config
             import logging
             logger = logging.getLogger(__name__)
             logger.warning(
@@ -582,7 +583,7 @@ class HDF5DataReader:
                 "file contains matrices/standard dataset."
             )
             supmat_standard, stddevmat_standard = (
-                XBPMProcessor.standard_suppression_matrix()
+                Config.standard_suppression_matrix()
             )
             meta['supmat_standard'] = supmat_standard
             meta.setdefault('stddevmat', stddevmat_standard)

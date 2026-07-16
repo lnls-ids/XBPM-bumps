@@ -1,7 +1,6 @@
 """Constants for XBPM analysis."""
 
 FILE_EXTENSION = ".pickle"    # Data file type.
-GRIDSTEP = 2                  # Default grid step.
 ROI_SIZE_V = 5                # Default vertical ROI number of sites.
 ROI_SIZE_H = 5                # Default horizontal ROI number of sites.
 FIGDPI = 300                  # Figure dpi saving parameter.

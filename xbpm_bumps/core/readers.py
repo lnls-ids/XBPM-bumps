@@ -33,61 +33,47 @@ class DataReader:
             prm (Prm): Parameters dataclass instance.
             builder: Canonical ParameterBuilder instance to share state.
         """
-        self.prm     = prm
-        self.builder = builder
-        # self.data is deprecated; use self.rawdata for canonical data
-        self.rawdata = None
-        self._hdf5_path = None
-        self.analysis_meta = {}
-        self._blades_cache = {}
+        self.prm              = prm
+        self.builder          = builder
+        self.rawdata          = None
+        self._hdf5_path       = None
+        self.analysis_meta    = {}
+        self._blades_cache    = {}
         self._rawblades_cache = {}
 
-    def read(self):
+    def read_data(self) -> list:
         """Read data from working directory or file using backend modules.
 
         Returns:
             The canonical rawdata (list of tuples) as a convenience.
             Canonical access is via self.rawdata.
         """
-        from .reader_pickle import read_pickle_dir
-        from .reader_text import read_text_file
-
         path = self.prm.workdir
         if os.path.isfile(path):
             lower = (path or '').lower()
+
+            # If the file is HDF5, use the HDF5DataReader to load data.
             if lower.endswith('.h5') or lower.endswith('.hdf5'):
                 from .reader_hdf5 import HDF5DataReader
-                with HDF5DataReader(path) as reader:
-                    reader.load_all()
-                    self.rawdata = reader.rawdata
-                    self.measured_data = reader.measured_data
-                    self.analysis_meta = reader.get_analysis_meta()
+                with HDF5DataReader(path) as rdr:
+                    rdr.load_all()
+                    self.rawdata       = rdr.rawdata
+                    self.measured_data = rdr.measured_data
+                    self.analysis_meta = rdr.get_analysis_meta()
             else:
-                self.rawdata = read_text_file(path)
+                # If the file is a text file, use the text reader to load data.
+                from .reader_text   import read_text_file
+                self.rawdata       = read_text_file(path)
                 self.analysis_meta = {}
         else:
-            self.rawdata = read_pickle_dir(path)
+            # If the path is a directory, use the pickle reader to load data.
+            from .reader_pickle import read_pickle_dir
+            self.rawdata       = read_pickle_dir(path)
             self.analysis_meta = {}
 
-        self._blades_cache = {}
+        self._blades_cache    = {}
         self._rawblades_cache = {}
         return self.rawdata
-
-    def _infer_gridstep_from_grid(self, grid_x, grid_y):
-        """Infer gridstep from HDF5 grid datasets when missing."""
-        if (getattr(self.prm, 'gridstep', None) not in (None, 0)
-            or grid_x is None or grid_y is None):
-            return
-        try:
-            dx = np.min(np.diff(np.sort(grid_x))) if grid_x.size > 1 else None
-            dy = np.min(np.diff(np.sort(grid_y))) if grid_y.size > 1 else None
-            steps = [v for v in (dx, dy) if v not in (None, 0)]
-            if steps:
-                self.prm.gridstep = float(min(steps))
-        except Exception:
-            logger.warning(
-                "Failed to infer gridstep from HDF5 grid", exc_info=True
-            )
 
     def _configure_xbpmdist(self) -> None:
         """Configure XBPM distance from source."""
@@ -106,14 +92,14 @@ class DataReader:
         xbpm_str = f"{self.prm.xbpmdist} m" if self.prm.xbpmdist else "N/A"
         bpm_str  = f"{self.prm.bpmdist} m" if self.prm.bpmdist else "N/A"
 
-        print(f"""
-### Working beamline:\t   {blname} ({bl})
-### Storage ring current : {self.prm.current}
-### Grid step:             {self.prm.gridstep}
-### Distance source-XBPM : {xbpm_str}
-### Distance between BPMs: {bpm_str}
-### Gap or phase:          {self.prm.phaseorgap}
-"""
+        print(f"""\n
+### Working beamline      : {blname} ({bl})
+### Storage ring current  : {self.prm.current}
+### Grid step             : {self.prm.gridstep}
+### Distance source-XBPM  : {xbpm_str}
+### Distance between BPMs : {bpm_str}
+### Gap or phase          : {self.prm.phaseorgap}
+\n"""
 )
 
     def _blades_fetch(self) -> dict:
@@ -132,7 +118,7 @@ class DataReader:
         beamline = self.prm.beamline
 
         # If cached for current beamline, return from cache.
-        cached = self._blades_cache.get(beamline)
+        cached    = self._blades_cache.get(beamline)
         rawcached = self._rawblades_cache.get(beamline)
         if cached is not None and rawcached is not None:
             return cached, rawcached
@@ -157,11 +143,11 @@ class DataReader:
             except Exception as err:
                 print("\n WARNING: when fetching blades' values and averaging:"
                       f" {err}\n")
-        self._blades_cache[beamline] = data
+        self._blades_cache[beamline]    = data
         self._rawblades_cache[beamline] = rawblades
         return data, rawblades
 
-    def _blade_average(self, blade):
+    def _blade_average(self, blade: list) -> tuple:
         """Calculate the average of blades' values for current beamline."""
         if self.prm.beamline in ["MGN", "MNC"]:
             return np.average(blade), np.std(blade), blade

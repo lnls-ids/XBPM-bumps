@@ -41,10 +41,10 @@ class XBPMMainWindow(QMainWindow):
     analysisRequested = pyqtSignal(dict)  # noqa: N815
 
     ANALYSIS_SECTION_TITLES = {
-        'positions': 'Positions',
-        'sweep_positions': 'Sweep Positions',
-        'blades_sweeps': 'Blades at Sweeps',
-        'bpm': 'BPM',
+        'positions'       : 'Positions',
+        'sweep_positions' : 'Sweep Positions',
+        'blades_sweeps'   : 'Blades at Sweeps',
+        'bpm'             : 'BPM',
     }
 
     BPM_STATS_DESCRIPTIONS = {
@@ -73,7 +73,7 @@ class XBPMMainWindow(QMainWindow):
         self._roi_rerun_timer.timeout.connect(self._on_run_clicked)
         self.setup_ui()
         self.setup_worker_thread()
-        self.setWindowTitle("XBPM Beam Position Analysis")
+        self.setWindowTitle("XBPM Calibration and Analysis Tool")
         # Wider default window to give canvases more horizontal room
         self.resize(1600, 900)
 
@@ -83,9 +83,9 @@ class XBPMMainWindow(QMainWindow):
         import os
         # Always instantiate and read DataReader for each new workdir
         self.prm.workdir = workdir
-        self.reader = DataReader(self.prm, self.builder)
-        self.reader.read()
-        self.rawdata = self.reader.rawdata
+        self.reader      = DataReader(self.prm, self.builder)
+        self.reader.read_data()
+        self.rawdata     = self.reader.rawdata
 
         # Extract beamlines using HDF5 logic if file is HDF5
         beamlines = []
@@ -779,7 +779,6 @@ class XBPMMainWindow(QMainWindow):
         Returns:
             True if at least one matrix was written.
         """
-        from ..core.processors import XBPMProcessor as XPROC
         from ..core.exporters import Exporter
 
         exporter  = Exporter(self.analyzer.app.prm)
@@ -787,7 +786,7 @@ class XBPMMainWindow(QMainWindow):
         wrote_any = False
 
         # --- Standard (1/-1) suppression matrix ---
-        supmat_std, _ = XPROC.standard_suppression_matrix()
+        supmat_std, _ = Config.standard_suppression_matrix()
         std_path = os.path.join(
             outdir,
             f"xbpm_supmat_standard_{self.analyzer.app.prm.beamline}.dat"

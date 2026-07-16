@@ -5,7 +5,7 @@ import os
 import sys
 
 
-def read_pickle_dir(path):
+def read_pickle_dir(path: str) -> list:
     """Read pickle directory and return rawdata as a list of tuples.
 
     Args:
@@ -37,7 +37,7 @@ def read_pickle_dir(path):
     return rawdata
 
 
-def extract_beamlines(rawdata):
+def extract_beamlines(rawdata: list) -> list:
     """Extract unique beamlines from pickle raw data headers."""
     try:
         beamlines = set()
@@ -53,6 +53,6 @@ def extract_beamlines(rawdata):
                 for item in header:
                     if isinstance(item, str):
                         beamlines.add(item)
-        return list(beamlines)
+        return sorted(list(beamlines))
     except Exception:
         return []
