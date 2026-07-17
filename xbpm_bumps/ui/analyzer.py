@@ -43,7 +43,7 @@ class XBPMAnalyzer(QObject):
             parent   : Optional parent QObject.
         """
         super().__init__(parent)
-        self.app          : Optional[XBPMApp] = None
+        # self.app          : Optional[XBPMApp] = None
         self.prm          : Prm = prm
         self.builder      = builder
         self.reader       = reader
@@ -111,7 +111,8 @@ class XBPMAnalyzer(QObject):
         self.analysisComplete.emit(results)
 
     @pyqtSlot(dict)
-    def run_analysis(self: "XBPMAnalyzer"):
+    def run_analysis(self: "XBPMAnalyzer",
+                     runanalysis: bool = False) -> None:
         """Execute XBPM analysis with given parameters.
 
         This method is designed to be called from a worker thread.
@@ -137,7 +138,14 @@ class XBPMAnalyzer(QObject):
             try:
                 sys.stdout = log_capture
                 sys.stderr = log_capture
-                self._initialize_and_run_analysis()
+                if runanalysis:
+                    self.analysisProgress.emit("Starting analysis...")
+                    self._initialize_and_run_analysis()
+                else:
+                    self.logMessage.emit(
+                        "Data loaded successfully (no analysis run)"
+                    )
+
             finally:
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
