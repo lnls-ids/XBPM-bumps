@@ -37,8 +37,8 @@ class Prm:
 
     # runtime-filled fields
     beamline         : str                 = ""
-    current          : Optional[float]     = None
-    phaseorgap       : Optional[float]     = None
+    sr_current       : Optional[float]     = None
+    phaseorgap       : Optional[dict]      = None
     bpmdist          : Optional[float]     = None
     scalepolydeg     : Optional[int]       = 1
     section          : Optional[str]       = None
@@ -80,11 +80,53 @@ class Blades:
     bo  : np.ndarray
     sbo : np.ndarray
 
+@dataclass
+class BladeVals:
+    """Container for one blade raw data and associated metadata.
+    
+    val        : measured currents for the blade
+    range      : measurement range for the blade
+    saturation : saturation levels for the blade
+    """
+    val        : np.ndarray
+    range      : np.ndarray
+    saturation : np.ndarray
+
 
 @dataclass
-class RawData:
+class BladeRawData:
+    """Container for all blades' raw data and associated metadata.
+    
+    A, B, C, D: BladeVals for each blade
+    """
+    A : BladeVals
+    B : BladeVals
+    C : BladeVals
+    D : BladeVals
+
+@dataclass
+class BPMData:
+    desc : str
+    pos  : Positions
+
+
+@dataclass
+class AvgData:
+    prm     : Optional[dict]      = None
     nom_pos : Optional[Positions] = None
-    blades  : Optional[Blades] = None
+    blades  : Optional[Blades]    = None
+
+@dataclass
+class SweepData:
+    """Container for sweep data and associated metadata.
+    
+    prm   : parameters of the sweep
+    bpm   : BPM registered orbit at the time of the sweep
+    blades: BladeRawData
+    """
+    prm    : Optional[dict]         = None
+    bpm    : Optional[BPMData]      = None
+    blades : Optional[BladeRawData] = None
 
 
 @dataclass
@@ -204,17 +246,17 @@ class DataStructureBuilder:
 
     def __init__(self, prm: Optional[Prm] = None):
         """Initialize builder with optional pre-existing parameters."""
-        self.prm      : Prm = prm if prm is not None else Prm()
-        self.rawdata  : Optional[RawData] = None
-        self.analysis : Optional[DataAnalysis] = None
+        self.prm       : Prm = prm if prm is not None else Prm()
+        self.sweepdata : Optional[SweepData] = None
+        self.analysis  : Optional[DataAnalysis] = None
 
 
     def add_beamline_parameters(self) -> None:
         """Add beamline-specific parameters to prm."""
-        self.prm.current = self.rawdata[0][2]["current"]
+        self.prm.current = self.sweepdata[0][2]["current"]
 
         try:
-            self.prm.phaseorgap = self.rawdata[0][1][
+            self.prm.phaseorgap = self.sweepdata[0][1][
                 self.prm.beamline[:3].lower()
                 ]
             # print(f"### Phase / Gap ({self.prm.beamline})   :\t"

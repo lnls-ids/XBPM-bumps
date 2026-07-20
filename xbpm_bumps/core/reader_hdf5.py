@@ -1,9 +1,13 @@
-
 """HDF5 backend for XBPM DataReader."""
+
 import h5py
 import logging
 import numpy as np
+import sys
+import matplotlib
 
+from .config import Config
+from data_structure import RawData, SweepData, BPMData, Positions
 
 # --- Object-Oriented HDF5 Figure Reconstructor ---
 class HDF5FigureReconstructor:
@@ -84,7 +88,7 @@ class HDF5FigureReconstructor:
                 )
         return results
 
-    def reconstruct_figure(self, figure_name):
+    def reconstruct_figure(self, figure_name: str):
         """Reconstruct a matplotlib figure from stored HDF5 data.
 
         Args:
@@ -134,7 +138,7 @@ class HDF5FigureReconstructor:
                 )
 
     @staticmethod
-    def _find_analysis_group(h5_file):
+    def _find_analysis_group(h5_file: h5py.File) -> h5py.Group | None:
         """Find analysis group, prefer analysis_<beamline>."""
         for key in h5_file.keys():
             if key.startswith('analysis_'):
@@ -144,7 +148,8 @@ class HDF5FigureReconstructor:
         return None
 
     @staticmethod
-    def _reconstruct_blade_map(analysis_grp):
+    def _reconstruct_blade_map(
+        analysis_grp: h5py.Group) -> "matplotlib.figure.Figure":
         """Reconstruct blade map figure from analysis group."""
         from .visualizers import BladeMapVisualizer
         if 'blade_map' not in analysis_grp:
@@ -152,7 +157,8 @@ class HDF5FigureReconstructor:
         return BladeMapVisualizer.plot_from_hdf5(analysis_grp['blade_map'])
 
     @staticmethod
-    def _reconstruct_sweeps(analysis_grp):
+    def _reconstruct_sweeps(
+        analysis_grp: h5py.Group) -> "matplotlib.figure.Figure":
         """Reconstruct sweeps figure from analysis group."""
         from .visualizers import SweepVisualizer
         sweeps_grp = (
@@ -185,7 +191,8 @@ class HDF5FigureReconstructor:
         return SweepVisualizer.plot_from_hdf5(h_data, v_data)
 
     @staticmethod
-    def _reconstruct_blades_center(analysis_grp):
+    def _reconstruct_blades_center(
+        analysis_grp: h5py.Group) -> "matplotlib.figure.Figure":
         """Reconstruct blades center figure from analysis group.
 
         Uses the canonical plotting function with blade data extracted
@@ -203,7 +210,9 @@ class HDF5FigureReconstructor:
         return BladeCurrentVisualizer.plot_from_hdf5(h_data, v_data)
 
     @staticmethod
-    def _reconstruct_positions(h5_file, analysis_grp, dataset_name):
+    def _reconstruct_positions(h5_file: h5py.File,
+                analysis_grp: h5py.Group,
+                dataset_name: str) -> "matplotlib.figure.Figure":
         """Reconstruct position figure from analysis group."""
         from .visualizers import PositionVisualizer
         if 'positions' not in analysis_grp:
@@ -271,7 +280,8 @@ class HDF5FigureReconstructor:
         )
 
     @staticmethod
-    def _reconstruct_bpm_from_raw(h5_file, analysis_grp):
+    def _reconstruct_bpm_from_raw(h5_file: h5py.File,
+            analysis_grp: h5py.Group) -> "matplotlib.figure.Figure":
         """Fallback reconstruction of BPM positions from raw_data sweeps."""
         from .parameters import Prm
         from .processors import BPMProcessor
@@ -317,54 +327,128 @@ class HDF5FigureReconstructor:
 class HDF5DataReader:
     """Encapsulates HDF5 file access and data extraction for XBPM."""
 
-    def __init__(self, path):
+    def __init__(self, path: str) -> None:
         """Initialize HDF5DataReader with file path."""
-        self.path = path
-        self.h5 = None
-        self.rawdata = None
+        self.path          = path
+        self.h5            = None
+        self.rawdata       = RawData()
         self.measured_data = None
-        self.beamlines = None
+        self.beamlines     = None
         self.analysis_meta = None
 
-    def __enter__(self):
+    def __enter__(self: "HDF5DataReader") -> "HDF5DataReader":
         """Enter context: open HDF5 file."""
         self.h5 = h5py.File(self.path, 'r')
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit context: close HDF5 file."""
         if self.h5 is not None:
             self.h5.close()
             self.h5 = None
 
-    def load_all(self):
+    def _get_beamlines(self) -> list:
+        """Check whether there is any beamline defined in the HDF5 file.
+        
+        The beamline names are extracted from the top-level groups in the HDF5 file.
+        """
+        try:
+            self.beamlines = list(self.h5.keys())
+        except Exception as err:
+            print("ERROR (in HDF5DataReader): ", err)
+            print(" Apparently, there is no beamline defined."
+                  " Please, Check the HDF5 file structure.")
+            sys.exit(1)
+
+        # Check whether the master group is a valid beamline.
+        bline_list = list(Config.BLADEMAP.keys())
+        for bl in self.beamlines:
+            if bl not in bline_list:
+                print(f"WARNING: Beamline '{bl}' is not recognized."
+                      " Please, check the BLADEMAP configuration.")
+                self.beamlines.remove(bl)
+
+        if not self.beamlines:
+            print("ERROR: No valid beamline found in HDF5 file."
+                  " Please, check the BLADEMAP configuration.")
+            sys.exit(1)
+
+    def load_all(self) -> None:
         """Load all data: rawdata, measured_data, beamlines."""
-        if 'raw_data' not in self.h5:
-            self.rawdata, self.measured_data, self.beamlines = [], [], []
-            return
+        self._get_beamlines()
+
+        rawdata, bpmdata, avgdata = {}, {}, {}
+        for bline in self.beamlines:
+            rawdata[bline] = self.extract_averaged_data(bline)
+
         raw_grp = self.h5['raw_data']
-        self.beamlines = self.extract_beamlines(raw_grp)
         self.measured_data = [
             self.parse_measurement_dataset(raw_grp, bl)
             for bl in self.beamlines
         ]
         self.rawdata = self.extract_sweeps(raw_grp)
 
-    @staticmethod
-    def extract_beamlines(raw_grp):
-        """Extract available beamlines from measurement datasets."""
-        # Always prefer the 'beamlines' attribute from raw_grp if present
-        avail = raw_grp.attrs['beamlines']
-        if isinstance(avail, bytes):
-            avail = avail.decode()
-        if isinstance(avail, str):
-            beamlines = [b.strip() for b in avail.split(',') if b.strip()]
-        elif isinstance(avail, (list, tuple, np.ndarray)):
-            beamlines = list(avail)
-        return beamlines
+    def extract_averaged_data(self, beamline: str):
+        """Extract averaged data for a specific beamline from the HDF5 file."""
+        avg_data = {}
+        return avg_data  # Placeholder for actual extraction logic
+
+    def load_sweeps(filepath: str) -> dict[int, SweepData]:
+        sweeps = {}
+        with h5py.File(filepath, 'r') as hf:
+            for name, grp in hf.items():
+                if name.startswith('sweep_'):
+                    # Extract sweep number
+                    num = int(name.split('_')[1])
+                    
+                    # Sweep metadata (10 entries)
+                    params = {k: v for k, v in grp.attrs.items()}
+                    
+                    # BPM dataset
+                    bpm_ds = grp['bpm_data']
+                    bpm_desc = bpm_ds.attrs['Description']
+                    x = bpm_ds['x'][:]   # assuming named arrays
+                    y = bpm_ds['y'][:]
+                    bpm = BPMData(desc=bpm_desc,
+                                pos=Positions(x, y))
+                    
+                    # Raw dataset
+                    raw_ds = grp['raw_data']
+                    raw_desc = raw_ds.attrs['Description']
+                    # If the 12 arrays are stored as separate datasets or columns
+                    raw_arrays = {arr_name: raw_ds[arr_name][:] 
+                                for arr_name in raw_ds}
+                    raw = RawData(description=raw_desc, arrays=raw_arrays)
+                    
+                    sweeps[num] = SweepData(prm=params, bpm=bpm, blades=raw)
+        return sweeps
+
+
+    # @staticmethod
+    # def extract_beamlines(raw_grp: h5py.Group) -> list:
+    #     """Extract available beamlines from measurement datasets.
+        
+    #     Args:
+    #         raw_grp: HDF5 group containing raw data.
+
+    #     Returns:
+    #         List of beamline names (strings).
+    #     """
+    #     # Always prefer the 'beamlines' attribute from raw_grp if present
+    #     beamlines = list(raw_grp.attrs['blines'])
+
+    #     avail = raw_grp.attrs['beamlines']
+    #     if isinstance(avail, bytes):
+    #         avail = avail.decode()
+    #     if isinstance(avail, str):
+    #         beamlines = [b.strip() for b in avail.split(',') if b.strip()]
+    #     elif isinstance(avail, (list, tuple, np.ndarray)):
+    #         beamlines = list(avail)
+    #     return beamlines
 
     @staticmethod
-    def parse_measurement_dataset(raw_grp, beamline):
+    def parse_measurement_dataset(raw_grp: h5py.Group,
+                                  beamline: str) -> tuple:
         """Parse measurement dataset for a given beamline."""
         ds_name = f"measurements_{beamline}"
         if ds_name not in raw_grp:
@@ -381,7 +465,7 @@ class HDF5DataReader:
         return (meta, grid, bpm_dict)
 
     @staticmethod
-    def extract_sweeps(raw_grp):
+    def extract_sweeps(raw_grp: h5py.Group) -> list:
         """Extract sweep data from raw_data, enforcing canonical structure.
 
         Args:
