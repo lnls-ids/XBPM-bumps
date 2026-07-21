@@ -7,7 +7,76 @@ import sys
 import matplotlib
 
 from .config import Config
-from data_structure import RawData, SweepData, BPMData, Positions
+from data_structure import BladeAvgData, SweepData
+
+
+# --- Object-Oriented HDF5 Data Reader ---
+class HDF5DataReader:
+    """Encapsulates HDF5 file access and data extraction for XBPM."""
+
+    def __init__(self, filepath: str) -> None:
+        """Initialize HDF5DataReader with file path.
+        
+        Args:
+            filepath (str) : the HDF5 file with data.
+        
+        """
+        self.filepath      = filepath
+        self.h5            = None
+        self.rawdata       = None
+        self.beamlines     = None
+        self.measured_data = None
+        self.analysis_meta = None
+
+    def __enter__(self: "HDF5DataReader") -> "HDF5DataReader":
+        """Enter context: open HDF5 file."""
+        self.h5 = h5py.File(self.filepath, 'r')
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit context: close HDF5 file."""
+        if self.h5 is not None:
+            self.h5.close()
+            self.h5 = None
+
+    def _read_raw_data(self, bldata: h5py.Group, beamline: str) -> tuple:
+        """Read raw data for a given beamline from HDF5 group."""
+        sweeps = {}
+        for key, data in bldata.items():
+            # Blade averages.
+            if key == "blade_averages":
+                blade_avg = BladeAvgData.from_hdf5_group(data=data)
+
+            # Sweep data.
+            elif key.startswith('sweep_'):
+                # Extract sweep number
+                num         = int(key.split('_')[1])
+                sweeps[num] = SweepData.from_hdf5_group(data=data)
+
+            else:
+                print(f" WARNING: Unknown key '{key}'"
+                        f" in beamline '{beamline}'. Skipping.")
+
+        return sweeps, blade_avg
+
+    def load_data(self, filepath: str) -> None:
+        self.rawdata = {}
+        with h5py.File(filepath, 'r') as hf:
+            for beamline, bldata in hf.items():
+                if beamline not in Config.BLADEMAP.keys():
+                    print(f" WARNING: Unknown beamline '{beamline}'"
+                          " defined in HDF5 file. Skipping.")
+                    continue
+
+                # Get raw data.
+                sweeps, blade_avg = self._read_raw_data(bldata, beamline)
+
+                # Assemble the extracted data in the rawdata dictionary.
+                self.rawdata[beamline] = {
+                    'sweeps': sweeps,
+                    'bladeavg': blade_avg
+                    }
+
 
 # --- Object-Oriented HDF5 Figure Reconstructor ---
 class HDF5FigureReconstructor:
@@ -323,220 +392,26 @@ class HDF5FigureReconstructor:
         return bpm_processor.fig
 
 
-# --- Object-Oriented HDF5 Data Reader ---
-class HDF5DataReader:
-    """Encapsulates HDF5 file access and data extraction for XBPM."""
-
-    def __init__(self, path: str) -> None:
-        """Initialize HDF5DataReader with file path."""
-        self.path          = path
-        self.h5            = None
-        self.rawdata       = RawData()
-        self.measured_data = None
-        self.beamlines     = None
-        self.analysis_meta = None
-
-    def __enter__(self: "HDF5DataReader") -> "HDF5DataReader":
-        """Enter context: open HDF5 file."""
-        self.h5 = h5py.File(self.path, 'r')
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Exit context: close HDF5 file."""
-        if self.h5 is not None:
-            self.h5.close()
-            self.h5 = None
-
-    def _get_beamlines(self) -> list:
-        """Check whether there is any beamline defined in the HDF5 file.
-        
-        The beamline names are extracted from the top-level groups in the HDF5 file.
-        """
-        try:
-            self.beamlines = list(self.h5.keys())
-        except Exception as err:
-            print("ERROR (in HDF5DataReader): ", err)
-            print(" Apparently, there is no beamline defined."
-                  " Please, Check the HDF5 file structure.")
-            sys.exit(1)
-
-        # Check whether the master group is a valid beamline.
-        bline_list = list(Config.BLADEMAP.keys())
-        for bl in self.beamlines:
-            if bl not in bline_list:
-                print(f"WARNING: Beamline '{bl}' is not recognized."
-                      " Please, check the BLADEMAP configuration.")
-                self.beamlines.remove(bl)
-
-        if not self.beamlines:
-            print("ERROR: No valid beamline found in HDF5 file."
-                  " Please, check the BLADEMAP configuration.")
-            sys.exit(1)
-
-    def load_all(self) -> None:
-        """Load all data: rawdata, measured_data, beamlines."""
-        self._get_beamlines()
-
-        rawdata, bpmdata, avgdata = {}, {}, {}
-        for bline in self.beamlines:
-            rawdata[bline] = self.extract_averaged_data(bline)
-
-        raw_grp = self.h5['raw_data']
-        self.measured_data = [
-            self.parse_measurement_dataset(raw_grp, bl)
-            for bl in self.beamlines
-        ]
-        self.rawdata = self.extract_sweeps(raw_grp)
-
-    def extract_averaged_data(self, beamline: str):
-        """Extract averaged data for a specific beamline from the HDF5 file."""
-        avg_data = {}
-        return avg_data  # Placeholder for actual extraction logic
-
-    def load_sweeps(filepath: str) -> dict[int, SweepData]:
-        sweeps = {}
-        with h5py.File(filepath, 'r') as hf:
-            for name, grp in hf.items():
-                if name.startswith('sweep_'):
-                    # Extract sweep number
-                    num = int(name.split('_')[1])
-                    
-                    # Sweep metadata (10 entries)
-                    params = {k: v for k, v in grp.attrs.items()}
-                    
-                    # BPM dataset
-                    bpm_ds = grp['bpm_data']
-                    bpm_desc = bpm_ds.attrs['Description']
-                    x = bpm_ds['x'][:]   # assuming named arrays
-                    y = bpm_ds['y'][:]
-                    bpm = BPMData(desc=bpm_desc,
-                                pos=Positions(x, y))
-                    
-                    # Raw dataset
-                    raw_ds = grp['raw_data']
-                    raw_desc = raw_ds.attrs['Description']
-                    # If the 12 arrays are stored as separate datasets or columns
-                    raw_arrays = {arr_name: raw_ds[arr_name][:] 
-                                for arr_name in raw_ds}
-                    raw = RawData(description=raw_desc, arrays=raw_arrays)
-                    
-                    sweeps[num] = SweepData(prm=params, bpm=bpm, blades=raw)
-        return sweeps
-
 
     # @staticmethod
-    # def extract_beamlines(raw_grp: h5py.Group) -> list:
-    #     """Extract available beamlines from measurement datasets.
-        
-    #     Args:
-    #         raw_grp: HDF5 group containing raw data.
+    # def parse_measurement_dataset(raw_grp: h5py.Group,
+    #                               beamline: str) -> tuple:
+    #     """Parse measurement dataset for a given beamline."""
+    #     ds_name = f"measurements_{beamline}"
+    #     if ds_name not in raw_grp:
+    #         return None
+    #     dset = raw_grp[ds_name]
+    #     meta = dict(dset.attrs.items())
+    #     grid = None  # Not present in new structure
+    #     bpm_dict = {}
+    #     if hasattr(dset, 'dtype') and dset.dtype.names:
+    #         for name in dset.dtype.names:
+    #             bpm_dict[name] = dset[name][()]
+    #     else:
+    #         bpm_dict = np.array(dset)
+    #     return (meta, grid, bpm_dict)
 
-    #     Returns:
-    #         List of beamline names (strings).
-    #     """
-    #     # Always prefer the 'beamlines' attribute from raw_grp if present
-    #     beamlines = list(raw_grp.attrs['blines'])
-
-    #     avail = raw_grp.attrs['beamlines']
-    #     if isinstance(avail, bytes):
-    #         avail = avail.decode()
-    #     if isinstance(avail, str):
-    #         beamlines = [b.strip() for b in avail.split(',') if b.strip()]
-    #     elif isinstance(avail, (list, tuple, np.ndarray)):
-    #         beamlines = list(avail)
-    #     return beamlines
-
-    @staticmethod
-    def parse_measurement_dataset(raw_grp: h5py.Group,
-                                  beamline: str) -> tuple:
-        """Parse measurement dataset for a given beamline."""
-        ds_name = f"measurements_{beamline}"
-        if ds_name not in raw_grp:
-            return None
-        dset = raw_grp[ds_name]
-        meta = dict(dset.attrs.items())
-        grid = None  # Not present in new structure
-        bpm_dict = {}
-        if hasattr(dset, 'dtype') and dset.dtype.names:
-            for name in dset.dtype.names:
-                bpm_dict[name] = dset[name][()]
-        else:
-            bpm_dict = np.array(dset)
-        return (meta, grid, bpm_dict)
-
-    @staticmethod
-    def extract_sweeps(raw_grp: h5py.Group) -> list:
-        """Extract sweep data from raw_data, enforcing canonical structure.
-
-        Args:
-            raw_grp: HDF5 group containing raw data
-
-        Returns:
-            rawdata: List of (meta, grid, bpm_dict) tuples
-        """
-        import numpy as np
-
-        rawdata = []
-        rawdata_2_keys = [
-            'current', 'agx', 'agy', 'posx', 'posy', 'orbx', 'orby',
-        ]
-
-        for key in raw_grp:
-            if not key.startswith('sweep_'):
-                continue
-
-            sweep_grp = raw_grp[key]
-
-            # --- Rebuild first element: {beamline: {param: array, ...}} ---
-            beamline_data = {}
-            for dsname in sweep_grp:
-                if dsname.startswith('rawdata_'):
-                    beamline = dsname[len('rawdata_'):]
-                    dset = sweep_grp[dsname]
-                    # Convert structured array to dict of arrays
-                    param_dict = {}
-                    if hasattr(dset, 'dtype') and dset.dtype.names:
-                        for name in dset.dtype.names:
-                            param_dict[name] = dset[name][()]
-                    else:
-                        param_dict = np.array(dset)
-                    beamline_data[beamline] = param_dict
-
-            # --- Second element: gap dictionary from attributes ---
-            gap_dict = {attr_key[:-4].strip(): attr_val
-                        for attr_key, attr_val in sweep_grp.attrs.items()
-                        if attr_key.endswith(' gap')}
-
-            # --- Third element: bpm_dict, patched to read bpm_data
-            # for orbx/orby ---
-            bpm_dict = {}
-            bpm_data = None
-            if 'bpm_data' in sweep_grp:
-                bpm_data_ds = sweep_grp['bpm_data']
-                # Should be a structured array with fields 'orbx' and 'orby'
-                bpm_data = bpm_data_ds[()]
-            for param in rawdata_2_keys:
-                arr = None
-                if param in sweep_grp:
-                    arr = np.array(sweep_grp[param])
-                elif param in sweep_grp.attrs:
-                    arr = sweep_grp.attrs[param]
-                elif param in ('orbx', 'orby'):
-                    # Patch: read from bpm_data if available
-                    if bpm_data is not None and param in bpm_data.dtype.names:
-                        arr = bpm_data[param]
-                # Flatten structured arrays with a single field
-                if (isinstance(arr, np.ndarray) and
-                    arr.dtype.names is not None and
-                    len(arr.dtype.names) == 1):
-                    arr = arr[arr.dtype.names[0]]
-                bpm_dict[param] = arr
-
-            rawdata.append((beamline_data, gap_dict, bpm_dict))
-
-        return rawdata
-
-    def get_analysis_meta(self, beamline=None):
+    def get_analysis_meta(self, beamline=None) -> dict:
         """Get analysis metadata for the given beamline."""
         meta = {}
         h5file = self.h5

@@ -10,9 +10,6 @@ import sys
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(script_dir, ".."))
 
-# from xbpm_bumps.core.reader_pickle import (    #noqa: E402
-#     read_pickle_dir, extract_beamlines
-#     )
 from xbpm_bumps.core.config import Config      #noqa: E402
 
 HELP_DESCRIPTION = (
@@ -88,6 +85,7 @@ def _get_timestamp_from_filename(filename: str) -> str:
     ts = filename.strip('.pickle').split('_')[-1]
     ts = datetime.fromtimestamp(float(ts)).strftime('%Y-%m-%d %H:%M:%S')
     return ts
+
 
 def read_pickle_dir(path: str) -> list:
     """Read pickle directory and return rawdata as a list of tuples.
@@ -265,15 +263,15 @@ def parse_rawdata(rawdata: list, beamline: str) -> list:
 
         # Alternative bumping method, by displacing the beam with defined
         # positions. If bumps are made by angle, these are tipically zero.
-        pos_x = record[2]['posx']
-        pos_y = record[2]['posy']
+        pos_x   = record[2]['posx']
+        pos_y   = record[2]['posy']
 
         # BPM registered positions (orbx, orby) for the current bump.
-        orbx = record[2]['orbx']
-        orby = record[2]['orby']
+        orbx    = record[2]['orbx']
+        orby    = record[2]['orby']
         bpm_data[jj] = {
-            'bpm_x' : orbx,
-            'bpm_y' : orby
+            'x_bpm' : orbx,
+            'y_bpm' : orby
             }
 
         # Extract and average blade data for the current beamline.
@@ -296,14 +294,14 @@ def parse_rawdata(rawdata: list, beamline: str) -> list:
             f"Raw data for sweep {jj:04d} from XBPM-bumps experiments."
             )
         rawmeta[jj] = {
-            'Description' : description,
-            'Timestamp'   : timestamp,
-            'pv_meter'    : pv_meter,
-            'angle_x'     : angle_x,
-            'angle_y'     : angle_y,
-            'bump_pos_x'  : pos_x,
-            'bump_pos_y'  : pos_y,
-            'SR current'  : current,
+            'Description'     : description,
+            'Timestamp'       : timestamp,
+            'PV meter'        : pv_meter,
+            'Angle x [mrad]'  : angle_x,
+            'Angle y [mrad]'  : angle_y,
+            'Bump pos x'      : pos_x,
+            'Bump pos y'      : pos_y,
+            'SR current [mA]' : current,
             }
 
         # Gaps / phases of the IDs. It is originally a dict in the form
@@ -314,7 +312,7 @@ def parse_rawdata(rawdata: list, beamline: str) -> list:
             }
         rawmeta[jj].update(gap_phase)
 
-    return rawmeta, bpm_data, blade_data, avgblades
+    return (rawmeta, bpm_data, blade_data, avgblades)
 
 
 def _write_group_data(groupname, group: h5py.Group, data: dict) -> None:
@@ -328,42 +326,39 @@ def _write_group_data(groupname, group: h5py.Group, data: dict) -> None:
     return dset
 
 
-def export_rawdata_to_hdf5(rawmeta: dict,
-                           bpm_data: dict,
-                           blade_data: dict,
-                           avgblades: dict,
-                           outname: str,
-                           append=False) -> None:
+def export_rawdata_to_hdf5(dataset: tuple, outname: str, append=False) -> None:
     """Export parsed rawdata to HDF5 file.
 
     Args:
-        bpm_data: dict, BPM data for the selected beamline.
-        blade_data: dict, Parsed blade data for the selected beamline.
-        avgblades: dict, Averaged blade data for the selected beamline.
-        outname: str, Output HDF5 file name.
+        dataset    : tuple, Containing rawmeta, bpm_data, blade_data, and
+                     avgblades.
+        outname    : str,  Output HDF5 file name.
+        append     : bool, Whether to append to the existing HDF5 file.
     """
     # Create attribute lists for HDF5 export.
-    beamlines = list(rawmeta.keys())
+    beamlines = list(dataset.keys())
 
     w_or_a = "a" if append else "w"
     with h5py.File(outname, w_or_a) as h5file:
         for beamline in beamlines:
-            bladedata = blade_data[beamline]
-            bpmdata   = bpm_data[beamline]
-            avgdata   = avgblades[beamline]
-            metadata  = rawmeta[beamline]
+            metadata  = dataset[beamline][0]
+            bpmdata   = dataset[beamline][1]
+            bladedata = dataset[beamline][2]
+            avgblades = dataset[beamline][3]
 
             # One raw data set per beamline.
             mastergrp = h5file.create_group(f"{beamline}")
-            mastergrp.attrs['Description'] = (
-                f"Raw data for beamline {beamline}"
-                " from XBPM-bumps experiments."
-                )
-            mastergrp.attrs['Beamline'] = beamline
-            mastergrp.attrs['HDF5 created on'] = datetime.now().isoformat()
-            mastergrp.attrs['# sweeps'] = len(metadata)
-            mastergrp.attrs['Experience start'] = metadata[1].get('Timestamp',
-                                                                  "N/A")
+
+            # Set metadata attributes for the beamline group.
+            descr = (f"Data for {beamline} beamline from XBPM experiments.")
+            meta = {
+                "# sweeps"         : len(metadata),
+                "Beamline"         : beamline,
+                "Description"      : descr,
+                "Experience start" : metadata[1].get('Timestamp', "N/A"),
+                "HDF5 created on"  : datetime.now().isoformat(),
+                }
+            mastergrp.attrs.update(meta)
 
             # Write raw data.
             for ii in metadata.keys():
@@ -391,25 +386,27 @@ def export_rawdata_to_hdf5(rawmeta: dict,
             # Data must be put into a table structure.
             # Extract column names from the first entry of avgdata,
             # and sort rows by sweep index.
-            columns = list(next(iter(avgdata.values())).keys()) 
-            rows_sorted = [avgdata[k] for k in sorted(avgdata)]
+            columns     = list(next(iter(avgblades.values())).keys()) 
+            rows_sorted = [avgblades[k] for k in sorted(avgblades)]
+
             # Extract column arrays.
-            col_arrays = {
+            col_arrays  = {
                 col: np.array([
                     row[col]
                     for row in rows_sorted])
                     for col in columns
                     }
+
             # Create a structured array for HDF5 export.
-            structured_array = np.rec.fromarrays(
+            struct_array = np.rec.fromarrays(
                 [col_arrays[col] for col in columns],
                 names=columns
                 )
-            dset = mastergrp.create_dataset(datasetname,
-                                            data=structured_array)
+            dset = mastergrp.create_dataset(datasetname, data=struct_array)
+
             # Select some metadata attributes to define the averaged data.
             avg_meta = {
-                'pv_meter'   : metadata[1]['pv_meter'],
+                'PV meter'   : metadata[1]['PV meter'],
                 'SR current' : metadata[1]['SR current'],
                 }
             avg_meta.update({k: v for k, v in metadata[1].items()
@@ -421,6 +418,35 @@ def export_rawdata_to_hdf5(rawmeta: dict,
                 )
 
 
+def hdf5_handler(filepath: str) -> tuple:
+    """Determine HDF5 output file name and handle overwrite/append.
+    
+    Args:
+        filepath: str,  Input directory path.
+    
+    Returns:
+        outfile : str,  Output HDF5 file name.
+        append  : bool, Whether to append to existing file or overwrite.
+    """
+    # Set file name.
+    outfile = filepath + "_test" + ".h5"
+    print(f"\n### Exporting data to HDF5 file:\n '{outfile}'")
+
+    # Check whether HDF5 file already exists and ask for confirmation
+    # to overwrite.
+    append = False
+    if os.path.exists(outfile):
+        overwrite = input(f"\n### WARNING: File '{outfile}' already exists."
+                          " Overwrite? [Y/n]: ")
+        if overwrite.lower() == 'n':
+            print("\n>>> Appending data to existing file.")
+            append = True
+        else:
+            print("\n>>> Overwriting existing file.")
+
+    return outfile, append
+
+
 def main() -> None:
     """Main function to convert pickle directory to HDF5."""
     # Get directory from command line.
@@ -429,43 +455,24 @@ def main() -> None:
     # Read pickle files in the directory.
     rawdata = read_pickle_dir(args.dir)
 
-    # Get available beamlines from the rawdata.
+    # Get available beamlines from the rawdata and choose each one to process.
+    # Default is to process all.
     beamlines = extract_beamlines(rawdata)
-
-    # Choose beamline to process. Default is to process all.
     beamlines = pick_beamline(beamlines)
-
     print(f"\n>>> Selected beamline(s): {', '.join(beamlines)}")
-
-    # DEBUG
-    # print(f"\n##### RAWDATA Meta: type = {type(rawdata)},"
-    #       f" length = {len(rawdata)}")
-    # END DEBUG
     print(f"\n### Found {len(rawdata)} pickle files in directory \n### "
           f"'{args.dir}'")
     
     # Extract data for each selected beamline and store in a dictionary.
     # Data is extracted as-is and averaged data is also computed.
-    raw_meta, bpm_data, blade_data, avgblade = {}, {}, {}, {}
+    dataset = {}
     for bline in beamlines:
-        (raw_meta[bline],   bpm_data[bline],
-         blade_data[bline], avgblade[bline]) = parse_rawdata(rawdata, bline)
+        dataset[bline] = parse_rawdata(rawdata, bline)
 
-    # Export to HDF5.
-    outfile = args.dir + "_test" + ".h5"
-    print(f"\n### Exporting data to HDF5 file:\n '{outfile}'")
-    # Check whether HDF5 file already exists and ask for confirmation
-    # to overwrite.
-    if os.path.exists(outfile):
-        append = False
-        overwrite = input(f"\n### WARNING: File '{outfile}' already exists."
-                          " Overwrite? [Y/n]: ")
-        if overwrite.lower() == 'n':
-            print("\n>>> Appending data to existing file.")
-            append = True
+    # Set file name and handle overwrite/append.
+    outfile, append = hdf5_handler(args.dir)
 
-    export_rawdata_to_hdf5(raw_meta, bpm_data, blade_data, avgblade,
-                           outfile, append=append)
+    export_rawdata_to_hdf5(dataset, outfile, append)
     print("###  done.")
 
 

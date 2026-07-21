@@ -51,14 +51,6 @@ def read_pickle_dir(path: str) -> list:
             else:
                 rawdata.append(({}, None, {}))
 
-            # DEBUG
-            # print(f" Reading file: {file}"
-            #     f"\t Timestamp: {ts}"
-            #     f"\t Rawdata ype: {type(rawdata)}")
-            # for ii, rd in enumerate(rawdata):
-            #     print(f"  rawdata[{ii}]: {type(rd[2])}")
-            # DEBUG
-
     return rawdata
 
 
