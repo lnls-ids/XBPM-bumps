@@ -23,7 +23,7 @@ class XBPMApp:
         self.data = None
         self.prm  = None
 
-    def run(self, argv: list[str], builder: ParameterBuilder) -> None:
+    def run(self, argv: list, builder: ParameterBuilder) -> None:
         """'Parse args, load data, run analyses, and render outputs.
 
         Args:
@@ -48,7 +48,7 @@ class XBPMApp:
         plt.show()
 
     @staticmethod
-    def cli_prompt(beamlines : list[str]) -> str:
+    def cli_prompt(beamlines : list) -> str:
         """Prompt the user to select a beamline from the CLI."""
         print("Available beamlines:")
         for i, b in enumerate(beamlines):

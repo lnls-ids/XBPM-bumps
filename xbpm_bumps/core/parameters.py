@@ -101,8 +101,7 @@ class ParameterBuilder:
         )
         return self.prm
 
-    def _parse_args(self,
-                    argv: Optional[list[str]] = None) -> argparse.Namespace:
+    def _parse_args(self, argv: list = None) -> argparse.Namespace:
         """Parse command-line arguments using argparse.
 
         Args:

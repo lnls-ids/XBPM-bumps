@@ -3,11 +3,30 @@
 import h5py
 import logging
 import numpy as np
-import sys
+# import sys
 import matplotlib
 
 from .config import Config
-from data_structure import BladeAvgData, SweepData
+from .data_structure import BeamlineRawData, DataAnalysis
+
+from dataclasses import dataclass, field
+from typing import Optional, Any, List
+
+@dataclass
+class BeamlineData:
+    prm      : dict
+    rawdata  : BeamlineRawData
+    analysis : DataAnalysis
+
+    @classmethod
+    def from_hdf5_group(cls,
+                        h5group: h5py.Group,
+                        beamline: str) -> "BeamlineData":
+        """Create a BeamlineData instance from an HDF5 group."""
+        prm      = {key: val for key, val in h5group.attrs.items()}
+        rawdata  = BeamlineRawData.from_hdf5_group(h5group, beamline)
+        analysis = DataAnalysis.from_hdf5_group(h5group, beamline)
+        return cls(prm=prm, rawdata=rawdata, analysis=analysis)
 
 
 # --- Object-Oriented HDF5 Data Reader ---
@@ -22,11 +41,8 @@ class HDF5DataReader:
         
         """
         self.filepath      = filepath
-        self.h5            = None
-        self.rawdata       = None
-        self.beamlines     = None
-        self.measured_data = None
-        self.analysis_meta = None
+        self.beamlinedata  = {}
+        self.load_data()
 
     def __enter__(self: "HDF5DataReader") -> "HDF5DataReader":
         """Enter context: open HDF5 file."""
@@ -39,43 +55,18 @@ class HDF5DataReader:
             self.h5.close()
             self.h5 = None
 
-    def _read_raw_data(self, bldata: h5py.Group, beamline: str) -> tuple:
-        """Read raw data for a given beamline from HDF5 group."""
-        sweeps = {}
-        for key, data in bldata.items():
-            # Blade averages.
-            if key == "blade_averages":
-                blade_avg = BladeAvgData.from_hdf5_group(data=data)
-
-            # Sweep data.
-            elif key.startswith('sweep_'):
-                # Extract sweep number
-                num         = int(key.split('_')[1])
-                sweeps[num] = SweepData.from_hdf5_group(data=data)
-
-            else:
-                print(f" WARNING: Unknown key '{key}'"
-                        f" in beamline '{beamline}'. Skipping.")
-
-        return sweeps, blade_avg
-
-    def load_data(self, filepath: str) -> None:
-        self.rawdata = {}
-        with h5py.File(filepath, 'r') as hf:
+    def load_data(self) -> None:
+        with h5py.File(self.filepath, 'r') as hf:
             for beamline, bldata in hf.items():
                 if beamline not in Config.BLADEMAP.keys():
                     print(f" WARNING: Unknown beamline '{beamline}'"
                           " defined in HDF5 file. Skipping.")
                     continue
 
-                # Get raw data.
-                sweeps, blade_avg = self._read_raw_data(bldata, beamline)
-
                 # Assemble the extracted data in the rawdata dictionary.
-                self.rawdata[beamline] = {
-                    'sweeps': sweeps,
-                    'bladeavg': blade_avg
-                    }
+                self.beamlinedata[beamline] = BeamlineRawData.from_hdf5_group(
+                    bldata, beamline
+                    )
 
 
 # --- Object-Oriented HDF5 Figure Reconstructor ---

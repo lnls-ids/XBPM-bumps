@@ -4,6 +4,7 @@
 from dataclasses import dataclass, field
 from typing import Optional, Any, List
 
+import h5py
 import numpy as np
 
 # Import DataReader for canonical _extract_beamlines
@@ -56,6 +57,10 @@ class Prm:
         setattr(self, key, value)
 
 
+#
+# Generic data structures.
+#
+
 @dataclass
 class Positions:
     """Container for calculated XBPM positions."""
@@ -63,14 +68,15 @@ class Positions:
     y : np.ndarray
 
     @classmethod
-    def from_hdf5_group(cls, h5group) -> "Positions":
+    def from_hdf5_group(cls, data) -> "Positions":
         """Create a Positions instance from x and y arrays."""
-        if "x" not in h5group or "y" not in h5group:
-            raise ValueError(
-                " ERROR while reading XBPM positions from HDF5 file:\n"
-                " Missing 'x' or 'y' dataset in HDF5 group."
-            )
-        return cls(x=h5group["x"][:], y=h5group["y"][:])
+        try:
+            return cls(x=data["x"][:], y=data["y"][:])
+        except (KeyError, ValueError):
+            try:
+                return cls(x=data["x_nom"][:], y=data["y_nom"][:])
+            except (KeyError, ValueError):
+                raise KeyError("Neither pair of fields found")
 
 
 @dataclass
@@ -91,26 +97,35 @@ class Blades:
     sbo : np.ndarray = field(default_factory=lambda: np.array([]))
 
     @classmethod
-    def from_hdf5_group(cls, h5group) -> "Blades":
+    def from_hdf5_group(cls, data) -> "Blades":
         """Create a Blades instance from an HDF5 group."""
-        blades = ['to', 'ti', 'bi', 'bo', 'sto', 'sti', 'sbi', 'sbo']
+        datanames = data.dtype.names
+
+        # Check for required datasets in the HDF5 group.
+        blades = ['to_mean', 'ti_mean', 'bi_mean', 'bo_mean']
         for blade in blades:
-            if blade not in h5group:
+            if blade not in datanames:
                 raise ValueError(
-                    " ERROR while reading Average Blade Currents from HDF5"
+                    " WARNING: while reading Average Blade Currents from HDF5"
                     f" file:\n Missing '{blade}' dataset in HDF5 group.")
 
+        # Check for optional standard deviation datasets in the HDF5 group.
+        # Some data sets may not have standard deviation information,
+        # as blade_map.
         return cls(
-            to  = h5group["to"][:],
-            ti  = h5group["ti"][:],
-            bi  = h5group["bi"][:],
-            bo  = h5group["bo"][:],
-            sto = h5group["sto"][:],
-            sti = h5group["sti"][:],
-            sbi = h5group["sbi"][:],
-            sbo = h5group["sbo"][:],
+            to  = data["to_mean"][:],
+            ti  = data["ti_mean"][:],
+            bi  = data["bi_mean"][:],
+            bo  = data["bo_mean"][:],
+            sto = data["to_err"][:] if 'to_err' in datanames else None,
+            sti = data["ti_err"][:] if 'ti_err' in datanames else None,
+            sbi = data["bi_err"][:] if 'bi_err' in datanames else None,
+            sbo = data["bo_err"][:] if 'bo_err' in datanames else None,
         )
 
+#
+# Raw data structures.
+#
 
 @dataclass
 class BladeAvgData:
@@ -123,14 +138,12 @@ class BladeAvgData:
     def from_hdf5_group(cls, h5group) -> "BladeAvgData":
         """Create a BladeAvgData instance from an HDF5 group."""
         # Extract metadata attributes.
-        prm = {key : val for key, val in h5group.attrs.items()}
-
-        nom    = Positions.from_hdf5_group(
-            h5group["nom"]) if "nom" in h5group else None
-
-        blades = Blades.from_hdf5_group(h5group["blades"]) if "blades" in h5group else None
+        prm    = {key : val for key, val in h5group.attrs.items()}
+        nom    = Positions.from_hdf5_group(h5group)
+        blades = Blades.from_hdf5_group(h5group)
 
         return cls(prm=prm, nom=nom, blades=blades)
+
 
 @dataclass
 class BladeVals:
@@ -263,6 +276,47 @@ class SweepData:
 
 
 @dataclass
+class BeamlineRawData:
+    """Container for all sweep data and associated metadata for a beamline.
+    
+    sweeps: List of SweepData instances
+    blade_avg: BladeAvgData instance
+    """
+    sweeps     : dict[int, SweepData]   = field(default_factory=dict)
+    blade_avg  : BladeAvgData = field(
+        default_factory=lambda: BladeAvgData(
+        prm=None, nom=None, blades=None
+    ))
+
+    @classmethod
+    def from_hdf5_group(cls,
+                        h5group  : h5py.Group,
+                        beamline : str) -> "BeamlineRawData":
+        """Create a BeamlineRawData instance from an HDF5 group."""
+        sweeps = {}
+        for key, data in h5group.items():
+            # Sweep data.
+            if key.startswith('sweep_'):
+                # Extract sweep number
+                num         = int(key.split('_')[1])
+                sweeps[num] = SweepData.from_hdf5_group(h5group=data)
+
+            # Blade averages.
+            elif key == "blade_averages":
+                blade_avg = BladeAvgData.from_hdf5_group(h5group=data)
+
+            else:
+                print(f" WARNING: Unknown key '{key}'"
+                      f" in beamline '{beamline}'. Skipping.")
+
+        return cls(sweeps=sweeps, blade_avg=blade_avg)
+
+
+#
+# Analysis data structures.
+#
+
+@dataclass
 class BladeMap:
     """Container for blade current data and associated metadata.
 
@@ -271,9 +325,18 @@ class BladeMap:
         coords: Horizontal and vertical positions which define the grid of
                 measurements.
     """
-    blades: Blades
-    coords: Positions
+    prm    : dict
+    blades : Blades
+    coords : Positions
 
+    @classmethod
+    def from_hdf5_group(cls, h5group) -> "BladeMap":
+        """Create a BladeMap instance from an HDF5 group."""
+        prm    = {key: val for key, val in h5group.attrs.items()}
+        blades = Blades.from_hdf5_group(h5group)
+        coords = Positions.from_hdf5_group(h5group)
+
+        return cls(prm=prm, blades=blades, coords=coords)
 
 @dataclass
 class CentralSweeps:
@@ -283,9 +346,37 @@ class CentralSweeps:
     fix: fixed coordinate
     blades: Blades
     """
-    index  : np.ndarray
-    fix    : np.ndarray
-    blades : Blades
+    index    : np.ndarray = field(default_factory=lambda: np.array([]))
+    fixed    : np.ndarray = field(default_factory=lambda: np.array([]))
+    fixcalc  : np.ndarray = field(default_factory=lambda: np.array([]))
+    sfixcalc : np.ndarray = field(default_factory=lambda: np.array([]))
+    fixfit   : np.ndarray = field(default_factory=lambda: np.array([]))
+    blades   : Blades     = field(default_factory=lambda: Blades(
+        to=np.array([]), ti=np.array([]), bi=np.array([]), bo=np.array([]),
+        sto=np.array([]), sti=np.array([]), sbi=np.array([]), sbo=np.array([])
+    ))
+
+    @classmethod
+    def from_hdf5_group(cls,
+                        h5group: h5py.Group,
+                        direction: str) -> "CentralSweeps":
+        """Create a CentralSweeps instance from an HDF5 group."""
+
+        if direction == 'h':
+            ind = 'x'
+            fix = 'y'
+        elif direction == 'v':
+            ind = 'y'
+            fix = 'x'
+
+        return cls(
+            index    = h5group[f"{ind}_index"][:],
+            fixed    = h5group[f"{fix}_fix"][:],
+            fixcalc  = h5group[f"{fix}_calc"][:],
+            sfixcalc = h5group[f"s_{fix}_calc"][:],
+            fixfit   = h5group[f"{fix}_fit"][:],
+            blades   = Blades.from_hdf5_group(h5group)
+        )
 
 
 @dataclass
@@ -317,20 +408,108 @@ class SupressionMatrix:
     
     matrix: 4x4 numpy array representing the suppression matrix
     """
-    standard : np.ndarray = field(init=False)
-    stddev   : np.ndarray = field(init=False)
-    calc     : Optional[np.ndarray] = None
-    optim    : Optional[np.ndarray] = None
+    standard   : np.ndarray = field(init=False)
+    stddev     : np.ndarray = field(init=False)
+    calculated : Optional[np.ndarray] = None
+    optimized  : Optional[np.ndarray] = None
 
-    def __post_init__(self) -> None:
-        """Extract standard matrix and std dev matrix from Config."""
-        self.standard, self.stddev = Config.standard_suppression_matrix()
+    @classmethod
+    def from_hdf5_group(cls, h5group) -> "SupressionMatrix":
+        """Create a SupressionMatrix instance from an HDF5 group."""
+        if "matrices" not in h5group or "calculated" not in h5group["matrices"] or "optimized" not in h5group["matrices"]:
+            raise ValueError(
+                " ERROR while reading Suppression Matrix from HDF5 file:\n"
+                " Missing 'calculated' or 'optimized' dataset in 'matrices' group."
+            )
+
+        calculated = h5group["matrices"]["calculated"][:]
+        optimized  = h5group["matrices"]["optimized"][:]
+        standard   = h5group["matrices"]["standard"][:]
+        # Legacy: old files may not have stddev.
+        stddev     = (h5group["matrices"]["stddev"][:]
+                      if "stddev" in h5group["matrices"] else None)
+
+        return cls(
+            calculated=calculated,
+            optimized=optimized,
+            standard=standard,
+            stddev=stddev
+        )
+
+
+@dataclass
+class AnalyzedRawPositions:
+    """Container for analyzed positions and associated metadata.
+    
+    x: horizontal positions
+    y: vertical positions
+    """
+    nom  : Optional[Positions] = None
+    calc : Optional[Positions] = None
+
+    @classmethod
+    def from_hdf5_group(cls, h5group) -> "AnalyzedRawPositions":
+        """Create an AnalyzedRawPositions instance from an HDF5 group."""
+        xn  = (Positions.from_hdf5_group(h5group["x_nom"])
+               if "x_nom" in h5group else None)
+        yn  = (Positions.from_hdf5_group(h5group["y_nom"])
+               if "y_nom" in h5group else None)
+        nom = Positions(x=xn, y=yn) if xn and yn else None
+
+        xr  = (Positions.from_hdf5_group(h5group["x_raw"])
+               if "x_raw" in h5group else None)
+        yr  = (Positions.from_hdf5_group(h5group["y_raw"])
+               if "y_raw" in h5group else None)
+        calc = Positions(x=xr, y=yr) if xr and yr else None
+
+        return cls(nom=nom, calc=calc)
+
+
+@dataclass
+class AnalyzedScaledPositions:
+    """Container for analyzed positions and associated metadata.
+    
+    x: horizontal positions
+    y: vertical positions
+    """
+    nom  : Optional[Positions] = None
+    calc : Optional[Positions] = None
+
+    @classmethod
+    def from_hdf5_group(cls, h5group) -> "AnalyzedScaledPositions":
+        """Create an AnalyzedScaledPositions instance from an HDF5 group."""
+        xn = (Positions.from_hdf5_group(h5group["x_nom"])
+               if "x_nom" in h5group else None)
+        yn = (Positions.from_hdf5_group(h5group["y_nom"])
+               if "y_nom" in h5group else None)
+        nom = Positions(x=xn, y=yn) if xn and yn else None
+
+        xs = (Positions.from_hdf5_group(h5group["x_scaled"])
+               if "x_scaled" in h5group else None)
+        ys = (Positions.from_hdf5_group(h5group["y_scaled"])
+               if "y_scaled" in h5group else None)
+        calc = Positions(x=xs, y=ys) if xs and ys else None
+
+        return cls(nom=nom, calc=calc)
+
+
+@dataclass
+class AnalyzedPositions:
+    """Container for analyzed positions and associated metadata.
+    
+    raw   : AnalyzedRawPositions
+    scaled: AnalyzedScaledPositions
+    """
+    raw    : Optional[AnalyzedRawPositions]    = None
+    scaled : Optional[AnalyzedScaledPositions] = None
 
 
 @dataclass
 class DataAnalysis:
     """Container for all data and analysis results.
     
+    Instantiation depends on HDF5 group defining the analysis data from a specific beamline.
+
     nom_pos         : nominal positions
     blademap        : blade current data and positions
     bpm_pos         : BPM measured positions
@@ -350,21 +529,101 @@ class DataAnalysis:
     scale_adj_pair  : Scaling factors for adjusted pairwise calculation
     scale_adj_cross : Scaling factors for adjusted cross-blade calculation
     """
-    nom_pos         : Optional[Positions] = None
-    blademap        : Optional[BladeMap] = None
-    bpm_pos         : Optional[Positions] = None
-    centralsweep_h  : Optional[CentralSweeps] = None
-    centralsweep_v  : Optional[CentralSweeps] = None
-    xbpm_pos_raw_cr : Optional[Positions] = None
-    xbpm_pos_raw_pw : Optional[Positions] = None
-    xbpm_pos_scl_cr : Optional[Positions] = None
-    xbpm_pos_scl_pw : Optional[Positions] = None
-    scale_raw_pair  : Optional[Scales] = None
-    scale_raw_cross : Optional[Scales] = None
-    scale_adj_pair  : Optional[Scales] = None
-    scale_adj_cross : Optional[Scales] = None
+    # Beamline, description and XBPM-source distance.
+    prm             : Optional[Prm]               = None
+
+    blademap        : Optional[BladeMap]          = None
+
+    positions       : Optional[AnalyzedPositions] = None
+
+    nom_pos         : Optional[Positions]        = None
+    bpm_pos         : Optional[Positions]        = None
+    centralsweep_h  : Optional[CentralSweeps]    = None
+    centralsweep_v  : Optional[CentralSweeps]    = None
+    xbpm_pos_raw_cr : Optional[Positions]        = None
+    xbpm_pos_raw_pw : Optional[Positions]        = None
+    xbpm_pos_scl_cr : Optional[Positions]        = None
+    xbpm_pos_scl_pw : Optional[Positions]        = None
+    scale_raw_pair  : Optional[Scales]           = None
+    scale_raw_cross : Optional[Scales]           = None
+    scale_adj_pair  : Optional[Scales]           = None
+    scale_adj_cross : Optional[Scales]           = None
     supmat_pair     : Optional[SupressionMatrix] = None
     supmat_cross    : Optional[SupressionMatrix] = None
+
+    @classmethod
+    def from_hdf5_group(cls, h5group) -> "DataAnalysis":
+        """Create a DataAnalysis instance from an HDF5 group."""
+        # Extract parameters.
+        prm = Prm(**{key: val for key, val in h5group.attrs.items()})
+
+        # Extract blade map.
+        blademap = BladeMap(
+            blades = Blades.from_hdf5_group(h5group["blademap"]["blades"]),
+            coords = Positions.from_hdf5_group(h5group["blademap"]["coords"])
+        )
+
+        # Extract other analysis data.
+        nom_pos         = Positions.from_hdf5_group(h5group["nom_pos"])
+        bpm_pos         = Positions.from_hdf5_group(h5group["bpm_pos"])
+        centralsweep_h  = CentralSweeps(
+            index=h5group["central_sweeps_h"]["index"][:],
+            fix=h5group["central_sweeps_h"]["fix"][:],
+            blades=Blades.from_hdf5_group(
+                h5group["central_sweeps_h"]["blades"]
+                ))
+        centralsweep_v  = CentralSweeps(
+            index=h5group["central_sweeps_v"]["index"][:],
+            fix=h5group["central_sweeps_v"]["fix"][:],
+            blades=Blades.from_hdf5_group(
+                h5group["central_sweeps_v"]["blades"]
+                ))
+
+        xbpm_pos_raw_cr = Positions.from_hdf5_group(h5group["xbpm_pos_raw_cr"])
+        xbpm_pos_raw_pw = Positions.from_hdf5_group(h5group["xbpm_pos_raw_pw"])
+        xbpm_pos_scl_cr = Positions.from_hdf5_group(h5group["xbpm_pos_scl_cr"])
+        xbpm_pos_scl_pw = Positions.from_hdf5_group(h5group["xbpm_pos_scl_pw"])
+
+        # Extract scaling factors and suppression matrices.
+        scale_raw_pair  = Scales(**{
+            key: val
+            for key, val in h5group["scale_raw_pair"].attrs.items()
+            })
+        scale_raw_cross = Scales(**{
+            key: val for key, val in h5group["scale_raw_cross"].attrs.items()
+            })
+        scale_adj_pair  = Scales(**{
+            key: val for key, val in h5group["scale_adj_pair"].attrs.items()
+            })
+        scale_adj_cross = Scales(**{
+            key: val for key, val in h5group["scale_adj_cross"].attrs.items()
+            })
+        
+        supmat_pair     = SupressionMatrix.from_hdf5_group(
+            h5group["supmat_pair"]
+            )
+        supmat_cross    = SupressionMatrix.from_hdf5_group(
+            h5group["supmat_cross"]
+            )
+
+        return cls(
+            prm             = prm,
+            blademap        = blademap,
+            nom_pos         = nom_pos,
+            bpm_pos         = bpm_pos,
+            centralsweep_h  = centralsweep_h,
+            centralsweep_v  = centralsweep_v,
+            xbpm_pos_raw_cr = xbpm_pos_raw_cr,
+            xbpm_pos_raw_pw = xbpm_pos_raw_pw,
+            xbpm_pos_scl_cr = xbpm_pos_scl_cr,
+            xbpm_pos_scl_pw = xbpm_pos_scl_pw,
+            scale_raw_pair  = scale_raw_pair,
+            scale_raw_cross = scale_raw_cross,
+            scale_adj_pair  = scale_adj_pair,
+            scale_adj_cross = scale_adj_cross,
+            supmat_pair     = supmat_pair,
+            supmat_cross    = supmat_cross
+        )
 
 
 class DataStructureBuilder:

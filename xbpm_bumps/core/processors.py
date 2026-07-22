@@ -1119,7 +1119,7 @@ class BPMProcessor:
                   f" {missing} points missing from nominal mesh."
                   " Missing points were set to NaN.")
 
-    def _roi_slices(self, shape: tuple[int, int]) -> tuple[slice, slice]:
+    def _roi_slices(self, shape: tuple) -> tuple:
         """Return row/column slices for the centered ROI."""
         nv, nh = shape
         roi_h = min(self.roi_h_size, nh)
@@ -1173,7 +1173,7 @@ class BPMProcessor:
             tangents[agx, agy] = np.array([tx, ty])
         return tangents
 
-    def _offset_search(self, idx: int) -> tuple[float, float, float, float]:
+    def _offset_search(self, idx: int) -> tuple:
         """Extrapolate offsets when reference orbit is missing."""
         # Get the angle and orbit data for the current and next BPMs
         # across all measurements.
