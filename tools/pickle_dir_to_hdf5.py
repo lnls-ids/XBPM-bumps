@@ -7,6 +7,7 @@ import numpy as np
 import os
 import pickle  # noqa: S403
 import sys
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(script_dir, ".."))
 
@@ -407,7 +408,7 @@ def export_rawdata_to_hdf5(dataset: tuple, outname: str, append=False) -> None:
             # Select some metadata attributes to define the averaged data.
             avg_meta = {
                 'PV meter'   : metadata[1]['PV meter'],
-                'SR current' : metadata[1]['SR current'],
+                'SR current' : metadata[1]['current'],
                 }
             avg_meta.update({k: v for k, v in metadata[1].items()
                              if k.startswith('gap')})
