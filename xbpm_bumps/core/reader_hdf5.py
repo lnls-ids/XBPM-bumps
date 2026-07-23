@@ -10,23 +10,42 @@ from .config import Config
 from .data_structure import BeamlineRawData, DataAnalysis
 
 from dataclasses import dataclass, field
-from typing import Optional, Any, List
+# from typing import Optional, Any, List
 
 @dataclass
 class BeamlineData:
     prm      : dict
     rawdata  : BeamlineRawData
-    analysis : DataAnalysis
+    analysis : DataAnalysis     = field(default=None)
 
     @classmethod
     def from_hdf5_group(cls,
                         h5group: h5py.Group,
                         beamline: str) -> "BeamlineData":
-        """Create a BeamlineData instance from an HDF5 group."""
-        prm      = {key: val for key, val in h5group.attrs.items()}
-        rawdata  = BeamlineRawData.from_hdf5_group(h5group, beamline)
-        analysis = DataAnalysis.from_hdf5_group(h5group, beamline)
-        return cls(prm=prm, rawdata=rawdata, analysis=analysis)
+        """Extract the beamline data from an HDF5 group."""
+        # Metadata.
+        kwargs = {
+            "prm"      : dict(h5group.attrs.items()),
+        }
+
+        # Raw data.
+        kwargs["rawdata"]  = BeamlineRawData.from_hdf5_group(
+            h5group["raw_data"],
+            beamline
+            )
+
+        # Analysis data. May be not present yet.
+        try:
+            kwargs["analysis"] = DataAnalysis.from_hdf5_group(
+                h5group["analysis"],
+                beamline
+                )
+        except Exception as warn:
+            print(
+                "### WARNING, while reading 'Data Analysis' from HDF5 file:"
+                f"\n {warn}"
+            )
+        return cls(**kwargs)
 
 
 # --- Object-Oriented HDF5 Data Reader ---
@@ -40,8 +59,8 @@ class HDF5DataReader:
             filepath (str) : the HDF5 file with data.
         
         """
-        self.filepath      = filepath
-        self.beamlinedata  = {}
+        self.filepath = filepath
+        self.beamline = {}
         self.load_data()
 
     def __enter__(self: "HDF5DataReader") -> "HDF5DataReader":
@@ -64,7 +83,7 @@ class HDF5DataReader:
                     continue
 
                 # Assemble the extracted data in the rawdata dictionary.
-                self.beamlinedata[beamline] = BeamlineRawData.from_hdf5_group(
+                self.beamline[beamline] = BeamlineData.from_hdf5_group(
                     bldata, beamline
                     )
 
@@ -102,22 +121,22 @@ class HDF5FigureReconstructor:
                 logger.exception("Failed to load analysis metadata from HDF5")
 
         figure_map = {
-            'blade_map': 'blade_figure',
-            'sweeps': 'sweeps_figure',
-            'blades_center': 'blades_center_figure',
-            'blades_at_sweeps': 'blades_center_figure',
-            'blades_sweeps': 'blades_center_figure',
-            'xbpm_raw_positions': 'xbpm_raw_pairwise_figure',
-            'xbpm_scaled_positions': 'xbpm_scaled_pairwise_figure',
-            'bpm_positions': 'bpm_figure',
-            'bpm': 'bpm_figure',
+            'blade_map'             : 'blade_figure',
+            'sweeps'                : 'sweeps_figure',
+            'blades_center'         : 'blades_center_figure',
+            'blades_at_sweeps'      : 'blades_center_figure',
+            'blades_sweeps'         : 'blades_center_figure',
+            'xbpm_raw_positions'    : 'xbpm_raw_pairwise_figure',
+            'xbpm_scaled_positions' : 'xbpm_scaled_pairwise_figure',
+            'bpm_positions'         : 'bpm_figure',
+            'bpm'                   : 'bpm_figure',
         }
 
         position_variants = [
-            ('xbpm_raw_pairwise', 'xbpm_raw_pairwise_figure'),
-            ('xbpm_raw_cross', 'xbpm_raw_cross_figure'),
+            ('xbpm_raw_pairwise',    'xbpm_raw_pairwise_figure'),
+            ('xbpm_raw_cross',       'xbpm_raw_cross_figure'),
             ('xbpm_scaled_pairwise', 'xbpm_scaled_pairwise_figure'),
-            ('xbpm_scaled_cross', 'xbpm_scaled_cross_figure'),
+            ('xbpm_scaled_cross',    'xbpm_scaled_cross_figure'),
         ]
 
         for hdf5_name, result_key in figure_map.items():

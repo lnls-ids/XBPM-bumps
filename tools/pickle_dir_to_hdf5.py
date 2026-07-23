@@ -153,7 +153,7 @@ def extract_beamlines(rawdata: list) -> list:
 
 
 def _reverse_blade_map(beamline: str) -> dict:
-    """Return the blade mapping for the given beamline.
+    """Return the blade mapping for the beamline from the blade letter.
     
     Reverse blade mapping from TO → A to A → TO etc.
 
@@ -319,15 +319,19 @@ def parse_rawdata(rawdata: list, beamline: str) -> list:
 def _write_group_data(groupname, group: h5py.Group, data: dict) -> None:
     """Write datasets to the given HDF5 group."""
     # Convert data dictionary to structured array for HDF5 export.
-    names  = list(data.keys())
-    arrays = list(data.values())
+    names    = list(data.keys())
+    arrays   = list(data.values())
+
     # automatic dtype deduction
     rec_data = np.rec.fromarrays(arrays, names=names)
-    dset = group.create_dataset(groupname, data=rec_data)
+    dset     = group.create_dataset(groupname, data=rec_data)
     return dset
 
 
-def export_rawdata_to_hdf5(dataset: tuple, outname: str, append=False) -> None:
+def export_rawdata_to_hdf5(
+        dataset: tuple,
+        outname: str,
+        append=False) -> None:
     """Export parsed rawdata to HDF5 file.
 
     Args:
@@ -351,20 +355,49 @@ def export_rawdata_to_hdf5(dataset: tuple, outname: str, append=False) -> None:
             mastergrp = h5file.create_group(f"{beamline}")
 
             # Set metadata attributes for the beamline group.
-            descr = (f"Data for {beamline} beamline from XBPM experiments.")
-            meta = {
-                "# sweeps"         : len(metadata),
+            descr = (
+                f"Data for {beamline} beamline from XBPM bumping experiments."
+                )
+
+            lenmeta = len(metadata)
+    
+            mastermeta = {
+                "# sweeps"         : lenmeta,
                 "Beamline"         : beamline,
                 "Description"      : descr,
-                "Experience start" : metadata[1].get('Timestamp', "N/A"),
-                "HDF5 created on"  : datetime.now().isoformat(),
+                "HDF5 updated on"  : (
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    ),
                 }
-            mastergrp.attrs.update(meta)
+            mastergrp.attrs.update(mastermeta)
+
+            # Set metadata attributes for the raw data group.
+            rawgrp   = mastergrp.create_group("raw_data")
+            descr    = (
+                f"Raw data for {beamline} beamline from XBPM"
+                "bumping experiments."
+                )
+            ts_first = metadata[1].get('Timestamp', "N/A")
+            ts_last  = metadata[lenmeta - 1].get('Timestamp', "N/A")
+            duration = str(
+                datetime.strptime(ts_last, "%Y-%m-%d %H:%M:%S") -
+                datetime.strptime(ts_first, "%Y-%m-%d %H:%M:%S")
+            )
+            rawmeta  = {
+                "# sweeps"         : lenmeta,
+                "Beamline"         : beamline,
+                "Description"      : descr,
+                "Experience start" : ts_first,
+                "Experience end"   : ts_last,
+                "Duration"         : duration,
+                }
+            rawgrp.attrs.update(rawmeta)
 
             # Write raw data.
+            avg_sr_current = 0.
             for ii in metadata.keys():
                 # Create a subgroup for each sweep and write its attributes.
-                grp_sweep = mastergrp.create_group(f"sweep_{ii:04d}")
+                grp_sweep = rawgrp.create_group(f"sweep_{ii:04d}")
                 grp_sweep.attrs.update(metadata[ii])
 
                 # Subgroup for BPM data.
@@ -375,11 +408,14 @@ def export_rawdata_to_hdf5(dataset: tuple, outname: str, append=False) -> None:
                     )
 
                 # Subgroup for raw blade data.
-                datasetname = "raw_data"
+                datasetname = "blade_data"
                 dset = _write_group_data(datasetname, grp_sweep, bladedata[ii])
                 dset.attrs['Description'] = (
                     f"Raw blade measurements for the sweep {ii:04d}."
                     )
+
+                avg_sr_current += metadata[ii].get('SR current [mA]', 0.)
+            avg_sr_current /= lenmeta
 
             # Write averaged data.
             datasetname = "blade_averages"
@@ -403,12 +439,12 @@ def export_rawdata_to_hdf5(dataset: tuple, outname: str, append=False) -> None:
                 [col_arrays[col] for col in columns],
                 names=columns
                 )
-            dset = mastergrp.create_dataset(datasetname, data=struct_array)
+            dset = rawgrp.create_dataset(datasetname, data=struct_array)
 
             # Select some metadata attributes to define the averaged data.
             avg_meta = {
-                'PV meter'   : metadata[1]['PV meter'],
-                'SR current' : metadata[1]['current'],
+                'PV meter'             : metadata[1]['PV meter'],
+                'Avg. SR current [mA]' : avg_sr_current,
                 }
             avg_meta.update({k: v for k, v in metadata[1].items()
                              if k.startswith('gap')})
@@ -419,7 +455,7 @@ def export_rawdata_to_hdf5(dataset: tuple, outname: str, append=False) -> None:
                 )
 
 
-def hdf5_handler(filepath: str) -> tuple:
+def hdf5_handler(filepath: str, init_time: str) -> tuple:
     """Determine HDF5 output file name and handle overwrite/append.
     
     Args:
@@ -430,7 +466,10 @@ def hdf5_handler(filepath: str) -> tuple:
         append  : bool, Whether to append to existing file or overwrite.
     """
     # Set file name.
-    outfile = filepath + "_test" + ".h5"
+    outfile = (
+        "xbpm_bumps_" + filepath + "_" +
+        init_time.replace(":", "-").replace(" ", "_") + ".h5"
+        )
     print(f"\n### Exporting data to HDF5 file:\n '{outfile}'")
 
     # Check whether HDF5 file already exists and ask for confirmation
@@ -471,7 +510,9 @@ def main() -> None:
         dataset[bline] = parse_rawdata(rawdata, bline)
 
     # Set file name and handle overwrite/append.
-    outfile, append = hdf5_handler(args.dir)
+    # Set initial timestamp from the first record of the first beamline.
+    init_time = str(dataset[beamlines[0]][0][1].get('Timestamp', "N/A"))
+    outfile, append = hdf5_handler(args.dir, init_time)
 
     export_rawdata_to_hdf5(dataset, outfile, append)
     print("###  done.")

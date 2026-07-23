@@ -70,13 +70,25 @@ class Positions:
     @classmethod
     def from_hdf5_group(cls, data) -> "Positions":
         """Create a Positions instance from x and y arrays."""
+        if isinstance(data, h5py.Group):
+            entries = data.keys()
+        elif isinstance(data, np.ndarray) is not None:
+            entries = data.dtype.names
+        else:
+            raise TypeError(
+                "Data must be an h5py.Group or a structured numpy array."
+            )
+
+        for ent in entries:
+            if ent.startswith('x'):
+                x_key = ent
+            if ent.startswith('y'):
+                y_key = ent
+
         try:
-            return cls(x=data["x"][:], y=data["y"][:])
-        except (KeyError, ValueError):
-            try:
-                return cls(x=data["x_nom"][:], y=data["y_nom"][:])
-            except (KeyError, ValueError):
-                raise KeyError("Neither pair of fields found")
+            return cls(x=data[x_key][:], y=data[y_key][:])
+        except (KeyError, ValueError) as err:
+            raise KeyError(f"Neither pair of fields found:\n {err}")
 
 
 @dataclass
@@ -158,45 +170,48 @@ class BladeVals:
     saturation : np.ndarray = field(default_factory=lambda: np.array([]))
 
     @classmethod
-    def from_hdf5_group(cls, h5group) -> "BladeVals":
+    def from_hdf5_group(cls,
+                        h5group: h5py.Group,
+                        blade: str) -> "BladeVals":
         """Create a BladeVals instance from an HDF5 group."""
         required_fields = ['val', 'range', 'saturation']
         for fld in required_fields:
-            if fld not in h5group:
+            if f"{blade}_{fld}" not in h5group.dtype.names:
                 raise ValueError(
                     f" ERROR while reading BladeVals from HDF5 file:\n"
-                    f" Missing '{fld}' dataset in HDF5 group."
+                    f" Missing '{blade}_{fld}' dataset in HDF5 group."
                 )
 
         return cls(
-            val        = h5group["val"][:],
-            range      = h5group["range"][:],
-            saturation = h5group["saturation"][:]
+            val        = h5group[f"{blade}_val"][:],
+            range      = h5group[f"{blade}_range"][:],
+            saturation = h5group[f"{blade}_saturation"][:]
         )
 
 
 @dataclass
 class BPMData:
-    desc : str
-    pos  : Positions
+    descr : str
+    pos   : Positions
 
     @classmethod
     def from_hdf5_group(cls, h5group) -> "BPMData":
         """Create a BPMData instance from an HDF5 group."""
-        if "desc" not in h5group.attrs:
+        if "Description" not in h5group.attrs:
             raise ValueError(
                 " ERROR while reading BPMData from HDF5 file:\n"
-                " Missing 'desc' attribute in HDF5 group."
+                " Missing 'Description' attribute in HDF5 group."
             )
-        if "pos" not in h5group:
+        if ("x_bpm" not in h5group.dtype.names or
+            "y_bpm" not in h5group.dtype.names):
             raise ValueError(
                 " ERROR while reading BPMData from HDF5 file:\n"
-                " Missing 'pos' dataset in HDF5 group."
+                " Missing position dataset in HDF5 group."
             )
-
-        desc = h5group.attrs["desc"]
+    
+        descr = h5group.attrs["Description"]
         pos  = Positions.from_hdf5_group(h5group)
-        return cls(desc=desc, pos=pos)
+        return cls(descr=descr, pos=pos)
 
 
 @dataclass
@@ -225,19 +240,11 @@ class BladeRawData:
     @classmethod
     def from_hdf5_group(cls, h5group) -> "BladeRawData":
         """Create a BladeRawData instance from an HDF5 group."""
-        blades = ['A', 'B', 'C', 'D']
-        for blade in blades:
-            if blade not in h5group:
-                raise ValueError(
-                    " ERROR while reading 'Blade Raw Data' from HDF5 file:\n"
-                    f" Missing '{blade}' dataset in HDF5 group."
-                )
-
         return cls(
-            A = BladeVals.from_hdf5_group(h5group["A"]),
-            B = BladeVals.from_hdf5_group(h5group["B"]),
-            C = BladeVals.from_hdf5_group(h5group["C"]),
-            D = BladeVals.from_hdf5_group(h5group["D"])
+            A = BladeVals.from_hdf5_group(h5group, "A"),
+            B = BladeVals.from_hdf5_group(h5group, "B"),
+            C = BladeVals.from_hdf5_group(h5group, "C"),
+            D = BladeVals.from_hdf5_group(h5group, "D")
         )
 
 
@@ -258,16 +265,16 @@ class SweepData:
         """Create a SweepData instance from an HDF5 group."""
         try:
             # Sweep metadata.
-            prms = {k : v for k, v in h5group.attrs.items()}
+            prm = dict(h5group.attrs.items())
 
             # BPM dataset.
             bpm = BPMData.from_hdf5_group(h5group['bpm_data'])
 
             # Read raw data.
-            raw = BladeRawData.from_hdf5_group(h5group["raw_data"])
+            bld = BladeRawData.from_hdf5_group(h5group["blade_data"])
 
             # Instantiate SweepData with parameters, BPM data, and raw data.
-            return cls(prm=prms, bpm=bpm, blades=raw)
+            return cls(prm=prm, bpm=bpm, blades=bld)
         except Exception as err:
             raise ValueError(
                 "### ERROR while reading 'Sweep Data' from HDF5 file:\n"
@@ -282,8 +289,9 @@ class BeamlineRawData:
     sweeps: List of SweepData instances
     blade_avg: BladeAvgData instance
     """
-    sweeps     : dict[int, SweepData]   = field(default_factory=dict)
-    blade_avg  : BladeAvgData = field(
+    metadata   : Optional[dict]       = None
+    sweeps     : dict[int, SweepData] = field(default_factory=dict)
+    blade_avg  : BladeAvgData         = field(
         default_factory=lambda: BladeAvgData(
         prm=None, nom=None, blades=None
     ))
@@ -292,7 +300,10 @@ class BeamlineRawData:
     def from_hdf5_group(cls,
                         h5group  : h5py.Group,
                         beamline : str) -> "BeamlineRawData":
-        """Create a BeamlineRawData instance from an HDF5 group."""
+        """Extract raw data from the a raw_data HDF5 group."""
+        metadata = dict(h5group.attrs.items())
+
+
         sweeps = {}
         for key, data in h5group.items():
             # Sweep data.
@@ -303,17 +314,18 @@ class BeamlineRawData:
 
             # Blade averages.
             elif key == "blade_averages":
+                # Blade average data is a numpy array structure, not keyed.
                 blade_avg = BladeAvgData.from_hdf5_group(h5group=data)
 
             else:
                 print(f" WARNING: Unknown key '{key}'"
                       f" in beamline '{beamline}'. Skipping.")
 
-        return cls(sweeps=sweeps, blade_avg=blade_avg)
+        return cls(metadata=metadata, sweeps=sweeps, blade_avg=blade_avg)
 
 
 #
-# Analysis data structures.
+# Structures for data analysis.
 #
 
 @dataclass
