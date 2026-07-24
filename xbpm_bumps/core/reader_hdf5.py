@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 class BeamlineData:
     prm      : dict
     rawdata  : BeamlineRawData
-    analysis : DataAnalysis     = field(default=None)
+    analysis : DataAnalysis    = field(default=None)
 
     @classmethod
     def from_hdf5_group(cls,
@@ -220,7 +220,7 @@ class HDF5FigureReconstructor:
     def _find_analysis_group(h5_file: h5py.File) -> h5py.Group | None:
         """Find analysis group, prefer analysis_<beamline>."""
         for key in h5_file.keys():
-            if key.startswith('analysis_'):
+            if key.startswith('analysis'):
                 return h5_file[key]
         if 'analysis' in h5_file:
             return h5_file['analysis']
