@@ -23,6 +23,7 @@ from .analyzer                import XBPMAnalyzer
 from ..core.config            import Config
 from ..core.constants         import FIGDPI
 
+from ..core.reader_hdf5 import HDF5DataReader
 
 logger = logging.getLogger(__name__)
 
@@ -59,16 +60,16 @@ class XBPMMainWindow(QMainWindow):
         """Initialize the main window."""
         super().__init__()
         from ..core.parameters import Prm, ParameterBuilder
-        self.builder         = ParameterBuilder()
-        self.prm             = self.builder.prm or Prm()  # Persistent
-        self.canvases        = {}
-        self.reader          = None  # Canonical DataReader instance
-        self.rawdata         = None  # Canonical rawdata
-        self._last_workdir   = ""
-        self.results         = {}  # Single unified results storage (analysis or HDF5)
-        self._last_roisize   = None
+        self.builder           = ParameterBuilder()
+        self.prm               = self.builder.prm or Prm()  # Persistent
+        self.canvases          = {}
+        self.reader            = None  # Canonical DataReader instance
+        self.rawdata           = None  # Canonical rawdata
+        self._last_workdir     = ""
+        self.results           = {}    # Single unified results storage
+        self._last_roisize     = None
         self._analysis_running = False
-        self._roi_rerun_timer = QTimer(self)
+        self._roi_rerun_timer  = QTimer(self)
         self._roi_rerun_timer.setSingleShot(True)
         self._roi_rerun_timer.timeout.connect(self._on_run_clicked)
         self.setup_ui()
@@ -623,38 +624,54 @@ class XBPMMainWindow(QMainWindow):
             "HDF5 Files (*.h5 *.hdf5);;All Files (*)",
         )
 
-        if path:
-            # Store workdir in parameter panel and update status bar
-            self.param_panel.set_workdir(path)
-            self.status_bar.showMessage(f"Opened: {path}")
+        # Empty pathnames.
+        if not path:
+            return
 
-            # Use Analyzer workflow for loading HDF5.
-            # (Ensures beamline selection.)
-            params = self.param_panel.get_parameters()
-            if not self._validate_workdir(params):
-                return
+        # Now validate/read the selected path.
+        try:
+            reader = HDF5DataReader(path)
+        except OSError as exc:
+            self.show_error("Cannot open HDF5 file", str(exc))
+            return
 
-            # Ensure beamline is selected using canonical workflow
-            workdir = params.get('workdir')
-            try:
-                chosen_beamline = self._read_data_and_select_beamline(workdir)
-            except Exception as exc:
-                self.show_error("Beamline Selection Failed", str(exc))
-                return
-            self.log_message(
-                f"Loading data from: {workdir} "
-                f"(beamline: {chosen_beamline})"
-            )
-            self.analyzer.reader = self.reader
-            self.analyzer.rawdata = self.rawdata
-            self.analyzer.load_data_only()
-            # Assign analysis metadata from HDF5 for UI display
-            hdf5_analysis_meta = getattr(self.reader, 'analysis_meta', {})
-            self.results = hdf5_analysis_meta
-            self.results['_source'] = 'hdf5'
+        # Store workdir in parameter panel and update status bar
+        self.param_panel.set_workdir(os.path.dirname(path))
+        self.status_bar.showMessage(f"Opened: {path}")
 
-            # Automatically load and display figures after import
-            self._on_load_hdf5_figures(workdir)
+        # Use Analyzer workflow for loading HDF5.
+        # (Ensures beamline selection.)
+        params = self.param_panel.get_parameters()
+        if not self._validate_workdir(params):
+            return
+
+        # Ensure beamline is selected using canonical workflow
+        workdir = params.get('workdir')
+        try:
+            chosen_beamline = self._read_data_and_select_beamline(workdir)
+        except Exception as exc:
+            self.show_error("Beamline Selection Failed", str(exc))
+            return
+
+        self.reader = reader
+        self.selected_data = self.reader.beamline[chosen_beamline]
+        self.prm = self.selected_data.prm
+        self.analysis = self.selected_data.analysis
+
+        self.log_message(
+            f"Loading data from: {workdir} "
+            f"(beamline: {chosen_beamline})"
+        )
+
+        # self.rawdata = getattr(reader, 'rawdata', None)
+        # self.analyzer.load_data_only()
+        # # Assign analysis metadata from HDF5 for UI display
+        # hdf5_analysis_meta = getattr(reader, 'analysis_meta', {})
+        # self.results = hdf5_analysis_meta
+        # self.results['_source'] = 'hdf5'
+
+        # Automatically load and display figures after import
+        # self._on_load_hdf5_figures(workdir)
 
     def _on_load_hdf5_figures(self, hdf5_path: str) -> None:
         """Load figures from HDF5 file and display them.

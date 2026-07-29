@@ -21,29 +21,36 @@ class Prm:
     uses prm["key"] remains compatible while also providing attribute
     access (prm.key).
     """
-    beamline         : str
-    sr_current       : float
-    bpmdist          : float
+    beamline         : str         # Beamline name
+    sr_current       : float       # Synchrotron current
+    bpmdist          : float       # Distance bewtween adjacent BPMs.
 
+    # What to calculate and show.
     showblademap     : bool = False
     centralsweep     : bool = False
     showbladescenter : bool = False
     xbpmpositions    : bool = False
     showbpmpositions : bool = False
     xbpmpositionsraw : bool = False
+
+    # BPM as reference instead of nominal positions.
     usebpmref        : bool = False
-    outputfile       : str   | None = None
-    xbpmdist         : float | None = None
-    workdir          : str   | None = None
-    phaseorgap       : dict  | None = None
-    section          : str   | None = None
-    blademap         : Any   | None = None
+
+    # File names and analysis parameters.
+    inputfile        : str   | None = None      # HDF5 input file name.
+    outputfile       : str   | None = None      # HDF5 output file name. 
+    xbpmdist         : float | None = None      # Source-XBPM distance.
+    phaseorgap       : dict  | None = None      # Phase/gap for the ID.
+    section          : str   | None = None      # The SR section.
+    # blademap         : Any   | None = None
     maxradangle      : float = 20.0
-    skip             : int   = 0
-    scalepolydeg     : int   = 1
+
+    # Plotting / fitting parameters.
+    skip             : int   = 0   # Number of points to skip.
+    scalepolydeg     : int   = 1   # Degree of polynomial for scaling fit.
     roisize          : List[int] = field(
         default_factory=lambda: [ROI_SIZE_H, ROI_SIZE_V]
-        )
+        )                          # ROI size. Chosen by the user.
 
     def __getitem__(self, key: str):
         """Dictionary-style access (prm['key']) for backward compatibility."""
@@ -85,6 +92,9 @@ class Positions:
         if   isinstance(data, h5py.Group):
             entries = data.keys()
         elif isinstance(data, np.ndarray):
+            entries = data.dtype.names
+        elif isinstance(data, h5py.Dataset):
+            data = data[()]   # Load the dataset into memory
             entries = data.dtype.names
         else:
             raise TypeError(
