@@ -7,6 +7,8 @@ from typing import Any, List
 import h5py
 import numpy as np
 
+from xbpm_bumps.core.config import Config
+
 # Import DataReader for canonical _extract_beamlines
 # from xbpm_bumps.core.readers import DataReader
 # from .config import Config
@@ -21,9 +23,8 @@ class Prm:
     uses prm["key"] remains compatible while also providing attribute
     access (prm.key).
     """
-    beamline         : str         # Beamline name
-    sr_current       : float       # Synchrotron current
-    bpmdist          : float       # Distance bewtween adjacent BPMs.
+    sr_current       : float | None = None  # Synchrotron current
+    bpmdist          : float | None = None  # Distance bewtween adjacent BPMs.
 
     # What to calculate and show.
     showblademap     : bool = False
@@ -39,18 +40,10 @@ class Prm:
     # File names and analysis parameters.
     inputfile        : str   | None = None      # HDF5 input file name.
     outputfile       : str   | None = None      # HDF5 output file name. 
-    xbpmdist         : float | None = None      # Source-XBPM distance.
     phaseorgap       : dict  | None = None      # Phase/gap for the ID.
     section          : str   | None = None      # The SR section.
     # blademap         : Any   | None = None
     maxradangle      : float = 20.0
-
-    # Plotting / fitting parameters.
-    skip             : int   = 0   # Number of points to skip.
-    scalepolydeg     : int   = 1   # Degree of polynomial for scaling fit.
-    roisize          : List[int] = field(
-        default_factory=lambda: [ROI_SIZE_H, ROI_SIZE_V]
-        )                          # ROI size. Chosen by the user.
 
     def __getitem__(self, key: str):
         """Dictionary-style access (prm['key']) for backward compatibility."""
@@ -61,11 +54,11 @@ class Prm:
         setattr(self, key, value)
 
     @classmethod
-    def from_hdf5_group(cls, bln_grp: h5py.Group) -> "Prm":
+    def from_hdf5_group(cls, dset_grp: h5py.Group) -> "Prm":
         """Create a Prm instance from an HDF5 group."""
         # Extract attributes from the HDF5 group.
         try:
-            attrs = {key: val for key, val in bln_grp.attrs.items()}
+            attrs = {key: val for key, val in dset_grp.attrs.items()}
         except Exception as err:
             raise ValueError(
                 "### ERROR while reading 'Prm' from HDF5 group:\n"
@@ -73,6 +66,34 @@ class Prm:
             )
 
         # Create a Prm instance with the extracted attributes.
+        return cls(**attrs)
+
+
+@dataclass
+class BeamlinePrm:
+    """Typed container for beamline-specific parameters."""
+    beamline         : str   | None = None   # Beamline name
+    xbpmdist         : float | None = None   # Source-XBPM distance.
+    skip             : int   = 0   # Number of points to skip.
+    scalepolydeg     : int   = 1   # Degree of polynomial for scaling fit.
+    roisize          : List[int] = field(
+        default_factory=lambda: [ROI_SIZE_H, ROI_SIZE_V]
+        )                          # ROI size. Chosen by the user.
+
+    @classmethod
+    def from_hdf5_group(cls, bln_grp: h5py.Group) -> "BeamlinePrm":
+        """Create a BeamlinePrm instance from an HDF5 group."""
+        try:
+            attrs = {key: val for key, val in bln_grp.attrs.items()}
+            attrs["xbpmdist"] = Config.XBPMDISTS.get(
+                attrs.get("beamline", ""), None
+                )
+        except Exception as err:
+            raise ValueError(
+                "### ERROR while reading 'BeamlinePrm' from HDF5 group:\n"
+                f" {err}"
+            )
+
         return cls(**attrs)
 
 

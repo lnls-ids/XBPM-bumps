@@ -14,10 +14,13 @@ from dataclasses import dataclass, field
 
 @dataclass
 class BeamlineData:
+    """Encapsulates all data for a single beamline extracted from HDF5.
+    
+    A structure is created to contain the raw data measured (BeamlineRawData) and, if present, previous analysis results (DataAnalysis) stored in the HDF5 file. Metadata is stored in a parameter dictionary.
+    """
     prm      : dict
     raw_data : BeamlineRawData
     analysis : DataAnalysis    = field(default=None)
-
 
     @classmethod
     def from_hdf5_group(cls,
@@ -51,7 +54,13 @@ class BeamlineData:
 
 # --- Object-Oriented HDF5 Data Reader ---
 class HDF5DataReader:
-    """Encapsulates HDF5 file access and data extraction for XBPM."""
+    """Encapsulates HDF5 file access and data extraction for XBPM.
+    
+    An object is created containing all beamline data from the HDF5 file. It encapsulates more than one beamline, if present, since BeamlineData extracts the data for each beamline separately.
+
+    Args:
+        filepath (str): Path to the HDF5 file.
+    """
 
     def __init__(self, filepath: str) -> None:
         """Initialize HDF5DataReader with file path.

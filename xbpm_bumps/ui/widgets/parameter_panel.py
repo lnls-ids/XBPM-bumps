@@ -23,20 +23,21 @@ class ParameterPanel(QWidget):
             parent: Optional parent widget.
         """
         super().__init__(parent)
-        self._all_checked = False  # Track toggle state
-        self._workdir: str = ""
+        self.all_check : bool = False  # Track toggle state
+        self.workdir   : str  = ""
+        self.beamline  : str  | None = None
         self.setup_ui()
 
     parametersChanged = pyqtSignal()  # noqa: N815
 
     def set_beamline(self, beamline: str):
         """Set the beamline value for persistence in the panel."""
-        self._beamline = beamline
+        self.beamline = beamline
         self.parametersChanged.emit()
 
-    def get_beamline(self) -> str:
+    def get_beamline(self) -> str | None:
         """Get the currently set beamline, if any."""
-        return getattr(self, '_beamline', None)
+        return self.beamline
 
     def setup_ui(self) -> None:
         """Initialize the UI layout and widgets."""
@@ -201,8 +202,8 @@ class ParameterPanel(QWidget):
         This replaces the old editable field; triggers parametersChanged.
         """
         path = path or ""
-        if path != self._workdir:
-            self._workdir = path
+        if path != self.workdir:
+            self.workdir = path
             self._update_workdir_field(path)
             self.parametersChanged.emit()
 
@@ -231,13 +232,14 @@ class ParameterPanel(QWidget):
             ParameterBuilder.from_cli() format.
         """
         params = {
-            'workdir': self._workdir,
-            'xbpmdist': (
+            'workdir'  : self.workdir,
+            'beamline' : self.beamline,
+            'xbpmdist' : (
                 self.xbpmdist_spin.value()
                 if self.xbpmdist_spin.value() > 0
                 else None
             ),
-            'roisize': [
+            'roisize'  : [
                 int(self.roi_h_spin.value()),
                 int(self.roi_v_spin.value()),
             ],
@@ -245,51 +247,50 @@ class ParameterPanel(QWidget):
             'scalepolydeg'     : self.scalepolydeg.value(),
             'xbpmpositionsraw' : self.xbpm_raw_check.isChecked(),
             'xbpmpositions'    : self.xbpm_check.isChecked(),
-            'xbpmfrombpm'      : self.bpm_check.isChecked(),
+            'showbpmpositions' : self.bpm_check.isChecked(),
             'usebpmref'        : self.bpm_ref_check.isChecked(),
             'showblademap'     : self.blademap_check.isChecked(),
             'centralsweep'     : self.central_check.isChecked(),
             'showbladescenter' : self.center_check.isChecked(),
         }
-        # Include beamline if set
-        beamline = getattr(self, '_beamline', None)
-        if beamline:
-            params['beamline'] = beamline
+
+        # Define variables in parameters dataclass.
+
 
         return params
 
-    def set_parameters(self, params: dict):
-        """Set parameter values from a dictionary.
+    # def set_parameters(self, params: dict):
+    #     """Set parameter values from a dictionary.
 
-        Args:
-            params: Dictionary with parameter names and values.
-        """
-        # Text and numeric parameters
-        if 'workdir' in params:
-            self.set_workdir(params['workdir'])
-        if 'xbpmdist' in params and params['xbpmdist'] is not None:
-            self.xbpmdist_spin.setValue(params['xbpmdist'])
-        if 'scalepolydeg' in params and params['scalepolydeg'] is not None:
-            self.scalepolydeg.setValue(params['scalepolydeg'])
-        if 'roisize' in params and params['roisize']:
-            try:
-                self.roi_h_spin.setValue(int(params['roisize'][0]))
-                self.roi_v_spin.setValue(int(params['roisize'][1]))
-            except Exception:  # noqa: S110
-                pass
-        if 'skip' in params:
-            self.skip_spin.setValue(params['skip'])
+    #     Args:
+    #         params: Dictionary with parameter names and values.
+    #     """
+    #     # Text and numeric parameters
+    #     if 'workdir' in params:
+    #         self.set_workdir(params['workdir'])
+    #     if 'xbpmdist' in params and params['xbpmdist'] is not None:
+    #         self.xbpmdist_spin.setValue(params['xbpmdist'])
+    #     if 'scalepolydeg' in params and params['scalepolydeg'] is not None:
+    #         self.scalepolydeg.setValue(params['scalepolydeg'])
+    #     if 'roisize' in params and params['roisize']:
+    #         try:
+    #             self.roi_h_spin.setValue(int(params['roisize'][0]))
+    #             self.roi_v_spin.setValue(int(params['roisize'][1]))
+    #         except Exception:  # noqa: S110
+    #             pass
+    #     if 'skip' in params:
+    #         self.skip_spin.setValue(params['skip'])
 
-        # Boolean checkboxes - map parameter name to widget
-        checkboxes = {
-            'xbpmpositionsraw' : self.xbpm_raw_check,
-            'xbpmpositions'    : self.xbpm_check,
-            'xbpmfrombpm'      : self.bpm_check,
-            'usebpmref'         : self.bpm_ref_check,
-            'showblademap'     : self.blademap_check,
-            'centralsweep'     : self.central_check,
-            'showbladescenter' : self.center_check,
-        }
-        for param, checkbox in checkboxes.items():
-            if param in params:
-                checkbox.setChecked(params[param])
+    #     # Boolean checkboxes - map parameter name to widget
+    #     checkboxes = {
+    #         'xbpmpositionsraw' : self.xbpm_raw_check,
+    #         'xbpmpositions'    : self.xbpm_check,
+    #         'xbpmfrombpm'      : self.bpm_check,
+    #         'usebpmref'         : self.bpm_ref_check,
+    #         'showblademap'     : self.blademap_check,
+    #         'centralsweep'     : self.central_check,
+    #         'showbladescenter' : self.center_check,
+    #     }
+    #     for param, checkbox in checkboxes.items():
+    #         if param in params:
+    #             checkbox.setChecked(params[param])

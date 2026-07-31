@@ -1,6 +1,6 @@
 """Main window for XBPM analysis application."""
 
-
+from typing import Callable
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTextEdit, QSplitter, QTabWidget,
@@ -22,8 +22,9 @@ from .dialogs.help_dialog     import HelpDialog
 from .analyzer                import XBPMAnalyzer
 from ..core.config            import Config
 from ..core.constants         import FIGDPI
+from ..core.parameters        import ParameterBuilder, Prm
 
-from ..core.reader_hdf5 import HDF5DataReader
+from ..core.reader_hdf5 import HDF5DataReader as H5DR
 
 logger = logging.getLogger(__name__)
 
@@ -59,12 +60,8 @@ class XBPMMainWindow(QMainWindow):
     def __init__(self: "XBPMMainWindow") -> None:
         """Initialize the main window."""
         super().__init__()
-        from ..core.parameters import Prm, ParameterBuilder
-        self.builder           = ParameterBuilder()
-        self.prm               = self.builder.prm or Prm()  # Persistent
         self.canvases          = {}
-        self.reader            = None  # Canonical DataReader instance
-        self.rawdata           = None  # Canonical rawdata
+        self.beamlinedata      = None  # Canonical DataReader instance
         self._last_workdir     = ""
         self.results           = {}    # Single unified results storage
         self._last_roisize     = None
@@ -80,49 +77,31 @@ class XBPMMainWindow(QMainWindow):
 
     def _read_data_and_select_beamline(self, workdir: str) -> str:
         """Centralized beamline selection: returns the chosen beamline."""
-        from ..core.readers import DataReader
-        import os
         # Always instantiate and read DataReader for each new workdir
         self.prm.workdir = workdir
-        self.reader      = DataReader(self.prm, self.builder)
-        self.reader.read_data()
-        self.rawdata     = self.reader.rawdata
+        self.dataset     = H5DR(workdir)
+        self.beamlines   = list(self.dataset.beamline.keys())
 
-        # Extract beamlines using HDF5 logic if file is HDF5
-        beamlines = []
-        if (os.path.isfile(workdir) and
-            workdir.lower().endswith(('.h5', '.hdf5'))):
-            from xbpm_bumps.core.reader_hdf5 import HDF5DataReader
-            with HDF5DataReader(workdir) as reader:
-                reader.load_all()
-                beamlines = reader.beamlines
+        if len(self.beamlines) == 1:
+            self.workbeamline = self.beamlines[0]
+            self.log_message(f"Auto-selected beamline: {self.workbeamline}")
         else:
-            from xbpm_bumps.core.reader_pickle import extract_beamlines
-            beamlines = extract_beamlines(self.rawdata)
-
-        if not beamlines:
-            raise RuntimeError("No beamlines found in data.")
-
-        if len(beamlines) == 1:
-            chosen = beamlines[0]
-            self.log_message(f"Auto-selected beamline: {chosen}")
-        else:
-            dialog = BeamlineSelectionDialog(sorted(beamlines))
+            dialog = BeamlineSelectionDialog(sorted(self.beamlines))
             if dialog.exec_() != dialog.Accepted:
                 raise RuntimeError("Beamline selection cancelled by user.")
-            chosen = dialog.get_selection()
-            if not chosen:
+            self.workbeamline = dialog.get_selection()
+            if not self.workbeamline:
                 raise RuntimeError("No beamline selected.")
-            self.log_message(f"Selected beamline: {chosen}")
+            self.log_message(f"Selected beamline: {self.workbeamline}")
+
         # Persist in parameter panel for future get_parameters() calls
-        if hasattr(self, 'param_panel'):
-            self.param_panel.set_beamline(chosen)
+        self.param_panel.set_beamline(self.workbeamline)
 
         # Set ROI defaults to the maximum available points in each direction.
         # This keeps defaults aligned with the actual loaded measurement grid.
         try:
-            self.prm.beamline = chosen
-            fetched = self.reader._blades_fetch()
+            self.prm.beamline = self.workbeamline
+            fetched = self.dataset._blades_fetch()
             data = fetched[0] if isinstance(fetched, tuple) else fetched
             keys = np.array(list(data.keys())) if data else np.array([])
             if keys.size > 0 and keys.ndim == 2 and keys.shape[1] >= 2:
@@ -136,8 +115,8 @@ class XBPMMainWindow(QMainWindow):
         except Exception as exc:  # pragma: no cover - defensive
             self.log_message(f"Could not set ROI defaults from grid: {exc}")
 
-        self._update_xbpmdist_from_beamline(chosen)
-        return chosen
+        self._update_xbpmdist_from_beamline(self.workbeamline)
+        return self.workbeamline
 
     def setup_ui(self) -> None:
         """Initialize the main window layout."""
@@ -322,17 +301,17 @@ class XBPMMainWindow(QMainWindow):
             # DataReader instantiation and reading now handled by
             # _read_data_and_select_beamline
             # Handle beamline result
-            if self.reader.prm.beamline:
+            if self.workbeamline:
                 self.log_message(
-                    f"Beamline selected: {self.reader.prm.beamline}"
+                    f"Beamline selected: {self.workbeamline}"
                 )
-                self._update_xbpmdist_from_beamline(self.reader.prm.beamline)
+                self._update_xbpmdist_from_beamline(self.workbeamline)
         except Exception as exc:  # pragma: no cover - defensive
             self.log_message(f"Beamline preselection failed: {exc}")
 
-    def _create_beamline_selector(self) -> callable:
+    def _create_beamline_selector(self) -> Callable[[list], str | None]:
         """Create beamline selector function for UI dialog."""
-        def selector(bls):
+        def selector(bls: list) -> str | None:
             if len(bls) == 1:
                 return bls[0]
             dialog = BeamlineSelectionDialog(sorted(bls))
@@ -630,7 +609,7 @@ class XBPMMainWindow(QMainWindow):
 
         # Now validate/read the selected path.
         try:
-            reader = HDF5DataReader(path)
+            reader = H5DR(path)
         except OSError as exc:
             self.show_error("Cannot open HDF5 file", str(exc))
             return
@@ -642,13 +621,12 @@ class XBPMMainWindow(QMainWindow):
         # Use Analyzer workflow for loading HDF5.
         # (Ensures beamline selection.)
         params = self.param_panel.get_parameters()
-        if not self._validate_workdir(params):
-            return
+        if not (workdir := self._validate_workdir(params)):
+            return False, None
 
         # Ensure beamline is selected using canonical workflow
-        workdir = params.get('workdir')
         try:
-            chosen_beamline = self._read_data_and_select_beamline(workdir)
+            chosen_beamline = self._read_data_and_select_beamline(workdir[1])
         except Exception as exc:
             self.show_error("Beamline Selection Failed", str(exc))
             return
@@ -1256,8 +1234,8 @@ class XBPMMainWindow(QMainWindow):
 
     def _validate_workdir(self, params: dict) -> bool:
         """Ensure workdir is provided."""
-        if params.get('workdir'):
-            return True
+        if swp := params.get('workdir'):
+            return True, swp
         QMessageBox.warning(
             self,
             "Missing Input",

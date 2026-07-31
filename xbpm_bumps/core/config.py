@@ -23,10 +23,11 @@ class Config:
     # A, B, C, D : names of respective P.V.s
     #
     # CAVEAT: the map is based on the current configuration of the beamlines, 
-    # based on the the machine studies. The aim is to reassign the cables in
+    # evaluated from machine studies. The aim is to reassign the cables in
     # the XBPMs so the blades sequence correspond directly to the
     # PVs (A, B, C, D). The following map corrects the configuration and helps 
-    # in finding the correct wiring.
+    # in finding the correct wiring. The rewiring is under way and all maps
+    # will reduce to the same sequence (TO, TI, BO, BI) = (A, B, C, D).
     #
     BLADEMAP = {
         "MNC1" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
@@ -67,16 +68,16 @@ class Config:
     # Distance from source (its center) to XBPM at each beamline.
     # Obtained from comissioning reports.
     XBPMDISTS = {
-        "CAT":  15.740,
-        "CAT1": 15.740,
-        "CAT2": 19.590,
-        "CNB": 15.740,
-        "CNB1": 15.740,
-        "CNB2": 19.590,
-        "MGN1": 10.237,
-        "MGN2": 16.167,
-        "MNC1": 15.740,
-        "MNC2": 19.590,
+        "CAT"  : 15.740,
+        "CAT1" : 15.740,
+        "CAT2" : 19.590,
+        "CNB"  : 15.740,
+        "CNB1" : 15.740,
+        "CNB2" : 19.590,
+        "MGN1" : 10.237,
+        "MGN2" : 16.167,
+        "MNC1" : 15.740,
+        "MNC2" : 19.590,
     }
 
     # Sections of the ring for each beamline.
