@@ -7,7 +7,9 @@ import numpy as np
 import matplotlib
 
 from .config import Config
-from .data_structure import BeamlineRawData, DataAnalysis
+from .data_structure import BeamlinePrm     as BLPrm
+from .data_structure import BeamlineRawData as BLRD
+from .data_structure import DataAnalysis    as BLDA
 
 from dataclasses import dataclass, field
 # from typing import Optional, Any, List
@@ -18,34 +20,29 @@ class BeamlineData:
     
     A structure is created to contain the raw data measured (BeamlineRawData) and, if present, previous analysis results (DataAnalysis) stored in the HDF5 file. Metadata is stored in a parameter dictionary.
     """
-    prm      : dict
-    raw_data : BeamlineRawData
-    analysis : DataAnalysis    = field(default=None)
+    prm      : BLPrm
+    raw_data : BLRD
+    analysis : BLDA  = field(default=None)
 
     @classmethod
     def from_hdf5_group(cls,
-                        h5group: h5py.Group,
-                        beamline: str) -> "BeamlineData":
+                        bd_grp: h5py.Group,) -> "BeamlineData":
         """Extract the beamline data from an HDF5 group."""
         # Metadata.
-        kwargs = {
-            "prm"      : dict(h5group.attrs.items()),
-        }
+        kwargs = {}
+
+        # Beamline parameters.
+        kwargs["prm"] =  BLPrm.from_hdf5(bd_grp)
+        beamline = kwargs["prm"].beamline
 
         # Raw data.
-        kwargs["raw_data"]  = BeamlineRawData.from_hdf5_group(
-            h5group["raw_data"],
-            beamline
-            )
+        kwargs["raw_data"] = BLRD.from_hdf5(bd_grp["raw_data"], beamline)
 
-        # Analysis data. May be not present yet.
+        # Analysis data may be not present when data are imported.
         try:
-            kwargs["analysis"] = DataAnalysis.from_hdf5_group(
-                h5group["analysis"],
-                beamline
-                )
+            kwargs["analysis"] = BLDA.from_hdf5(bd_grp["analysis"])
         except Exception as warn:
-            print(
+            logging.warning(
                 "### WARNING, while reading 'Data Analysis' from HDF5 file:"
                 f"\n {warn}"
             )
