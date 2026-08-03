@@ -96,6 +96,10 @@ class BeamlinePrm:
 
         return cls(**attrs)
 
+    @classmethod
+    def roisize_update(cls, roisize: List[int]) -> None:
+        """Update the ROI size to the current defaults."""
+        cls.roisize = roisize
 
 #
 # Generic data structures.

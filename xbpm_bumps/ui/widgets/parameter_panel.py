@@ -1,11 +1,15 @@
 """Parameter input panel for XBPM analysis."""
 
+import numpy as np
+
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QCheckBox, QGroupBox, QDoubleSpinBox, QSpinBox, QPushButton, QLabel,
     QLineEdit
 )
 from PyQt5.QtCore import pyqtSignal
+
+from xbpm_bumps.core.data_structure import Positions
 
 from ...core.constants import ROI_SIZE_H, ROI_SIZE_V
 
@@ -196,25 +200,24 @@ class ParameterPanel(QWidget):
         self.xbpm_check.setChecked(self._all_checked)
         self.parametersChanged.emit()
 
-    def set_workdir(self, path: str) -> None:
+    def show_workdir(self, workdir: str) -> None:
         """Set the working directory/file path programmatically.
 
         This replaces the old editable field; triggers parametersChanged.
         """
-        path = path or ""
-        if path != self.workdir:
-            self.workdir = path
-            self._update_workdir_field(path)
+        workdir = workdir or ""
+        if workdir != self.workdir:
+            self.workdir = workdir
+            display = workdir if workdir else ""
+            self.workdir_field.setText(display)
+            self.workdir_field.setToolTip(display)
             self.parametersChanged.emit()
 
-    def _update_workdir_field(self, path: str) -> None:
-        """Update read-only workdir display with full path and tooltip."""
-        display = path if path else ""
-        self.workdir_field.setText(display)
-        self.workdir_field.setToolTip(display)
-
-    def set_roi_defaults_from_grid(self, points_h: int, points_v: int) -> None:
+    def set_roi_defaults_from_grid(self, coords: Positions) -> None:
         """Set ROI defaults from available grid points in each axis."""
+        points_h = np.unique(coords.x)
+        points_v = np.unique(coords.y)
+
         try:
             nh = max(1, int(points_h))
             nv = max(1, int(points_v))

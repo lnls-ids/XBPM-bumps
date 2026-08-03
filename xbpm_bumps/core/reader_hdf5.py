@@ -25,8 +25,7 @@ class BeamlineData:
     analysis : BLDA  = field(default=None)
 
     @classmethod
-    def from_hdf5_group(cls,
-                        bd_grp: h5py.Group,) -> "BeamlineData":
+    def from_hdf5(cls, bd_grp: h5py.Group,) -> "BeamlineData":
         """Extract the beamline data from an HDF5 group."""
         # Metadata.
         kwargs = {}
@@ -67,7 +66,7 @@ class HDF5DataReader:
         
         """
         self.filepath = filepath
-        self.beamline = {}
+        self.beamlinedata = {}
         self.load_data()
 
     def __enter__(self: "HDF5DataReader") -> "HDF5DataReader":
@@ -77,7 +76,7 @@ class HDF5DataReader:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Exit context: close HDF5 file."""
-        if self.h5 is not None:
+        if hasattr(self, 'h5') and self.h5 is not None:
             self.h5.close()
             self.h5 = None
 
@@ -90,9 +89,7 @@ class HDF5DataReader:
                     continue
 
                 # Assemble the extracted data in the raw_data dictionary.
-                self.beamline[beamline] = BeamlineData.from_hdf5_group(
-                    bldata, beamline
-                    )
+                self.beamlinedata[beamline] = BeamlineData.from_hdf5(bldata)
 
 
 # --- Object-Oriented HDF5 Figure Reconstructor ---

@@ -22,9 +22,9 @@ from .dialogs.help_dialog     import HelpDialog
 from .analyzer                import XBPMAnalyzer
 from ..core.config            import Config
 from ..core.constants         import FIGDPI
-from ..core.parameters        import ParameterBuilder, Prm
+# from ..core.parameters        import ParameterBuilder, Prm
 
-from ..core.reader_hdf5 import HDF5DataReader as H5DR
+from ..core.reader_hdf5 import HDF5DataReader as H5DRead
 
 logger = logging.getLogger(__name__)
 
@@ -75,48 +75,21 @@ class XBPMMainWindow(QMainWindow):
         # Wider default window to give canvases more horizontal room
         self.resize(1600, 900)
 
-    def _read_data_and_select_beamline(self, workdir: str) -> str:
-        """Centralized beamline selection: returns the chosen beamline."""
-        # Always instantiate and read DataReader for each new workdir
-        self.prm.workdir = workdir
-        self.dataset     = H5DR(workdir)
-        self.beamlines   = list(self.dataset.beamline.keys())
-
-        if len(self.beamlines) == 1:
-            self.workbeamline = self.beamlines[0]
-            self.log_message(f"Auto-selected beamline: {self.workbeamline}")
-        else:
-            dialog = BeamlineSelectionDialog(sorted(self.beamlines))
-            if dialog.exec_() != dialog.Accepted:
-                raise RuntimeError("Beamline selection cancelled by user.")
-            self.workbeamline = dialog.get_selection()
-            if not self.workbeamline:
-                raise RuntimeError("No beamline selected.")
-            self.log_message(f"Selected beamline: {self.workbeamline}")
-
-        # Persist in parameter panel for future get_parameters() calls
-        self.param_panel.set_beamline(self.workbeamline)
-
-        # Set ROI defaults to the maximum available points in each direction.
-        # This keeps defaults aligned with the actual loaded measurement grid.
-        try:
-            self.prm.beamline = self.workbeamline
-            fetched = self.dataset._blades_fetch()
-            data = fetched[0] if isinstance(fetched, tuple) else fetched
-            keys = np.array(list(data.keys())) if data else np.array([])
-            if keys.size > 0 and keys.ndim == 2 and keys.shape[1] >= 2:
-                n_h = np.unique(keys[:, 0]).shape[0]
-                n_v = np.unique(keys[:, 1]).shape[0]
-                self.param_panel.set_roi_defaults_from_grid(n_h, n_v)
-                self.log_message(
-                    "ROI defaults set from loaded grid:"
-                    f" H={n_h}, V={n_v}"
-                )
-        except Exception as exc:  # pragma: no cover - defensive
-            self.log_message(f"Could not set ROI defaults from grid: {exc}")
-
-        self._update_xbpmdist_from_beamline(self.workbeamline)
-        return self.workbeamline
+    @pyqtSlot()
+    def _on_run_clicked(self) -> None:
+        """Handle Run Analysis button click."""
+        params = self.param_panel.get_parameters()
+        if not (swp := params.get('workdir')):
+            QMessageBox.warning(
+                self,
+                "Missing Input",
+                "Please select a working directory or data file."
+            )
+            return
+        # Use already selected beamline
+        self.log_message("Starting analysis with workdir:"
+                         f" {swp} (beamline: {self.prm.workbeamline})")
+        self.analysisRequested.emit(params)
 
     def setup_ui(self) -> None:
         """Initialize the main window layout."""
@@ -149,10 +122,10 @@ class XBPMMainWindow(QMainWindow):
 
         # Menubar: File
         file_menu = self.menuBar().addMenu("File")
-        open_dir_action = file_menu.addAction("Open Directory…")
-        open_dir_action.triggered.connect(self._on_open_directory)
+        # open_dir_action = file_menu.addAction("Open Directory…")
+        # open_dir_action.triggered.connect(self._on_open_directory)
 
-        open_hdf5_action = file_menu.addAction("Import HDF5 File…")
+        open_hdf5_action = file_menu.addAction("Open HDF5 File…")
         open_hdf5_action.triggered.connect(self._on_open_hdf5)
 
         file_menu.addSeparator()
@@ -267,6 +240,115 @@ class XBPMMainWindow(QMainWindow):
 
         return self.results_tabs
 
+
+    @pyqtSlot(str)
+    def log_message(self, message: str) -> None:
+        """Append a message to the console log.
+
+        Args:
+            message: Text to append to console.
+        """
+        self.console.append(message)
+
+    @pyqtSlot(str, str)
+    def show_error(self, title: str, message: str) -> None:
+        """Display error dialog.
+
+        Args:
+            title: Error dialog title.
+            message: Error message text.
+        """
+        QMessageBox.critical(self, title, message)
+        self.log_message(f"ERROR: {message}")
+
+    @pyqtSlot()
+    def _on_open_hdf5(self) -> None:
+        """Open dialog to select HDF5 data file.
+
+        (Routes through Analyzer for beamline selection.)
+        """
+        workdir, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select HDF5 File",
+            os.getcwd(),
+            "HDF5 Files (*.h5 *.hdf5);;All Files (*)",
+        )
+
+        # Empty pathnames.
+        if not workdir:
+            return
+
+        # Validate selected path and read data.
+        try:
+            self.dataset = H5DRead(workdir)
+        except OSError as exc:
+            self.show_error(
+                f"cannot open HDF5 file {workdir}:", f"\n{str(exc)}"
+                )
+            return
+
+        # Store workdir in parameter panel and update status bar
+        self.param_panel.show_workdir(os.path.dirname(workdir))
+        self.status_bar.showMessage(f"Opened: {workdir}")
+
+        # Select beamline and create effective links to
+        # data and analysis objects.
+        self._select_beamline()
+
+        # Define links to effective beamline data. 
+        self.workdata = self.dataset.beamlinedata[self.workbeamline]
+        self.prm      = self.workdata.prm
+        self.analysis = self.workdata.analysis
+
+        # Update XBPM distance.
+        self._update_xbpmdist_from_beamline(self.workbeamline)
+
+        # Set ROI defaults.
+        nom_pos = self.workdata.raw_data.blade_avg.nom
+        self.param_panel.set_roi_defaults_from_grid(nom_pos)
+
+        self.log_message(
+            f"Loading data from: {workdir} "
+            f"(beamline: {self.workbeamline})"
+        )
+
+        # Automatically load and display figures after import
+        # self._on_load_hdf5_figures(workdir)
+
+    def _select_beamline(self) -> str:
+        """Centralized beamline selection: returns the chosen beamline."""
+        # Set beamline list from dataset keys.
+        self.beamlines = list(self.dataset.beamlinedata.keys())
+
+        if len(self.beamlines) == 1:
+            self.workbeamline = self.beamlines[0]
+            self.log_message(f"Auto-selected beamline: {self.workbeamline}")
+        else:
+            dialog = BeamlineSelectionDialog(sorted(self.beamlines))
+            if dialog.exec_() != dialog.Accepted:
+                raise RuntimeError("Beamline selection cancelled by user.")
+            self.workbeamline = dialog.get_selection()
+            if not self.workbeamline:
+                raise RuntimeError("No beamline selected.")
+            self.log_message(f"Selected beamline: {self.workbeamline}")
+
+        # Persist in parameter panel for future get_parameters() calls
+        self.param_panel.set_beamline(self.workbeamline)
+
+    def _update_xbpmdist_from_beamline(self, beamline: str) -> None:
+        """Update the XBPM distance field from Config.XBPMDISTS."""
+        try:
+            if not beamline:
+                return
+            dist = Config.XBPMDISTS.get(beamline)
+            if dist is not None and hasattr(self, 'param_panel'):
+                self.param_panel.xbpmdist_spin.setValue(float(dist))
+                self.log_message(
+                    f"XBPM distance set from beamline {beamline}: {dist:.3f} m"
+                )
+        except Exception as exc:  # pragma: no cover - defensive
+            self.log_message(f"Could not set XBPM distance: {exc}")
+
     def _on_parameters_changed(self) -> None:
         """React to parameter changes; pre-select beamline on workdir set."""
         params  = self.param_panel.get_parameters()
@@ -327,20 +409,6 @@ class XBPMMainWindow(QMainWindow):
             for line in output.split('\n'):
                 if line.strip():
                     self.log_message(line)
-
-    def _update_xbpmdist_from_beamline(self, beamline: str) -> None:
-        """Update the XBPM distance field from Config.XBPMDISTS."""
-        try:
-            if not beamline:
-                return
-            dist = Config.XBPMDISTS.get(beamline)
-            if dist is not None and hasattr(self, 'param_panel'):
-                self.param_panel.xbpmdist_spin.setValue(float(dist))
-                self.log_message(
-                    f"XBPM distance set from beamline {beamline}: {dist:.3f} m"
-                )
-        except Exception as exc:  # pragma: no cover - defensive
-            self.log_message(f"Could not set XBPM distance: {exc}")
 
     def setup_worker_thread(self) -> None:
         """Initialize worker thread for analysis execution."""
@@ -562,94 +630,6 @@ class XBPMMainWindow(QMainWindow):
             )
         except Exception as exc:  # pragma: no cover
             self.show_error("Export to HDF5 Failed", str(exc))
-
-    @pyqtSlot()
-    def _on_open_directory(self) -> None:
-        """Open dialog to select working directory with pickle files."""
-        dialog = QFileDialog(self)
-        dialog.setWindowTitle("Select Working Directory")
-        dialog.setDirectory(os.getcwd())
-        dialog.setFileMode(QFileDialog.Directory)
-        dialog.setOption(QFileDialog.DontUseNativeDialog, False)
-        # Show all file types since we're just selecting a directory container
-        dialog.setNameFilter("All Files (*)")
-
-        # Connect to directory change to show current path
-        dialog.directoryEntered.connect(
-            lambda path: dialog.setWindowTitle(
-                f"Select Working Directory - Current: {path}"
-            )
-        )
-
-        if dialog.exec() == QFileDialog.Accepted:
-            path = dialog.directory().absolutePath()
-            # Ensure path is set in parameter panel and visible in field
-            self.param_panel.set_workdir(path)
-            self.status_bar.showMessage(f"Working Directory: {path}")
-
-            # Automatically load data (without running analysis)
-            self._load_data_from_directory()
-
-    @pyqtSlot()
-    def _on_open_hdf5(self) -> None:
-        """Open dialog to select HDF5 data file.
-
-        (Routes through Analyzer for beamline selection.)
-        """
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select HDF5 File",
-            os.getcwd(),
-            "HDF5 Files (*.h5 *.hdf5);;All Files (*)",
-        )
-
-        # Empty pathnames.
-        if not path:
-            return
-
-        # Now validate/read the selected path.
-        try:
-            reader = H5DR(path)
-        except OSError as exc:
-            self.show_error("Cannot open HDF5 file", str(exc))
-            return
-
-        # Store workdir in parameter panel and update status bar
-        self.param_panel.set_workdir(os.path.dirname(path))
-        self.status_bar.showMessage(f"Opened: {path}")
-
-        # Use Analyzer workflow for loading HDF5.
-        # (Ensures beamline selection.)
-        params = self.param_panel.get_parameters()
-        if not (workdir := self._validate_workdir(params)):
-            return False, None
-
-        # Ensure beamline is selected using canonical workflow
-        try:
-            chosen_beamline = self._read_data_and_select_beamline(workdir[1])
-        except Exception as exc:
-            self.show_error("Beamline Selection Failed", str(exc))
-            return
-
-        self.reader = reader
-        self.selected_data = self.reader.beamline[chosen_beamline]
-        self.prm = self.selected_data.prm
-        self.analysis = self.selected_data.analysis
-
-        self.log_message(
-            f"Loading data from: {workdir} "
-            f"(beamline: {chosen_beamline})"
-        )
-
-        # self.rawdata = getattr(reader, 'rawdata', None)
-        # self.analyzer.load_data_only()
-        # # Assign analysis metadata from HDF5 for UI display
-        # hdf5_analysis_meta = getattr(reader, 'analysis_meta', {})
-        # self.results = hdf5_analysis_meta
-        # self.results['_source'] = 'hdf5'
-
-        # Automatically load and display figures after import
-        # self._on_load_hdf5_figures(workdir)
 
     def _on_load_hdf5_figures(self, hdf5_path: str) -> None:
         """Load figures from HDF5 file and display them.
@@ -1183,75 +1163,6 @@ class XBPMMainWindow(QMainWindow):
         self.set_analysis_running(False)
         self.show_error(title, message)
 
-    def _load_data_from_directory(self) -> None:
-        """Load data from the selected directory without running analysis.
-
-        This allows users to export raw data to HDF5 without analysis.
-        """
-        params = self.param_panel.get_parameters()
-        if not self._validate_workdir(params):
-            return
-        # Centralized data reading and beamline selection
-        chosen_beamline = (
-            self._read_data_and_select_beamline(params['workdir'])
-            )
-        self.log_message(f"Loading data from: {params['workdir']}"
-                         f" (beamline: {chosen_beamline})")
-        # Set canonical Prm fields directly from params
-        for k, v in params.items():
-            if hasattr(self.prm, k):
-                setattr(self.prm, k, v)
-        self.prm.beamline = chosen_beamline  # Set beamline programmatically
-        # Use canonical rawdata for parameter enrichment
-        self.builder.rawdata = self.rawdata
-        self.builder.add_beamline_parameters()
-        # Update persistent Prm reference
-        self.prm = self.builder.prm
-        # Re-instantiate analyzer with canonical Prm and builder
-        self.analyzer = XBPMAnalyzer(self.prm, self.builder,
-                                     self.reader, self.rawdata)
-        self.analyzer.moveToThread(self.worker_thread)
-        # Reconnect signals
-        self.analyzer.analysisStarted.connect(self._on_analysis_started)
-        self.analyzer.analysisProgress.connect(self._on_analysis_progress)
-        self.analyzer.analysisComplete.connect(self._on_analysis_complete)
-        self.analyzer.analysisError.connect(self._on_analysis_error)
-        self.analyzer.logMessage.connect(self.log_message)
-        # Use load_data_only instead of run_analysis
-        self.analyzer.load_data_only()
-
-    @pyqtSlot()
-    def _on_run_clicked(self) -> None:
-        """Handle Run Analysis button click."""
-        params = self.param_panel.get_parameters()
-        if not self._validate_workdir(params):
-            return
-        # Use already selected beamline
-        self.log_message("Starting analysis with workdir:"
-                         f" {params['workdir']}"
-                         f" (beamline: {self.prm.beamline})")
-        self.analysisRequested.emit(params)
-
-    def _validate_workdir(self, params: dict) -> bool:
-        """Ensure workdir is provided."""
-        if swp := params.get('workdir'):
-            return True, swp
-        QMessageBox.warning(
-            self,
-            "Missing Input",
-            "Please select a working directory or data file."
-        )
-        return False
-
-    @pyqtSlot(str)
-    def log_message(self, message: str) -> None:
-        """Append a message to the console log.
-
-        Args:
-            message: Text to append to console.
-        """
-        self.console.append(message)
-
     @pyqtSlot(bool)
     def set_analysis_running(self, running: bool) -> None:
         """Update UI state during analysis execution.
@@ -1272,17 +1183,6 @@ class XBPMMainWindow(QMainWindow):
             self.status_bar.showMessage("Ready")
             self.progress_bar.setRange(0, 100)
             self.progress_bar.setValue(0)
-
-    @pyqtSlot(str, str)
-    def show_error(self, title: str, message: str) -> None:
-        """Display error dialog.
-
-        Args:
-            title: Error dialog title.
-            message: Error message text.
-        """
-        QMessageBox.critical(self, title, message)
-        self.log_message(f"ERROR: {message}")
 
     @pyqtSlot(str)
     def show_results_tab(self, tab_name: str) -> None:
