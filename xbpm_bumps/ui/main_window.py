@@ -62,6 +62,7 @@ class XBPMMainWindow(QMainWindow):
         super().__init__()
         self.canvases          = {}
         self.beamlinedata      = None  # Canonical DataReader instance
+        self.workbeamline      = None
         self._last_workdir     = ""
         self.results           = {}    # Single unified results storage
         self._last_roisize     = None
@@ -86,9 +87,17 @@ class XBPMMainWindow(QMainWindow):
                 "Please select a working directory or data file."
             )
             return
+        # Check whether data has been loaded.
+        if not self.beamlinedata:
+            QMessageBox.warning(
+                self,
+                "No data loaded",
+                "Please load data first (open HDF5 file)."
+            )
+            return
         # Use already selected beamline
         self.log_message("Starting analysis with workdir:"
-                         f" {swp} (beamline: {self.prm.workbeamline})")
+                         f" {swp}\n (beamline: {self.workbeamline})")
         self.analysisRequested.emit(params)
 
     def setup_ui(self) -> None:
@@ -240,7 +249,6 @@ class XBPMMainWindow(QMainWindow):
 
         return self.results_tabs
 
-
     @pyqtSlot(str)
     def log_message(self, message: str) -> None:
         """Append a message to the console log.
@@ -263,7 +271,7 @@ class XBPMMainWindow(QMainWindow):
 
     @pyqtSlot()
     def _on_open_hdf5(self) -> None:
-        """Open dialog to select HDF5 data file.
+        """Open dialog to select HDF5 data file, read data and select beamline.
 
         (Routes through Analyzer for beamline selection.)
         """

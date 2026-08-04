@@ -34,9 +34,6 @@ class Prm:
     showbpmpositions : bool = False
     xbpmpositionsraw : bool = False
 
-    # BPM as reference instead of nominal positions.
-    usebpmref        : bool = False
-
     # File names and analysis parameters.
     inputfile        : str   | None = None      # HDF5 input file name.
     outputfile       : str   | None = None      # HDF5 output file name. 
@@ -71,14 +68,23 @@ class Prm:
 
 @dataclass
 class BeamlinePrm:
-    """Typed container for beamline-specific parameters."""
-    beamline         : str   | None = None   # Beamline name
-    xbpmdist         : float | None = None   # Source-XBPM distance.
-    skip             : int   = 0   # Number of points to skip.
-    scalepolydeg     : int   = 1   # Degree of polynomial for scaling fit.
+    """Typed container for beamline-specific parameters.
+    
+    beamline     : Beamline name
+    xbpmdist     : Source-XBPM distance
+    skip         : Number of points to skip
+    scalepolydeg : Degree of polynomial for scaling fit
+    roisize      : ROI size (horizontal, vertical)
+    usebpmref    : Whether to use BPM or nominal positions as reference
+    """
+    beamline         : str   | None = None
+    xbpmdist         : float | None = None
+    skip             : int   = 0
+    scalepolydeg     : int   = 1
+    usebpmref        : bool = False
     roisize          : List[int] = field(
         default_factory=lambda: [ROI_SIZE_H, ROI_SIZE_V]
-        )                          # ROI size. Chosen by the user.
+        )
 
     @classmethod
     def from_hdf5(cls, bln_grp: h5py.Group) -> "BeamlinePrm":
@@ -93,7 +99,6 @@ class BeamlinePrm:
                 "### ERROR while reading 'BeamlinePrm' from HDF5 group:\n"
                 f" {err}"
             )
-
         return cls(**attrs)
 
     @classmethod

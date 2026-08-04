@@ -28,7 +28,7 @@ class ParameterPanel(QWidget):
         """
         super().__init__(parent)
         self.all_check : bool = False  # Track toggle state
-        self.workdir   : str  = ""
+        self.inputfile : str  = ""
         self.beamline  : str  | None = None
         self.setup_ui()
 
@@ -48,14 +48,14 @@ class ParameterPanel(QWidget):
         layout = QVBoxLayout(self)
 
         # Current working directory display (read-only)
-        workdir_row = QHBoxLayout()
-        workdir_row.addWidget(QLabel("Working directory:"))
-        self.workdir_field = QLineEdit()
-        self.workdir_field.setReadOnly(True)
-        self.workdir_field.setPlaceholderText("(not set)")
-        self.workdir_field.setMinimumWidth(260)
-        workdir_row.addWidget(self.workdir_field, 1)
-        layout.addLayout(workdir_row)
+        inputfile_row = QHBoxLayout()
+        inputfile_row.addWidget(QLabel("Input file:"))
+        self.inputfile_field = QLineEdit()
+        self.inputfile_field.setReadOnly(True)
+        self.inputfile_field.setPlaceholderText("(not set)")
+        self.inputfile_field.setMinimumWidth(260)
+        inputfile_row.addWidget(self.inputfile_field, 1)
+        layout.addLayout(inputfile_row)
 
         # Parameters group
         layout.addWidget(self._create_parameters_group())
@@ -200,32 +200,25 @@ class ParameterPanel(QWidget):
         self.xbpm_check.setChecked(self._all_checked)
         self.parametersChanged.emit()
 
-    def show_workdir(self, workdir: str) -> None:
-        """Set the working directory/file path programmatically.
+    def show_inputfile(self, inputfile: str) -> None:
+        """Set the input file path programmatically.
 
-        This replaces the old editable field; triggers parametersChanged.
+        This replaces the old editable working directory field with an input file field; triggers parametersChanged.
         """
-        workdir = workdir or ""
-        if workdir != self.workdir:
-            self.workdir = workdir
-            display = workdir if workdir else ""
-            self.workdir_field.setText(display)
-            self.workdir_field.setToolTip(display)
+        inputfile = inputfile or ""
+        if inputfile != self.inputfile:
+            self.inputfile = inputfile
+            display = inputfile if inputfile else ""
+            self.inputfile_field.setText(display)
+            self.inputfile_field.setToolTip(display)
             self.parametersChanged.emit()
 
     def set_roi_defaults_from_grid(self, coords: Positions) -> None:
         """Set ROI defaults from available grid points in each axis."""
-        points_h = np.unique(coords.x)
-        points_v = np.unique(coords.y)
-
-        try:
-            nh = max(1, int(points_h))
-            nv = max(1, int(points_v))
-        except Exception:  # noqa: S110
-            return
-
-        self.roi_h_spin.setValue(nh)
-        self.roi_v_spin.setValue(nv)
+        nh = len(np.unique(coords.x))
+        nv = len(np.unique(coords.y))
+        self.roi_h_spin.setValue(max(1, nh))
+        self.roi_v_spin.setValue(max(1, nv))
 
     def get_parameters(self) -> dict:
         """Extract current parameter values as a dictionary.
@@ -235,31 +228,27 @@ class ParameterPanel(QWidget):
             ParameterBuilder.from_cli() format.
         """
         params = {
-            'workdir'  : self.workdir,
-            'beamline' : self.beamline,
-            'xbpmdist' : (
-                self.xbpmdist_spin.value()
-                if self.xbpmdist_spin.value() > 0
-                else None
-            ),
-            'roisize'  : [
+            'inputfile'  : self.inputfile,
+            'outputfile' : self.outputfile,
+            'beamline'   : self.beamline,
+            'xbpmdist'   : self.xbpmdist_spin.value(),
+            'roisize'    : [
                 int(self.roi_h_spin.value()),
                 int(self.roi_v_spin.value()),
-            ],
-            'skip'             : self.skip_spin.value(),
-            'scalepolydeg'     : self.scalepolydeg.value(),
-            'xbpmpositionsraw' : self.xbpm_raw_check.isChecked(),
-            'xbpmpositions'    : self.xbpm_check.isChecked(),
-            'showbpmpositions' : self.bpm_check.isChecked(),
-            'usebpmref'        : self.bpm_ref_check.isChecked(),
+                ],
             'showblademap'     : self.blademap_check.isChecked(),
             'centralsweep'     : self.central_check.isChecked(),
             'showbladescenter' : self.center_check.isChecked(),
+            'xbpmpositions'    : self.xbpm_check.isChecked(),
+            'showbpmpositions' : self.bpm_check.isChecked(),
+            'xbpmpositionsraw' : self.xbpm_raw_check.isChecked(),
+
+            'skip'             : self.skip_spin.value(),
+            'scalepolydeg'     : self.scalepolydeg.value(),
+            'usebpmref'        : self.bpm_ref_check.isChecked(),
         }
 
         # Define variables in parameters dataclass.
-
-
         return params
 
     # def set_parameters(self, params: dict):

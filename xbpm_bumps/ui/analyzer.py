@@ -31,7 +31,10 @@ class XBPMAnalyzer(QObject):
 
     # (No longer needed: beamline selection is centralized)
 
-    def __init__(self, prm: Prm, builder: Any, reader: Any, rawdata: Any,
+    def __init__(self, prm: Prm,
+                 builder: Any,
+                 reader: Any,
+                 rawdata: Any,
                  parent=None):
         """Initialize the analyzer.
 
