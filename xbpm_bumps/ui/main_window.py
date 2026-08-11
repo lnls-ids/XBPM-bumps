@@ -19,7 +19,7 @@ from .widgets.parameter_panel import ParameterPanel
 from .widgets.mpl_canvas      import MatplotlibCanvas
 from .dialogs.beamline_dialog import BeamlineSelectionDialog
 from .dialogs.help_dialog     import HelpDialog
-from .analyzer                import XBPMAnalyzer
+# from .analyzer                import XBPMAnalyzer
 from ..core.config            import Config
 from ..core.constants         import FIGDPI
 # from ..core.parameters        import ParameterBuilder, Prm
@@ -71,7 +71,7 @@ class XBPMMainWindow(QMainWindow):
         self._roi_rerun_timer.setSingleShot(True)
         self._roi_rerun_timer.timeout.connect(self._on_run_clicked)
         self.setup_ui()
-        self.setup_worker_thread()
+        # self.setup_worker_thread()
         self.setWindowTitle("XBPM Calibration and Analysis Tool")
         # Wider default window to give canvases more horizontal room
         self.resize(1600, 900)
@@ -308,6 +308,9 @@ class XBPMMainWindow(QMainWindow):
         self.prm      = self.workdata.prm
         self.analysis = self.workdata.analysis
 
+        # Update BPM distance.
+        self.prm.bpmdist = Config.XBPMDISTS.get(self.workbeamline, None)
+
         # Update XBPM distance.
         self._update_xbpmdist_from_beamline(self.workbeamline)
 
@@ -418,66 +421,66 @@ class XBPMMainWindow(QMainWindow):
                 if line.strip():
                     self.log_message(line)
 
-    def setup_worker_thread(self) -> None:
-        """Initialize worker thread for analysis execution."""
-        self.worker_thread = QThread()
-        # Analyzer will be re-instantiated with canonical Prm and builder
-        # before each run
-        # Temporary builder for thread setup; will be replaced before each run
-        self.analyzer = XBPMAnalyzer(
-            self.prm,
-            self.builder,
-            self.reader,
-            self.rawdata
-        )
-        self.analyzer.moveToThread(self.worker_thread)
+    # def setup_worker_thread(self) -> None:
+    #     """Initialize worker thread for analysis execution."""
+    #     self.worker_thread = QThread()
+    #     # Analyzer will be re-instantiated with canonical Prm and builder
+    #     # before each run
+    #     # Temporary builder for thread setup; will be replaced before each run
+    #     self.analyzer = XBPMAnalyzer(
+    #         self.prm,
+    #         self.builder,
+    #         self.reader,
+    #         self.rawdata
+    #     )
+    #     self.analyzer.moveToThread(self.worker_thread)
 
-        self.analysisRequested.connect(
-            self._run_analysis_with_canonical_params
-            )
-        self.stop_btn.clicked.connect(self.analyzer.stop_analysis)
+    #     self.analysisRequested.connect(
+    #         self._run_analysis_with_canonical_params
+    #         )
+    #     self.stop_btn.clicked.connect(self.analyzer.stop_analysis)
 
-        self.analyzer.analysisStarted.connect(self._on_analysis_started)
-        self.analyzer.analysisProgress.connect(self._on_analysis_progress)
-        self.analyzer.analysisComplete.connect(self._on_analysis_complete)
-        self.analyzer.analysisError.connect(self._on_analysis_error)
-        self.analyzer.logMessage.connect(self.log_message)
-        self.worker_thread.start()
+    #     self.analyzer.analysisStarted.connect(self._on_analysis_started)
+    #     self.analyzer.analysisProgress.connect(self._on_analysis_progress)
+    #     self.analyzer.analysisComplete.connect(self._on_analysis_complete)
+    #     self.analyzer.analysisError.connect(self._on_analysis_error)
+    #     self.analyzer.logMessage.connect(self.log_message)
+    #     self.worker_thread.start()
 
-    def _run_analysis_with_canonical_params(self, params: dict) -> None:
-        """Build and enrich canonical ParameterBuilder/Prm, run analysis."""
-        # Set canonical Prm fields directly from params
-        for k, v in params.items():
-            if hasattr(self.prm, k):
-                setattr(self.prm, k, v)
+    # def _run_analysis_with_canonical_params(self, params: dict) -> None:
+    #     """Build and enrich canonical ParameterBuilder/Prm, run analysis."""
+    #     # Set canonical Prm fields directly from params
+    #     for k, v in params.items():
+    #         if hasattr(self.prm, k):
+    #             setattr(self.prm, k, v)
 
-        # Use canonical rawdata for parameter enrichment
-        self.builder.rawdata = self.rawdata
-        self.builder.add_beamline_parameters()
+    #     # Use canonical rawdata for parameter enrichment
+    #     self.builder.rawdata = self.rawdata
+    #     self.builder.add_beamline_parameters()
 
-        # Update persistent Prm reference
-        self.prm = self.builder.prm
+    #     # Update persistent Prm reference
+    #     self.prm = self.builder.prm
 
-        # Always convert rawdata to expected dict format for analysis
-        analysis_data = self.reader._blades_fetch()
-        self.analyzer = XBPMAnalyzer(self.prm, self.builder,
-                                     self.reader, self.rawdata)
-        self.analyzer.moveToThread(self.worker_thread)
-        self.analyzer.app = None  # Reset to force re-init
+    #     # Always convert rawdata to expected dict format for analysis
+    #     analysis_data = self.reader._blades_fetch()
+    #     self.analyzer = XBPMAnalyzer(self.prm, self.builder,
+    #                                  self.reader, self.rawdata)
+    #     self.analyzer.moveToThread(self.worker_thread)
+    #     self.analyzer.app = None  # Reset to force re-init
 
-        def set_app_reader_data() -> None:
-            if self.analyzer.app is not None:
-                self.analyzer.app.reader = self.reader
-                self.analyzer.app.data   = analysis_data
+    #     def set_app_reader_data() -> None:
+    #         if self.analyzer.app is not None:
+    #             self.analyzer.app.reader = self.reader
+    #             self.analyzer.app.data   = analysis_data
 
-        self.analyzer.analysisStarted.connect(set_app_reader_data)
-        self.stop_btn.clicked.connect(self.analyzer.stop_analysis)
-        self.analyzer.analysisStarted.connect(self._on_analysis_started)
-        self.analyzer.analysisProgress.connect(self._on_analysis_progress)
-        self.analyzer.analysisComplete.connect(self._on_analysis_complete)
-        self.analyzer.analysisError.connect(self._on_analysis_error)
-        self.analyzer.logMessage.connect(self.log_message)
-        self.analyzer.run_analysis()
+    #     self.analyzer.analysisStarted.connect(set_app_reader_data)
+    #     self.stop_btn.clicked.connect(self.analyzer.stop_analysis)
+    #     self.analyzer.analysisStarted.connect(self._on_analysis_started)
+    #     self.analyzer.analysisProgress.connect(self._on_analysis_progress)
+    #     self.analyzer.analysisComplete.connect(self._on_analysis_complete)
+    #     self.analyzer.analysisError.connect(self._on_analysis_error)
+    #     self.analyzer.logMessage.connect(self.log_message)
+    #     self.analyzer.run_analysis()
 
     @pyqtSlot(list)
     def _on_beamline_selection_request(self, beamlines: list):

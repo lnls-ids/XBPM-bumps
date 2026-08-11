@@ -298,18 +298,20 @@ def parse_rawdata(rawdata: list, beamline: str) -> list:
             'Description'     : description,
             'Timestamp'       : timestamp,
             'PV meter'        : pv_meter,
-            'Angle x [mrad]'  : angle_x,
-            'Angle y [mrad]'  : angle_y,
+            'Angle x'         : angle_x,
+            'Angle y'         : angle_y,
+            'Angle unit'      : 'mrad',
             'Bump pos x'      : pos_x,
             'Bump pos y'      : pos_y,
-            'SR current [mA]' : current,
+            'SR current'      : current,
+            'SR current unit' : 'mA',
             }
 
         # Gaps / phases of the IDs. It is originally a dict in the form
         # {'cnb' : 80.0, 'cat' : 80.0, 'mnc' : 0.1481, etc}
         id_gaps = record[1]
         gap_phase = {
-            f"gap/ph. {key}" : value for key, value in id_gaps.items()
+            f"Gap/Ph. {key.upper()}" : value for key, value in id_gaps.items()
             }
         rawmeta[jj].update(gap_phase)
 

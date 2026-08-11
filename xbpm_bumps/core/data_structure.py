@@ -2,6 +2,7 @@
 
 # import sys
 from dataclasses import dataclass, field
+import logging
 from typing import Any, List
 
 import h5py
@@ -13,7 +14,9 @@ from xbpm_bumps.core.config import Config
 # from xbpm_bumps.core.readers import DataReader
 # from .config import Config
 from .constants import ROI_SIZE_H, ROI_SIZE_V
-
+from .data_structure import BeamlinePrm     as BLPrm
+from .data_structure import BeamlineRawData as BLRD
+from .data_structure import DataAnalysis    as BLDA
 
 @dataclass
 class Prm:
@@ -23,8 +26,7 @@ class Prm:
     uses prm["key"] remains compatible while also providing attribute
     access (prm.key).
     """
-    sr_current       : float | None = None  # Synchrotron current
-    bpmdist          : float | None = None  # Distance bewtween adjacent BPMs.
+    sr_current       : float | None = None      # Synchrotron current
 
     # What to calculate and show.
     showblademap     : bool = False
@@ -71,6 +73,7 @@ class BeamlinePrm:
     """Typed container for beamline-specific parameters.
     
     beamline     : Beamline name
+    bpmdist      : Distance between adjacent BPMs.
     xbpmdist     : Source-XBPM distance
     skip         : Number of points to skip
     scalepolydeg : Degree of polynomial for scaling fit
@@ -78,6 +81,7 @@ class BeamlinePrm:
     usebpmref    : Whether to use BPM or nominal positions as reference
     """
     beamline         : str   | None = None
+    bpmdist          : float | None = None
     xbpmdist         : float | None = None
     skip             : int   = 0
     scalepolydeg     : int   = 1
@@ -245,12 +249,13 @@ class BladeVals:
 
 
 @dataclass
-class BPMData:
+class BPMRawData:
+    """Container for BPM positions (one sweep) data and its metadata."""
     descr : str
     pos   : Positions
 
     @classmethod
-    def from_hdf5(cls, bpm_grp) -> "BPMData":
+    def from_hdf5(cls, bpm_grp) -> "BPMRawData":
         """Create a BPMData instance from an HDF5 group."""
         if "Description" not in bpm_grp.attrs:
             raise ValueError(
@@ -273,21 +278,23 @@ class BPMData:
 class BladeRawData:
     """Container for all blades' raw data and associated metadata.
     
-    A, B, C, D: BladeVals for each blade
+    TO, TI, BI, BO: BladeVals for each blade
     """
-    A : BladeVals
-    B : BladeVals
-    C : BladeVals
-    D : BladeVals
+    TO : BladeVals
+    TI : BladeVals
+    BI : BladeVals
+    BO : BladeVals
 
     @classmethod
-    def from_hdf5(cls, raw_grp) -> "BladeRawData":
+    def from_hdf5(cls, raw_grp: h5py.Group, beamline: str) -> "BladeRawData":
         """Create a BladeRawData instance from an HDF5 group."""
+        # Use the checked beamline map to extract data.
+        bmap = Config.BLADEMAP.get(beamline, None)
         return cls(
-            A = BladeVals.from_hdf5(raw_grp, "A"),
-            B = BladeVals.from_hdf5(raw_grp, "B"),
-            C = BladeVals.from_hdf5(raw_grp, "C"),
-            D = BladeVals.from_hdf5(raw_grp, "D")
+            TO = BladeVals.from_hdf5(raw_grp, bmap["TO"]),
+            TI = BladeVals.from_hdf5(raw_grp, bmap["TI"]),
+            BI = BladeVals.from_hdf5(raw_grp, bmap["BI"]),
+            BO = BladeVals.from_hdf5(raw_grp, bmap["BO"])
         )
 
 
@@ -300,21 +307,21 @@ class SweepData:
     blades: BladeRawData
     """
     prm    : dict
-    bpm    : BPMData
+    bpm    : BPMRawData
     blades : BladeRawData
 
     @classmethod
-    def from_hdf5(cls, swp_grp) -> "SweepData":
+    def from_hdf5(cls, swp_grp: h5py.Group, beamline: str) -> "SweepData":
         """Create a SweepData instance from an HDF5 group."""
         try:
             # Sweep metadata.
             prm = dict(swp_grp.attrs.items())
 
             # BPM dataset.
-            bpm = BPMData.from_hdf5(swp_grp['bpm_data'])
+            bpm = BPMRawData.from_hdf5(swp_grp['bpm_data'])
 
             # Read raw data.
-            bld = BladeRawData.from_hdf5(swp_grp["blade_data"])
+            bld = BladeRawData.from_hdf5(swp_grp["blade_data"], beamline)
 
             # Instantiate SweepData with parameters, BPM data, and raw data.
             return cls(prm=prm, bpm=bpm, blades=bld)
@@ -349,7 +356,8 @@ class BeamlineRawData:
             if key.startswith('sweep_'):
                 # Extract sweep number
                 num         = int(key.split('_')[1])
-                sweeps[num] = SweepData.from_hdf5(swp_grp=data)
+                sweeps[num] = SweepData.from_hdf5(swp_grp=data,
+                                                  beamline=beamline)
 
             # Blade averages.
             elif key == "blade_averages":
@@ -369,6 +377,56 @@ class BeamlineRawData:
 #
 # Structures for data analysis.
 #
+
+@dataclass
+class BPMAnalysis:
+    """Container for BPM positions and associated metadata.
+
+    Attributes:
+        prm : BPM parameters.
+        bpm : BPM positions (x, y) calculated from measurements.
+        nom : Nominal positions at XBPM site extrapolated from bump-angles.
+        rms : RMS values of the differences between bpm and nom positions.
+        roi_diffs : estimated standard deviations of the differences between bpm
+            and nom positions.
+    """
+    prm       : dict
+    bpm       : Positions
+    nom       : Positions
+    rms       : dict
+    roi_diffs : dict
+
+    @classmethod
+    def compute(cls, bl_data: "BeamlineData") -> "BPMAnalysis":
+        """Create a BPMAnalysis instance from calculated BPM analysis data.
+        
+        Args:
+            bl_data: BeamlineData instance containing the measured BPM
+                positions and metadata.
+
+        Returns:
+            BPMAnalysis instance with calculated BPM positions and metadata.
+        """
+        # Point to sweeps for convenience.
+        swp = bl_data.raw_data.sweeps
+        # Get relevant beamline parameters.
+        gapname = f"Gap./Ph. {bl_data.prm.get('beamline', '')}"
+        gap = swp[0].prm.get(gapname, None)
+        prm = {
+            'beamline' : bl_data.prm.get('beamline', ''),
+            'bpmdist'  : bl_data.prm.bpmdist,
+            'gap'      : gap,
+        }
+
+        from .processors import BPMProcessor as BPMP
+        bpmp      = BPMP(swp)
+        bpm       = bpmp.measured
+        nom       = bpmp.nominal
+        rms       = bpmp.last_stats
+        roi_diffs = bpmp.bpm_roi_diffs
+
+        return cls(prm=prm, bpm=bpm, nom=nom, roi_diffs=roi_diffs, rms=rms)
+
 
 @dataclass
 class BladeMap:
@@ -684,30 +742,20 @@ class AnalyzedPositions:
 @dataclass
 class DataAnalysis:
     """Container for all data and analysis results.
-    
-    Instantiation depends on HDF5 group defining the analysis data from a specific beamline.
+ 
+    Classmethods may read analysis from HDF5 and compute analysis.
 
-    nom_pos         : nominal positions
-    blademap        : blade current data and positions
-    bpm_pos         : BPM measured positions
-
-    centralsweep_h  : Central sweep blade currents with errors and
-                coordinates in horizontal direction
-    centralsweep_v  : Central sweep blade currents with errors and
-                coordinates in vertical direction
-
-    xbpm_pos_raw_cr : AnalyzedRawPositions
-    xbpm_pos_raw_pw : AnalyzedRawPositions
-    xbpm_pos_scl_cr : TransformedPositions
-    xbpm_pos_scl_pw : TransformedPositions
-
-    scale_raw_pw    : Scaling factors for raw pairwise calculation
-    scale_raw_cross : Scaling factors for raw cross-blade calculation
-    scale_adj_pair  : Scaling factors for adjusted pairwise calculation
-    scale_adj_cross : Scaling factors for adjusted cross-blade calculation
+    prm          : beamline parameters
+    bpm          : BPM calculated positions at XBPM site
+    blademap     : blade map of positions
+    positions    : Analyzed positions (raw and transformed)   
+    centralsweep : Central sweep blade currents with errors
+    scales       : Scaling factors
+    supmat       : Suppression matrices
     """
     # Beamline, description and XBPM-source distance.
     prm          : BeamlinePrm       | None = None
+    bpm          : BPMAnalysis       | None = None
     blademap     : BladeMap          | None = None
     positions    : AnalyzedPositions | None = None
     centralsweep : CentralSweep      | None = None
@@ -719,6 +767,9 @@ class DataAnalysis:
         """Create a DataAnalysis instance from an HDF5 group."""
         # Extract parameters.
         prm = BeamlinePrm.from_hdf5(anl_grp)
+
+        # Extract BPM analysis data.
+        bpm = BPMAnalysis.from_hdf5(anl_grp["bpm_analysis"])
 
         # Extract blade map.
         blademap = BladeMap.from_hdf5(anl_grp["blade_map"])
@@ -737,9 +788,44 @@ class DataAnalysis:
 
         return cls(
             prm          = prm,
+            bpm          = bpm,
             blademap     = blademap,
             positions    = positions,
             centralsweep = centralsweep,
             scales       = scales,
             supmat       = supmat,
         )
+
+
+@dataclass
+class BeamlineData:
+    """Encapsulates all data for a single beamline extracted from HDF5.
+    
+    A structure is created to contain the raw data measured (BeamlineRawData) and, if present, previous analysis results (DataAnalysis) stored in the HDF5 file. Metadata is stored in a parameter dictionary.
+    """
+    prm      : BLPrm
+    raw_data : BLRD
+    analysis : BLDA  = field(default=None)
+
+    @classmethod
+    def from_hdf5(cls, bd_grp: h5py.Group,) -> "BeamlineData":
+        """Extract the beamline data from an HDF5 group."""
+        # Data storage.
+        kwargs = {}
+
+        # Beamline parameters.
+        kwargs["prm"] =  BLPrm.from_hdf5(bd_grp)
+        beamline = kwargs["prm"].beamline
+
+        # Raw data.
+        kwargs["raw_data"] = BLRD.from_hdf5(bd_grp["raw_data"], beamline)
+
+        # Analysis data may be not present when data are imported.
+        try:
+            kwargs["analysis"] = BLDA.from_hdf5(bd_grp["analysis"])
+        except Exception as warn:
+            logging.warning(
+                "### WARNING, while reading 'Data Analysis' from HDF5 file:"
+                f"\n {warn}"
+            )
+        return cls(**kwargs)

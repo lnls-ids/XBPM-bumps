@@ -5,11 +5,12 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 
-from .parameters  import Prm
+# from .parameters  import Prm
 from .visualizers import PositionVisualizer as PSV
 from .visualizers import SweepVisualizer as SWV
 from .visualizers import BladeCurrentVisualizer as BCV
 
+from .data_structure import Prm, SweepData
 from .constants   import ROI_SIZE_V, ROI_SIZE_H, FIGDPI    # noqa: E272
 from .config      import Config                  # noqa: E272
 
@@ -819,13 +820,17 @@ class BPMProcessor:
     call a single entry point instead of standalone functions.
     """
 
-    def __init__(self, rawdata, prm: Prm):
+    def __init__(self, rawdata, prm: Prm, sweeps: SweepData):
         """Store raw BPM/XBPM dataset and parameters for later processing."""
+        self.sweeps  = sweeps
+
         self.rawdata = rawdata
         self.prm     = prm
 
-        self.roi_h_size = prm.roisize[0] if prm.roisize else ROI_SIZE_H
-        self.roi_v_size = prm.roisize[1] if prm.roisize else ROI_SIZE_V
+        self.roisize_h = prm.roisize[0] if prm.roisize else ROI_SIZE_H
+        self.roisize_v = prm.roisize[1] if prm.roisize else ROI_SIZE_V
+
+        self.calculate_positions()
 
     def calculate_positions(self) -> tuple:
         """Calculate and plot XBPM positions derived from BPM data.
@@ -834,11 +839,12 @@ class BPMProcessor:
             Array of [x, y] coordinates or None if calculation fails.
         """
         sector_idx = self._sector_index()
-        tangents = self._tangents_calc(sector_idx)
+        tangents   = self._tangents_calc(sector_idx)
 
-        print("\n# Distance between BPMs            ="
+        print("\n# BPM position calculation"
+              f"\n# {'Distance between BPMs':<35} ="
               f" {self.prm.bpmdist:8.4f}  m")
-        print("# Distance between source and XBPM ="
+        print(f"# {'Distance between source and XBPM':<35} ="
               f" {self.prm.xbpmdist:8.4f} m\n")
 
         # Calculate positions at XBPM from BPM tangents and distances.
@@ -907,7 +913,327 @@ class BPMProcessor:
             print(" Figure of positions calculated by BPM measurements "
                   f"saved to file {outfile}.\n")
 
-        return self._compile_measurement_results()
+        self._compile_measurement_results()
+
+    def _sector_index(self) -> int:
+        """Extract sector index from the section string."""
+        sector = Config.SECTIONS[self.prm.beamline][1]
+        return 8 * (sector - 1) - 1
+
+    def _tangents_calc(self, idx: int) -> dict:
+        """Calculate tangents of beam angles between neighbour BPMs."""
+        nextidx = idx + 1
+        offset_x_sect, offset_y_sect = 0, 0
+        offset_x_next, offset_y_next = 0, 0
+        offsetfound = False
+
+        # Search for zero-angle reference orbit to define the offset.
+        # for dt in self.rawdata:
+        #     if dt[2]['agx'] == 0 and dt[2]['agy'] == 0:
+        #         offset_x_sect = dt[2]['orbx'][idx]
+        #         offset_y_sect = dt[2]['orby'][idx]
+        #         offset_x_next = dt[2]['orbx'][nextidx]
+        #         offset_y_next = dt[2]['orby'][nextidx]
+        #         offsetfound = True
+        #         break
+
+        for swp in self.sweeps:
+            agx = swp.prm.get('Angle x')
+            agy = swp.prm.get('Angle y')
+            if agx == 0 and agy == 0:
+                offset_x_sect = swp.bpm.pos.x[idx]
+                offset_y_sect = swp.bpm.pos.y[idx]
+                offset_x_next = swp.bpm.pos.x[nextidx]
+                offset_y_next = swp.bpm.pos.y[nextidx]
+                offsetfound = True
+                break
+
+        # Try and guess offsets by extrapolation if not found.
+        if not offsetfound:
+            (offset_x_sect, offset_x_next,
+             offset_y_sect, offset_y_next) = self._offset_search(idx)
+
+        # Calculate tangents for all angles.
+        tangents = dict()
+        bdist = self.prm.bpmdist
+        for dt in self.rawdata:
+            tx = (((dt[2]['orbx'][nextidx] - offset_x_next)) -
+                  (dt[2]['orbx'][idx]     - offset_x_sect)) / bdist
+            ty = (((dt[2]['orby'][nextidx] - offset_y_next)) -
+                  (dt[2]['orby'][idx]     - offset_y_sect)) / bdist
+            agx, agy = dt[2]['agx'], dt[2]['agy']
+            tangents[agx, agy] = np.array([tx, ty])
+        return tangents
+
+    def _offset_search(self, idx: int) -> tuple:
+        """Extrapolate offsets when reference orbit is missing."""
+        # Get the angle and orbit data for the current and next BPMs
+        # across all measurements.
+        nextidx = idx + 1
+        agx    = np.array([dt[2]['agx']
+                           for dt in self.rawdata])
+        orbx   = np.array([dt[2]['orbx'][idx]
+                           for dt in self.rawdata])
+        n_orbx = np.array([dt[2]['orbx'][nextidx]
+                           for dt in self.rawdata])
+
+        # Find the max and min angles to check for variation. If angles are
+        # constant, we cannot extrapolate and must raise an error.
+        agxmax = np.max(agx)
+        agxmin = np.min(agx)
+        if np.isclose(agxmax, agxmin):
+            raise ValueError(
+                "Cannot infer BPM x-offset from data without agx variation "
+                "or explicit (agx=0, agy=0) reference point."
+            )
+
+        # Use the max and min orbits to extrapolate the offset at zero angle.
+        osx = np.array(sorted(list(set(orbx))))
+        oxmin, oxmax = osx[0], osx[-1]
+        offset_x_sect = ((oxmin * agxmax - oxmax * agxmin) /
+                         (agxmax - agxmin))
+
+        onx = np.array(sorted(list(set(n_orbx))))
+        onxmin, onxmax = onx[0], onx[-1]
+        offset_x_next = ((onxmin * agxmax - onxmax * agxmin) /
+                         (agxmax - agxmin))
+
+        # Repeat the same process for the vertical plane.
+        agy    = np.array([dt[2]['agy']
+                           for dt in self.rawdata])
+        orby   = np.array([dt[2]['orby'][idx]
+                           for dt in self.rawdata])
+        n_orby = np.array([dt[2]['orby'][nextidx]
+                           for dt in self.rawdata])
+
+        agymax = np.max(agy)
+        agymin = np.min(agy)
+        if np.isclose(agymax, agymin):
+            raise ValueError(
+                "Cannot infer BPM y-offset from data without agy variation "
+                "or explicit (agx=0, agy=0) reference point."
+            )
+
+        osy = np.array(sorted(list(set(orby))))
+        oymin, oymax = osy[0], osy[-1]
+        offset_y_sect = ((oymin * agymax - oymax * agymin) /
+                         (agymax - agymin))
+
+        ony = np.array(sorted(list(set(n_orby))))
+        onymin, onymax = ony[0], ony[-1]
+        offset_y_next = ((onymin * agymax - onymax * agymin) /
+                         (agymax - agymin))
+
+        return (offset_x_sect, offset_x_next, offset_y_sect, offset_y_next)
+
+    def _positions_from_tangents(self, tangents: dict,
+                                 xbpm_dist: float) -> dict:
+        """Calculate beam positions from tangents at BPMs."""
+        positions = dict()
+        for key, tg in tangents.items():
+            newkey = (key[0] * xbpm_dist, key[1] * xbpm_dist)
+            positions[newkey] = tg * xbpm_dist
+        return positions
+
+    def _position_grid_assemble(self) -> None:
+        """Assemble position data into structured grid numpy arrays."""
+        # Get unique sorted indices for x and y from the position keys.
+        xidx = sorted(set([key[0] for key in self.xbpm_pos.keys()]))
+        yidx = sorted(set([key[1] for key in self.xbpm_pos.keys()]))
+        nx, ny = len(xidx), len(yidx)
+
+        # Initialize numpy arrays for nominal and measured positions.
+        self.xnom = np.zeros((ny, nx))
+        self.ynom = np.zeros((ny, nx))
+        self.xpos = np.full((ny, nx), np.nan)
+        self.ypos = np.full((ny, nx), np.nan)
+
+        # Fill the arrays.
+        missing = 0
+        for iy in range(ny):
+            for ix in range(nx):
+                key = (xidx[ix], yidx[iy])
+                self.xnom[iy, ix] = key[0]
+                self.ynom[iy, ix] = key[1]
+                if key in self.xbpm_pos:
+                    self.xpos[iy, ix] = self.xbpm_pos[key][0]
+                    self.ypos[iy, ix] = self.xbpm_pos[key][1]
+                else:
+                    missing += 1
+
+        if missing > 0:
+            print("\n WARNING: sparse BPM grid detected:"
+                  f" {missing} points missing from nominal mesh."
+                  " Missing points were set to NaN.")
+
+    def _std_dev_estimate(self,
+                          xnom: np.ndarray,
+                          ynom: np.ndarray,
+                          xpos: np.ndarray,
+                          ypos: np.ndarray
+                          ) -> tuple:
+        """Estimate RMS deviations between measured and nominal positions.
+        
+        Args:
+            xnom: Nominal horizontal positions grid.
+            ynom: Nominal vertical positions grid.
+            xpos: Measured horizontal positions grid.
+            ypos: Measured vertical positions grid.
+
+        Returns:
+            Tuple (rms_stats, roi_diffs) where:
+            rms_stats: Dictionary with overall RMS statistics for all sites.
+            roi_diffs: 2D array of differences at ROI or None if ROI
+                unavailable.
+        """
+        # Total differences (all sites).
+        nv, nh = xnom.shape[0], xnom.shape[1]
+        nsites_total = nv * nh
+
+        # Calculate differences and filter valid (finite) points.
+        diff_h = xnom - xpos
+        diff_v = ynom - ypos
+        valid = np.isfinite(diff_h) & np.isfinite(diff_v)
+
+        # Check if any valid points are available for RMS estimation.
+        nsites = int(np.count_nonzero(valid))
+        if nsites == 0:
+            print("\n WARNING: no valid BPM points found for RMS estimation.")
+            rms_stats = {
+                'sigma_h'       : np.nan,
+                'sigma_v'       : np.nan,
+                'sigma_total'   : np.nan,
+                'diff_min_h'    : np.nan,
+                'diff_min_v'    : np.nan,
+                'diff_max_h'    : np.nan,
+                'diff_max_v'    : np.nan,
+                'roi_available' : False,
+            }
+            return rms_stats, None
+
+        # Calculate statistics using only valid points to avoid NaN/Inf issues.
+        diff_h_valid = diff_h[valid]
+        diff_v_valid = diff_v[valid]
+
+        diff_h_min = np.abs(np.min(diff_h_valid))
+        diff_h_max = np.abs(np.max(diff_h_valid))
+        sig2_h = np.mean(diff_h_valid**2)
+
+        diff_v_min = np.abs(np.min(diff_v_valid))
+        diff_v_max = np.abs(np.max(diff_v_valid))
+        sig2_v = np.mean(diff_v_valid**2)
+
+        sig_h = np.sqrt(sig2_h)
+        sig_v = np.sqrt(sig2_v)
+        sig_tot = np.sqrt(sig2_h + sig2_v)
+
+        print("Sigmas:\n"
+              f"   (all sites)     H = {sig_h:.4f}\n"
+              f"   (all sites)     V = {sig_v:.4f},\n"
+              f"   (all sites) total = {sig_tot:.4f}\n"
+              "\n  Maximum difference:\n"
+              f"   (all sites) H = {diff_h_max:.4f}\n"
+              f"   (all sites) V = {diff_v_max:.4f},\n"
+              "\n  Minimum difference:\n"
+              f"   (all sites) H = {diff_h_min:.4f}\n"
+              f"   (all sites) V = {diff_v_min:.4f},\n"
+              )
+
+        # Check whether the sweeping is complete.
+        if nsites < nsites_total:
+            print("\n WARNING: sweeping looks incomplete, no ROI was defined"
+              f" ({nsites} valid sites, out of {nsites_total}"
+                  " in total). Skipping ROI analysis.")
+            rms_stats = {
+                'sigma_h'       : sig_h,
+                'sigma_v'       : sig_v,
+                'sigma_total'   : sig_tot,
+                'diff_min_h'    : diff_h_min,
+                'diff_min_v'    : diff_v_min,
+                'diff_max_h'    : diff_h_max,
+                'diff_max_v'    : diff_v_max,
+                'roi_available' : False,
+            }
+            return rms_stats, None
+
+        # Differences at ROI.
+        rows, cols = self._roi_slices(xnom.shape)
+        xnom_roi = xnom[rows, cols]
+        ynom_roi = ynom[rows, cols]
+        xpos_roi = xpos[rows, cols]
+        ypos_roi = ypos[rows, cols]
+
+        # Calculate differences and filter valid (finite) points in ROI.
+        diff_h_roi = np.abs(xnom_roi - xpos_roi)
+        diff_v_roi = np.abs(ynom_roi - ypos_roi)
+        valid_roi  = np.isfinite(diff_h_roi) & np.isfinite(diff_v_roi)
+        nroi_valid = int(np.count_nonzero(valid_roi))
+        if nroi_valid == 0:
+            print("\n WARNING: no valid ROI points found."
+                  " Skipping ROI analysis.")
+            rms_stats = {
+                'sigma_h'       : sig_h,
+                'sigma_v'       : sig_v,
+                'sigma_total'   : sig_tot,
+                'diff_min_h'    : diff_h_min,
+                'diff_min_v'    : diff_v_min,
+                'diff_max_h'    : diff_h_max,
+                'diff_max_v'    : diff_v_max,
+                'roi_available' : False,
+            }
+            return rms_stats, None
+
+        # Calculate total differences in ROI for visualization.
+        diff_roi    = np.sqrt(diff_h_roi**2 + diff_v_roi**2)
+        sig2_v_roi  = np.mean((diff_v_roi[valid_roi])**2)
+        sig2_h_roi  = np.mean((diff_h_roi[valid_roi])**2)
+        roi_sig_h   = np.sqrt(sig2_h_roi)
+        roi_sig_v   = np.sqrt(sig2_v_roi)
+        roi_sig_tot = np.sqrt(sig2_h_roi + sig2_v_roi)
+
+        print("  Differences in ROI\n"
+              f"   (x in [{np.min(xnom_roi)}, {np.max(xnom_roi)}];"
+              f"  y in [{np.min(ynom_roi)}, {np.max(ynom_roi)}])\n"
+              f"       H = {roi_sig_h:.4f}\n"
+              f"       V = {roi_sig_v:.4f},\n"
+              f"   total = {roi_sig_tot:.4f}")
+
+        rms_stats = {
+            'sigma_h'         : sig_h,
+            'sigma_v'         : sig_v,
+            'sigma_total'     : sig_tot,
+            'diff_min_h'      : diff_h_min,
+            'diff_min_v'      : diff_v_min,
+            'diff_max_h'      : diff_h_max,
+            'diff_max_v'      : diff_v_max,
+            'roi_available'   : True,
+            'roi_sigma_h'     : roi_sig_h,
+            'roi_sigma_v'     : roi_sig_v,
+            'roi_sigma_total' : roi_sig_tot,
+            'roi_bounds'      : {
+                'x_min' : float(np.min(xnom_roi)),
+                'x_max' : float(np.max(xnom_roi)),
+                'y_min' : float(np.min(ynom_roi)),
+                'y_max' : float(np.max(ynom_roi)),
+            },
+        }
+
+        return rms_stats, diff_roi
+
+    def _roi_slices(self, shape: tuple) -> tuple:
+        """Return row/column slices for the centered ROI."""
+        nv, nh = shape
+        roi_h = min(self.roisize_h, nh)
+        roi_v = min(self.roisize_v, nv)
+        fromh = max(0, int((nh - roi_h) / 2))
+        uptoh = min(nh, fromh + roi_h)
+        fromv = max(0, int((nv - roi_v) / 2))
+        uptov = min(nv, fromv + roi_v)
+
+        if nh == 1 or nv == 1:
+            return slice(fromv, uptov), slice(None)
+
+        return slice(fromv, uptov), slice(fromh, uptoh)
 
     def _extract_roi_positions(self) -> tuple:
         """Extract ROI positions from full grid for closeup view.
@@ -929,11 +1255,17 @@ class BPMProcessor:
         Returns:
             Tuple (measured, nominal) where each is a 2-column array or None.
         """
-        measured = (np.column_stack((self.xpos.ravel(), self.ypos.ravel()))
-                    if self.xpos.size else None)
-        nominal = (np.column_stack((self.xnom.ravel(), self.ynom.ravel()))
-                   if self.xnom.size else None)
-        return measured, nominal
+        self.measured = (np.column_stack(
+            (self.xpos.ravel(), self.ypos.ravel()))
+            if self.xpos.size else None)
+        self.nominal = (np.column_stack(
+            (self.xnom.ravel(), self.ynom.ravel()))
+            if self.xnom.size else None)
+
+#
+# Plotting functions. 
+# To be moved to another visualizer module.
+#
 
     def _plot_roi_differences(self, axdiff: 'matplotlib.axes.Axes',
                               pos_nom_h: np.ndarray,
@@ -1088,307 +1420,3 @@ class BPMProcessor:
             ax.legend(handles, labels)
         ax.grid()
 
-    def _position_grid_assemble(self) -> None:
-        """Assemble position data into structured grid numpy arrays."""
-        # Get unique sorted indices for x and y from the position keys.
-        xidx = sorted(set([key[0] for key in self.xbpm_pos.keys()]))
-        yidx = sorted(set([key[1] for key in self.xbpm_pos.keys()]))
-        nx, ny = len(xidx), len(yidx)
-
-        # Initialize numpy arrays for nominal and measured positions.
-        self.xnom = np.zeros((ny, nx))
-        self.ynom = np.zeros((ny, nx))
-        self.xpos = np.full((ny, nx), np.nan)
-        self.ypos = np.full((ny, nx), np.nan)
-
-        # Fill the arrays.
-        missing = 0
-        for iy in range(ny):
-            for ix in range(nx):
-                key = (xidx[ix], yidx[iy])
-                self.xnom[iy, ix] = key[0]
-                self.ynom[iy, ix] = key[1]
-                if key in self.xbpm_pos:
-                    self.xpos[iy, ix] = self.xbpm_pos[key][0]
-                    self.ypos[iy, ix] = self.xbpm_pos[key][1]
-                else:
-                    missing += 1
-
-        if missing > 0:
-            print("\n WARNING: sparse BPM grid detected:"
-                  f" {missing} points missing from nominal mesh."
-                  " Missing points were set to NaN.")
-
-    def _roi_slices(self, shape: tuple) -> tuple:
-        """Return row/column slices for the centered ROI."""
-        nv, nh = shape
-        roi_h = min(self.roi_h_size, nh)
-        roi_v = min(self.roi_v_size, nv)
-        fromh = max(0, int((nh - roi_h) / 2))
-        uptoh = min(nh, fromh + roi_h)
-        fromv = max(0, int((nv - roi_v) / 2))
-        uptov = min(nv, fromv + roi_v)
-
-        if nh == 1 or nv == 1:
-            return slice(fromv, uptov), slice(None)
-
-        return slice(fromv, uptov), slice(fromh, uptoh)
-
-    def _sector_index(self) -> int:
-        """Extract sector index from the section string."""
-        sector = int(self.prm.section.split(':')[1][:2])
-        return 8 * (sector - 1) - 1
-
-    def _tangents_calc(self, idx: int) -> dict:
-        """Calculate tangents of beam angles between neighbour BPMs."""
-        nextidx = idx + 1
-        offset_x_sect, offset_y_sect = 0, 0
-        offset_x_next, offset_y_next = 0, 0
-        offsetfound = False
-
-        # Search for zero-angle reference orbit to define the offset.
-        for dt in self.rawdata:
-            if dt[2]['agx'] == 0 and dt[2]['agy'] == 0:
-                offset_x_sect = dt[2]['orbx'][idx]
-                offset_y_sect = dt[2]['orby'][idx]
-                offset_x_next = dt[2]['orbx'][nextidx]
-                offset_y_next = dt[2]['orby'][nextidx]
-                offsetfound = True
-                break
-
-        # Try and guess offsets by extrapolation if not found.
-        if not offsetfound:
-            (offset_x_sect, offset_x_next,
-             offset_y_sect, offset_y_next) = self._offset_search(idx)
-
-        # Calculate tangents for all angles.
-        tangents = dict()
-        bdist = self.prm.bpmdist
-        for dt in self.rawdata:
-            tx = (((dt[2]['orbx'][nextidx] - offset_x_next)) -
-                  (dt[2]['orbx'][idx]     - offset_x_sect)) / bdist
-            ty = (((dt[2]['orby'][nextidx] - offset_y_next)) -
-                  (dt[2]['orby'][idx]     - offset_y_sect)) / bdist
-            agx, agy = dt[2]['agx'], dt[2]['agy']
-            tangents[agx, agy] = np.array([tx, ty])
-        return tangents
-
-    def _offset_search(self, idx: int) -> tuple:
-        """Extrapolate offsets when reference orbit is missing."""
-        # Get the angle and orbit data for the current and next BPMs
-        # across all measurements.
-        nextidx = idx + 1
-        agx    = np.array([dt[2]['agx']
-                           for dt in self.rawdata])
-        orbx   = np.array([dt[2]['orbx'][idx]
-                           for dt in self.rawdata])
-        n_orbx = np.array([dt[2]['orbx'][nextidx]
-                           for dt in self.rawdata])
-
-        # Find the max and min angles to check for variation. If angles are
-        # constant, we cannot extrapolate and must raise an error.
-        agxmax = np.max(agx)
-        agxmin = np.min(agx)
-        if np.isclose(agxmax, agxmin):
-            raise ValueError(
-                "Cannot infer BPM x-offset from data without agx variation "
-                "or explicit (agx=0, agy=0) reference point."
-            )
-
-        # Use the max and min orbits to extrapolate the offset at zero angle.
-        osx = np.array(sorted(list(set(orbx))))
-        oxmin, oxmax = osx[0], osx[-1]
-        offset_x_sect = ((oxmin * agxmax - oxmax * agxmin) /
-                         (agxmax - agxmin))
-
-        onx = np.array(sorted(list(set(n_orbx))))
-        onxmin, onxmax = onx[0], onx[-1]
-        offset_x_next = ((onxmin * agxmax - onxmax * agxmin) /
-                         (agxmax - agxmin))
-
-        # Repeat the same process for the vertical plane.
-        agy    = np.array([dt[2]['agy']
-                           for dt in self.rawdata])
-        orby   = np.array([dt[2]['orby'][idx]
-                           for dt in self.rawdata])
-        n_orby = np.array([dt[2]['orby'][nextidx]
-                           for dt in self.rawdata])
-
-        agymax = np.max(agy)
-        agymin = np.min(agy)
-        if np.isclose(agymax, agymin):
-            raise ValueError(
-                "Cannot infer BPM y-offset from data without agy variation "
-                "or explicit (agx=0, agy=0) reference point."
-            )
-
-        osy = np.array(sorted(list(set(orby))))
-        oymin, oymax = osy[0], osy[-1]
-        offset_y_sect = ((oymin * agymax - oymax * agymin) /
-                         (agymax - agymin))
-
-        ony = np.array(sorted(list(set(n_orby))))
-        onymin, onymax = ony[0], ony[-1]
-        offset_y_next = ((onymin * agymax - onymax * agymin) /
-                         (agymax - agymin))
-
-        return (offset_x_sect, offset_x_next, offset_y_sect, offset_y_next)
-
-    def _positions_from_tangents(self, tangents: dict,
-                                 xbpm_dist: float) -> dict:
-        """Calculate beam positions from tangents at BPMs."""
-        positions = dict()
-        for key, tg in tangents.items():
-            newkey = (key[0] * xbpm_dist, key[1] * xbpm_dist)
-            positions[newkey] = tg * xbpm_dist
-        return positions
-
-    def _std_dev_estimate(self, xnom: np.ndarray, ynom: np.ndarray,
-                          xpos: np.ndarray, ypos: np.ndarray) -> tuple:
-        """Estimate RMS deviations between measured and nominal positions.
-        
-        Args:
-            xnom: Nominal horizontal positions grid.
-            ynom: Nominal vertical positions grid.
-            xpos: Measured horizontal positions grid.
-            ypos: Measured vertical positions grid.
-
-        Returns:
-            Tuple (rms_stats, roi_diffs) where:
-            rms_stats: Dictionary with overall RMS statistics for all sites.
-            roi_diffs: 2D array of differences at ROI or None if ROI
-                unavailable.
-        """
-        # Total differences (all sites).
-        nv, nh = xnom.shape[0], xnom.shape[1]
-        nsites_total = nv * nh
-
-        # Calculate differences and filter valid (finite) points.
-        diff_h = xnom - xpos
-        diff_v = ynom - ypos
-        valid = np.isfinite(diff_h) & np.isfinite(diff_v)
-        nsites = int(np.count_nonzero(valid))
-
-        # Check if any valid points are available for RMS estimation.
-        if nsites == 0:
-            print("\n WARNING: no valid BPM points found for RMS estimation.")
-            rms_stats = {
-                'sigma_h'       : np.nan,
-                'sigma_v'       : np.nan,
-                'sigma_total'   : np.nan,
-                'diff_min_h'    : np.nan,
-                'diff_min_v'    : np.nan,
-                'diff_max_h'    : np.nan,
-                'diff_max_v'    : np.nan,
-                'roi_available' : False,
-            }
-            return rms_stats, None
-
-        # Calculate statistics using only valid points to avoid NaN/Inf issues.
-        diff_h_valid = diff_h[valid]
-        diff_v_valid = diff_v[valid]
-
-        diff_h_min = np.abs(np.min(diff_h_valid))
-        diff_h_max = np.abs(np.max(diff_h_valid))
-        sig2_h = np.mean(diff_h_valid**2)
-
-        diff_v_min = np.abs(np.min(diff_v_valid))
-        diff_v_max = np.abs(np.max(diff_v_valid))
-        sig2_v = np.mean(diff_v_valid**2)
-
-        sig_h = np.sqrt(sig2_h)
-        sig_v = np.sqrt(sig2_v)
-        sig_tot = np.sqrt(sig2_h + sig2_v)
-
-        print("Sigmas:\n"
-              f"   (all sites)     H = {sig_h:.4f}\n"
-              f"   (all sites)     V = {sig_v:.4f},\n"
-              f"   (all sites) total = {sig_tot:.4f}\n"
-              "\n  Maximum difference:\n"
-              f"   (all sites) H = {diff_h_max:.4f}\n"
-              f"   (all sites) V = {diff_v_max:.4f},\n"
-              "\n  Minimum difference:\n"
-              f"   (all sites) H = {diff_h_min:.4f}\n"
-              f"   (all sites) V = {diff_v_min:.4f},\n"
-              )
-
-        # Check whether the sweeping is complete.
-        if nsites < nsites_total:
-            print("\n WARNING: sweeping looks incomplete, no ROI was defined"
-              f" ({nsites} valid sites, out of {nsites_total}"
-                  " in total). Skipping ROI analysis.")
-            rms_stats = {
-                'sigma_h'       : sig_h,
-                'sigma_v'       : sig_v,
-                'sigma_total'   : sig_tot,
-                'diff_min_h'    : diff_h_min,
-                'diff_min_v'    : diff_v_min,
-                'diff_max_h'    : diff_h_max,
-                'diff_max_v'    : diff_v_max,
-                'roi_available' : False,
-            }
-            return rms_stats, None
-
-        # Differences at ROI.
-        rows, cols = self._roi_slices(xnom.shape)
-        xnom_cut = xnom[rows, cols]
-        ynom_cut = ynom[rows, cols]
-        xpos_cut = xpos[rows, cols]
-        ypos_cut = ypos[rows, cols]
-
-        # Calculate differences and filter valid (finite) points in ROI.
-        diff_h_cut = np.abs(xnom_cut - xpos_cut)
-        diff_v_cut = np.abs(ynom_cut - ypos_cut)
-        valid_roi  = np.isfinite(diff_h_cut) & np.isfinite(diff_v_cut)
-        nroi_valid = int(np.count_nonzero(valid_roi))
-        if nroi_valid == 0:
-            print("\n WARNING: no valid ROI points found."
-                  " Skipping ROI analysis.")
-            rms_stats = {
-                'sigma_h'       : sig_h,
-                'sigma_v'       : sig_v,
-                'sigma_total'   : sig_tot,
-                'diff_min_h'    : diff_h_min,
-                'diff_min_v'    : diff_v_min,
-                'diff_max_h'    : diff_h_max,
-                'diff_max_v'    : diff_v_max,
-                'roi_available' : False,
-            }
-            return rms_stats, None
-
-        # Calculate total differences in ROI for visualization.
-        diff_cut    = np.sqrt(diff_h_cut**2 + diff_v_cut**2)
-        sig2_v_roi  = np.mean((diff_v_cut[valid_roi])**2)
-        sig2_h_roi  = np.mean((diff_h_cut[valid_roi])**2)
-        roi_sig_h   = np.sqrt(sig2_h_roi)
-        roi_sig_v   = np.sqrt(sig2_v_roi)
-        roi_sig_tot = np.sqrt(sig2_h_roi + sig2_v_roi)
-
-        print("  Differences in ROI\n"
-              f"   (x in [{np.min(xnom_cut)}, {np.max(xnom_cut)}];"
-              f"  y in [{np.min(ynom_cut)}, {np.max(ynom_cut)}])\n"
-              f"       H = {roi_sig_h:.4f}\n"
-              f"       V = {roi_sig_v:.4f},\n"
-              f"   total = {roi_sig_tot:.4f}")
-
-        rms_stats = {
-            'sigma_h'         : sig_h,
-            'sigma_v'         : sig_v,
-            'sigma_total'     : sig_tot,
-            'diff_min_h'      : diff_h_min,
-            'diff_min_v'      : diff_v_min,
-            'diff_max_h'      : diff_h_max,
-            'diff_max_v'      : diff_v_max,
-            'roi_available'   : True,
-            'roi_sigma_h'     : roi_sig_h,
-            'roi_sigma_v'     : roi_sig_v,
-            'roi_sigma_total' : roi_sig_tot,
-            'roi_bounds'      : {
-                'x_min' : float(np.min(xnom_cut)),
-                'x_max' : float(np.max(xnom_cut)),
-                'y_min' : float(np.min(ynom_cut)),
-                'y_max' : float(np.max(ynom_cut)),
-            },
-        }
-
-        return rms_stats, diff_cut
