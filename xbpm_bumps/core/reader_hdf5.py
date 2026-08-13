@@ -350,7 +350,7 @@ class HDF5FigureReconstructor:
                 beamline = grp_name.split('analysis_', 1)[1]
 
         base_bl = beamline[:3] if beamline else ''
-        section = Config.SECTIONS.get(base_bl)
+        section = Config.SECTOR.get(base_bl)
         if not section:
             raise ValueError(
                 "No BPM dataset in positions and section is unavailable "
@@ -442,7 +442,7 @@ class HDF5FigureReconstructor:
         beamline_val = beamline or analysis.attrs.get('beamline', '')
         base_bl = beamline_val[:3] if beamline_val else ''
 
-        section = analysis.attrs.get('section') or Config.SECTIONS.get(base_bl)
+        section = analysis.attrs.get('section') or Config.SECTOR.get(base_bl)
         bpmdist = analysis.attrs.get('bpmdist') or Config.BPMDISTS.get(base_bl)
         xbpmdist = (analysis.attrs.get('xbpmdist')
                     or Config.XBPMDISTS.get(beamline_val)

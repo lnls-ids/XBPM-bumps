@@ -10,9 +10,9 @@ from .visualizers import PositionVisualizer as PSV
 from .visualizers import SweepVisualizer as SWV
 from .visualizers import BladeCurrentVisualizer as BCV
 
-from .data_structure import Prm, SweepData
-from .constants   import ROI_SIZE_V, ROI_SIZE_H, FIGDPI    # noqa: E272
-from .config      import Config                  # noqa: E272
+from .data_structure import BeamlinePrm, SweepData
+from .config         import Config    
+from .constants      import ROI_SIZE_V, ROI_SIZE_H, FIGDPI
 
 _Title = Config.get_plot_title   # shorthand for plot titles
 # from .exporters import Exporter
@@ -34,14 +34,14 @@ class XBPMProcessor:
 
     Attributes:
         data (dict): Measurement data dictionary.
-        prm (Prm): Parameters dataclass.
+        prm (BeamlinePrm): Parameters dataclass.
         range_h (np.ndarray): Horizontal sweep range.
         range_v (np.ndarray): Vertical sweep range.
         blades_h (dict): Blade measurements along horizontal center line.
         blades_v (dict): Blade measurements along vertical center line.
     """
 
-    def __init__(self, data: dict, prm: Prm):
+    def __init__(self, data: dict, prm: BeamlinePrm):
         """Initialize processor with data and parameters.
 
         Args:
@@ -820,17 +820,30 @@ class BPMProcessor:
     call a single entry point instead of standalone functions.
     """
 
-    def __init__(self, rawdata, prm: Prm, sweeps: SweepData):
+    def __init__(self,
+                 rawdata,
+                 prm: BeamlinePrm,
+                 sweeps: SweepData
+                 ) -> None:
         """Store raw BPM/XBPM dataset and parameters for later processing."""
         self.sweeps  = sweeps
+        self.prm     = prm
 
         self.rawdata = rawdata
-        self.prm     = prm
 
         self.roisize_h = prm.roisize[0] if prm.roisize else ROI_SIZE_H
         self.roisize_v = prm.roisize[1] if prm.roisize else ROI_SIZE_V
 
+        self._print_bpm_info()
         self.calculate_positions()
+
+    def _print_bpm_info(self) -> None:
+        """Print BPM position information."""
+        print("\n# BPM position calculation"
+              f"\n# {'Distance between neighbor BPMs':<35} ="
+              f" {self.prm.bpmdist:8.4f}  m")
+        print(f"# {'Distance between source and XBPM':<35} ="
+              f" {self.prm.xbpmdist:8.4f} m\n")
 
     def calculate_positions(self) -> tuple:
         """Calculate and plot XBPM positions derived from BPM data.
@@ -838,74 +851,14 @@ class BPMProcessor:
         Returns:
             Array of [x, y] coordinates or None if calculation fails.
         """
-        sector_idx = self._sector_index()
-        tangents   = self._tangents_calc(sector_idx)
-
-        print("\n# BPM position calculation"
-              f"\n# {'Distance between BPMs':<35} ="
-              f" {self.prm.bpmdist:8.4f}  m")
-        print(f"# {'Distance between source and XBPM':<35} ="
-              f" {self.prm.xbpmdist:8.4f} m\n")
-
         # Calculate positions at XBPM from BPM tangents and distances.
-        self.xbpm_pos = self._positions_from_tangents(
-            tangents, self.prm.xbpmdist
-            )
-
-        # Assemble position data into structured grid arrays.
-        self._position_grid_assemble()
+        self._positions_from_tangents()
 
         # Estimate standard deviations.
-        self.last_stats, self.bpm_roi_diffs = self._std_dev_estimate(
-            self.xnom, self.ynom, self.xpos, self.ypos
-            )
+        self.rms_diff_all, self.rms_diff_roi = self._std_dev_estimate()
 
-        # Extract ROI data for closeup view
-        (xnom_roi, ynom_roi,
-         xpos_roi, ypos_roi) = self._extract_roi_positions()
-
-        # Initialize figure with 1x3 subplots:
-        # full grid, roi closeup, differences
-        if self.bpm_roi_diffs is None:
-            # ROI can be unavailable for sparse/incomplete scans.
-            is_1d = True
-        else:
-            is_1d = (self.bpm_roi_diffs.ndim == 1 or
-                     (self.bpm_roi_diffs.ndim == 2 and
-                      min(self.bpm_roi_diffs.shape) == 1))
-        gridspec = {'width_ratios': [1, 1, 0.1]} if is_1d else None
-        self.fig, (ax_all, ax_close, ax_color) = plt.subplots(
-            1, 3, figsize=(18, 6), constrained_layout=True,
-            gridspec_kw=gridspec
-        )
-
-        # Apply layout padding similar to PositionVisualizer for consistency
-        try:
-            engine = self.fig.get_layout_engine()
-            if engine is not None and hasattr(engine, "set"):
-                engine.set(
-                    w_pad=0.02,   # space figure edge / axes, horizontal
-                    h_pad=0.0,    # space figure edge / axes, vertical
-                    wspace=0.02,  # space between axes, horizontal
-                    hspace=0.0,   # space between axes, vertical
-                )
-        except Exception:  # noqa: S110
-            pass  # Ignore if layout engine unavailable
-
-        # Plot full grid
-        self._plot_position_scatter(
-            ax_all, self.xnom, self.ynom, self.xpos, self.ypos,
-            _Title('bpm', 'total', beamline=self.prm.beamline)
-        )
-
-        # Plot ROI closeup
-        self._plot_position_scatter(
-            ax_close, xnom_roi, ynom_roi, xpos_roi, ypos_roi,
-            _Title('bpm', 'roi', beamline=self.prm.beamline)
-        )
-
-        # Plot differences heatmap with extent mapping
-        self._plot_roi_differences(ax_color, xnom_roi, ynom_roi)
+        # Extract ROI data for closeup view.
+        self._extract_roi_positions()
 
         if self.prm.outputfile:
             outfile = f"bpm_positions_{self.prm.beamline}.png"
@@ -913,133 +866,25 @@ class BPMProcessor:
             print(" Figure of positions calculated by BPM measurements "
                   f"saved to file {outfile}.\n")
 
-        self._compile_measurement_results()
+        self._stack_measurement_results()
 
-    def _sector_index(self) -> int:
-        """Extract sector index from the section string."""
-        sector = Config.SECTIONS[self.prm.beamline][1]
-        return 8 * (sector - 1) - 1
+        self.plot_bpm_positions()
 
-    def _tangents_calc(self, idx: int) -> dict:
-        """Calculate tangents of beam angles between neighbour BPMs."""
-        nextidx = idx + 1
-        offset_x_sect, offset_y_sect = 0, 0
-        offset_x_next, offset_y_next = 0, 0
-        offsetfound = False
-
-        # Search for zero-angle reference orbit to define the offset.
-        # for dt in self.rawdata:
-        #     if dt[2]['agx'] == 0 and dt[2]['agy'] == 0:
-        #         offset_x_sect = dt[2]['orbx'][idx]
-        #         offset_y_sect = dt[2]['orby'][idx]
-        #         offset_x_next = dt[2]['orbx'][nextidx]
-        #         offset_y_next = dt[2]['orby'][nextidx]
-        #         offsetfound = True
-        #         break
-
-        for swp in self.sweeps:
-            agx = swp.prm.get('Angle x')
-            agy = swp.prm.get('Angle y')
-            if agx == 0 and agy == 0:
-                offset_x_sect = swp.bpm.pos.x[idx]
-                offset_y_sect = swp.bpm.pos.y[idx]
-                offset_x_next = swp.bpm.pos.x[nextidx]
-                offset_y_next = swp.bpm.pos.y[nextidx]
-                offsetfound = True
-                break
-
-        # Try and guess offsets by extrapolation if not found.
-        if not offsetfound:
-            (offset_x_sect, offset_x_next,
-             offset_y_sect, offset_y_next) = self._offset_search(idx)
-
-        # Calculate tangents for all angles.
-        tangents = dict()
-        bdist = self.prm.bpmdist
-        for dt in self.rawdata:
-            tx = (((dt[2]['orbx'][nextidx] - offset_x_next)) -
-                  (dt[2]['orbx'][idx]     - offset_x_sect)) / bdist
-            ty = (((dt[2]['orby'][nextidx] - offset_y_next)) -
-                  (dt[2]['orby'][idx]     - offset_y_sect)) / bdist
-            agx, agy = dt[2]['agx'], dt[2]['agy']
-            tangents[agx, agy] = np.array([tx, ty])
-        return tangents
-
-    def _offset_search(self, idx: int) -> tuple:
-        """Extrapolate offsets when reference orbit is missing."""
-        # Get the angle and orbit data for the current and next BPMs
-        # across all measurements.
-        nextidx = idx + 1
-        agx    = np.array([dt[2]['agx']
-                           for dt in self.rawdata])
-        orbx   = np.array([dt[2]['orbx'][idx]
-                           for dt in self.rawdata])
-        n_orbx = np.array([dt[2]['orbx'][nextidx]
-                           for dt in self.rawdata])
-
-        # Find the max and min angles to check for variation. If angles are
-        # constant, we cannot extrapolate and must raise an error.
-        agxmax = np.max(agx)
-        agxmin = np.min(agx)
-        if np.isclose(agxmax, agxmin):
-            raise ValueError(
-                "Cannot infer BPM x-offset from data without agx variation "
-                "or explicit (agx=0, agy=0) reference point."
-            )
-
-        # Use the max and min orbits to extrapolate the offset at zero angle.
-        osx = np.array(sorted(list(set(orbx))))
-        oxmin, oxmax = osx[0], osx[-1]
-        offset_x_sect = ((oxmin * agxmax - oxmax * agxmin) /
-                         (agxmax - agxmin))
-
-        onx = np.array(sorted(list(set(n_orbx))))
-        onxmin, onxmax = onx[0], onx[-1]
-        offset_x_next = ((onxmin * agxmax - onxmax * agxmin) /
-                         (agxmax - agxmin))
-
-        # Repeat the same process for the vertical plane.
-        agy    = np.array([dt[2]['agy']
-                           for dt in self.rawdata])
-        orby   = np.array([dt[2]['orby'][idx]
-                           for dt in self.rawdata])
-        n_orby = np.array([dt[2]['orby'][nextidx]
-                           for dt in self.rawdata])
-
-        agymax = np.max(agy)
-        agymin = np.min(agy)
-        if np.isclose(agymax, agymin):
-            raise ValueError(
-                "Cannot infer BPM y-offset from data without agy variation "
-                "or explicit (agx=0, agy=0) reference point."
-            )
-
-        osy = np.array(sorted(list(set(orby))))
-        oymin, oymax = osy[0], osy[-1]
-        offset_y_sect = ((oymin * agymax - oymax * agymin) /
-                         (agymax - agymin))
-
-        ony = np.array(sorted(list(set(n_orby))))
-        onymin, onymax = ony[0], ony[-1]
-        offset_y_next = ((onymin * agymax - onymax * agymin) /
-                         (agymax - agymin))
-
-        return (offset_x_sect, offset_x_next, offset_y_sect, offset_y_next)
-
-    def _positions_from_tangents(self, tangents: dict,
-                                 xbpm_dist: float) -> dict:
+    def _positions_from_tangents(self) -> dict:
         """Calculate beam positions from tangents at BPMs."""
+        # Calculate the tangents.
+        self._tangents_calc(self._sector_index())
+
+        xbpm_dist = self.prm.xbpmdist
         positions = dict()
-        for key, tg in tangents.items():
+        for key, tg in self.tangents.items():
             newkey = (key[0] * xbpm_dist, key[1] * xbpm_dist)
             positions[newkey] = tg * xbpm_dist
-        return positions
 
-    def _position_grid_assemble(self) -> None:
-        """Assemble position data into structured grid numpy arrays."""
+        # Assemble position data into structured grid numpy arrays.
         # Get unique sorted indices for x and y from the position keys.
-        xidx = sorted(set([key[0] for key in self.xbpm_pos.keys()]))
-        yidx = sorted(set([key[1] for key in self.xbpm_pos.keys()]))
+        xidx = sorted(set([key[0] for key in positions.keys()]))
+        yidx = sorted(set([key[1] for key in positions.keys()]))
         nx, ny = len(xidx), len(yidx)
 
         # Initialize numpy arrays for nominal and measured positions.
@@ -1055,9 +900,9 @@ class BPMProcessor:
                 key = (xidx[ix], yidx[iy])
                 self.xnom[iy, ix] = key[0]
                 self.ynom[iy, ix] = key[1]
-                if key in self.xbpm_pos:
-                    self.xpos[iy, ix] = self.xbpm_pos[key][0]
-                    self.ypos[iy, ix] = self.xbpm_pos[key][1]
+                if key in positions:
+                    self.xpos[iy, ix] = positions[key][0]
+                    self.ypos[iy, ix] = positions[key][1]
                 else:
                     missing += 1
 
@@ -1066,19 +911,108 @@ class BPMProcessor:
                   f" {missing} points missing from nominal mesh."
                   " Missing points were set to NaN.")
 
-    def _std_dev_estimate(self,
-                          xnom: np.ndarray,
-                          ynom: np.ndarray,
-                          xpos: np.ndarray,
-                          ypos: np.ndarray
-                          ) -> tuple:
+    def _tangents_calc(self, sector_idx: int) -> dict:
+        """Calculate tangents of beam angles between neighbour BPMs."""
+        sector_idx_nxt = sector_idx + 1      # Next BPM in the sector.
+        offset_x_sect, offset_y_sect = 0, 0
+        offset_x_next, offset_y_next = 0, 0
+        offsetfound = False
+
+        for swp in self.sweeps:
+            agx = swp.prm.get('Angle x')
+            agy = swp.prm.get('Angle y')
+            if agx == 0 and agy == 0:
+                offset_x_sect = swp.bpm.pos.x[sector_idx]
+                offset_y_sect = swp.bpm.pos.y[sector_idx]
+                offset_x_next = swp.bpm.pos.x[sector_idx_nxt]
+                offset_y_next = swp.bpm.pos.y[sector_idx_nxt]
+                offsetfound = True
+                break
+
+        # Try and guess offsets by extrapolation if not found.
+        if not offsetfound:
+            (offset_x_sect, offset_x_next,
+             offset_y_sect, offset_y_next) = self._offset_search(sector_idx)
+
+        # Calculate tangents for all angles.
+        self.tangents = dict()
+        bdist = self.prm.bpmdist
+        # for dt in self.rawdata:
+        for swp in self.sweeps:
+            agx = swp.prm.get('Angle x')
+            agy = swp.prm.get('Angle y')
+
+            orbx     = swp.bpm.pos.x[sector_idx]
+            orby     = swp.bpm.pos.y[sector_idx]
+            orbx_nxt = swp.bpm.pos.x[sector_idx_nxt]
+            orby_nxt = swp.bpm.pos.y[sector_idx_nxt]
+            tx = ((orbx_nxt - offset_x_next) -
+                  (orbx - offset_x_sect)) / bdist
+            ty = ((orby_nxt - offset_y_next) -
+                  (orby - offset_y_sect)) / bdist
+            self.tangents[agx, agy] = np.array([tx, ty])
+
+    def _sector_index(self) -> int:
+        """Extract sector index from the section string."""
+        return 8 * (self.prm.sector[1] - 1) - 1
+
+    def _offset_search(self, sector_idx: int) -> tuple:
+        """Extrapolate offsets when reference orbit is missing."""
+        # Get the angle and orbit data for the current and next BPMs
+        # across all measurements.
+        sector_idx_nxt = sector_idx + 1
+
+        def _offset_from_direction(direction: str,
+                                         orb: np.ndarray,
+                                         orb_nxt: np.ndarray
+                                         ) -> tuple:
+            """Search offset in given direction."""
+            # Get nominal angle value.
+            angle = np.array([swp.prm.get(f'Angle {direction}')
+                              for swp in self.sweeps])
+
+            ang_min = np.min(angle)
+            ang_max = np.max(angle)
+            if np.isclose(ang_max, ang_min):
+                raise ValueError(
+                    f"Cannot infer BPM {direction}-offset from data without {direction} angle variation "
+                    "or explicit (agx=0, agy=0) reference point."
+                )
+
+            orb_sort = np.array(sorted(list(set(orb))))
+            orb_min, orb_max = orb_sort[0], orb_sort[-1]
+            offset_sect = ((orb_min * ang_max - orb_max * ang_min) /
+                           (ang_max - ang_min))
+
+            orb_sort_nxt = np.array(sorted(list(set(orb_nxt))))
+            orb_min_nxt, orb_max_nxt = orb_sort_nxt[0], orb_sort_nxt[-1]
+            offset_next = ((orb_min_nxt * ang_max - orb_max_nxt * ang_min) /
+                           (ang_max - ang_min))
+
+            return (offset_sect, offset_next)
+
+        orbx     = np.array([swp.bpm.pos.x[sector_idx]
+                             for swp in self.sweeps])
+        orbx_nxt = np.array([swp.bpm.pos.x[sector_idx_nxt]
+                             for swp in self.sweeps])
+        (offset_x, offset_x_nxt) = _offset_from_direction('x', orbx, orbx_nxt)
+
+        orby     = np.array([swp.bpm.pos.y[sector_idx]
+                             for swp in self.sweeps])
+        orby_nxt = np.array([swp.bpm.pos.y[sector_idx_nxt]
+                             for swp in self.sweeps])
+        (offset_y, offset_y_nxt) = _offset_from_direction('y', orby, orby_nxt)
+
+        return (offset_x, offset_x_nxt, offset_y, offset_y_nxt)
+
+    def _std_dev_estimate(self) -> tuple:
         """Estimate RMS deviations between measured and nominal positions.
         
-        Args:
-            xnom: Nominal horizontal positions grid.
-            ynom: Nominal vertical positions grid.
-            xpos: Measured horizontal positions grid.
-            ypos: Measured vertical positions grid.
+        Uses:
+            self.xnom: Nominal horizontal positions grid.
+            self.ynom: Nominal vertical positions grid.
+            self.xpos: Measured horizontal positions grid.
+            self.ypos: Measured vertical positions grid.
 
         Returns:
             Tuple (rms_stats, roi_diffs) where:
@@ -1087,28 +1021,23 @@ class BPMProcessor:
                 unavailable.
         """
         # Total differences (all sites).
-        nv, nh = xnom.shape[0], xnom.shape[1]
+        nv, nh = self.xnom.shape[0], self.xnom.shape[1]
         nsites_total = nv * nh
 
         # Calculate differences and filter valid (finite) points.
-        diff_h = xnom - xpos
-        diff_v = ynom - ypos
+        diff_h = self.xnom - self.xpos
+        diff_v = self.ynom - self.ypos
         valid = np.isfinite(diff_h) & np.isfinite(diff_v)
 
         # Check if any valid points are available for RMS estimation.
         nsites = int(np.count_nonzero(valid))
         if nsites == 0:
             print("\n WARNING: no valid BPM points found for RMS estimation.")
-            rms_stats = {
-                'sigma_h'       : np.nan,
-                'sigma_v'       : np.nan,
-                'sigma_total'   : np.nan,
-                'diff_min_h'    : np.nan,
-                'diff_min_v'    : np.nan,
-                'diff_max_h'    : np.nan,
-                'diff_max_v'    : np.nan,
-                'roi_available' : False,
-            }
+            rms_stats = {key : np.nan for key in [
+                'sigma_h', 'sigma_v', 'sigma_total',
+                'diff_min_h', 'diff_min_v', 'diff_max_h', 'diff_max_v'
+                ]}
+            rms_stats['roi_available'] = False
             return rms_stats, None
 
         # Calculate statistics using only valid points to avoid NaN/Inf issues.
@@ -1157,11 +1086,11 @@ class BPMProcessor:
             return rms_stats, None
 
         # Differences at ROI.
-        rows, cols = self._roi_slices(xnom.shape)
-        xnom_roi = xnom[rows, cols]
-        ynom_roi = ynom[rows, cols]
-        xpos_roi = xpos[rows, cols]
-        ypos_roi = ypos[rows, cols]
+        rows, cols = self._roi_slices(self.xnom.shape)
+        xnom_roi = self.xnom[rows, cols]
+        ynom_roi = self.ynom[rows, cols]
+        xpos_roi = self.xpos[rows, cols]
+        ypos_roi = self.ypos[rows, cols]
 
         # Calculate differences and filter valid (finite) points in ROI.
         diff_h_roi = np.abs(xnom_roi - xpos_roi)
@@ -1220,6 +1149,18 @@ class BPMProcessor:
 
         return rms_stats, diff_roi
 
+    def _extract_roi_positions(self) -> tuple:
+        """Extract ROI positions from full grid for closeup view.
+
+        Returns:
+            Tuple (xnom_roi, ynom_roi, xpos_roi, ypos_roi) of ROI arrays.
+        """
+        rows, cols = self._roi_slices(self.xnom.shape)
+        self.xnom_roi = self.xnom[rows, cols]
+        self.ynom_roi = self.ynom[rows, cols]
+        self.xpos_roi = self.xpos[rows, cols]
+        self.ypos_roi = self.ypos[rows, cols]
+
     def _roi_slices(self, shape: tuple) -> tuple:
         """Return row/column slices for the centered ROI."""
         nv, nh = shape
@@ -1235,21 +1176,7 @@ class BPMProcessor:
 
         return slice(fromv, uptov), slice(fromh, uptoh)
 
-    def _extract_roi_positions(self) -> tuple:
-        """Extract ROI positions from full grid for closeup view.
-
-        Returns:
-            Tuple (xnom_roi, ynom_roi, xpos_roi, ypos_roi) of ROI arrays.
-        """
-        rows, cols = self._roi_slices(self.xnom.shape)
-        return (
-            self.xnom[rows, cols],
-            self.ynom[rows, cols],
-            self.xpos[rows, cols],
-            self.ypos[rows, cols],
-        )
-
-    def _compile_measurement_results(self) -> tuple:
+    def _stack_measurement_results(self) -> tuple:
         """Compile measured and nominal coordinates into return format.
 
         Returns:
@@ -1264,8 +1191,53 @@ class BPMProcessor:
 
 #
 # Plotting functions. 
-# To be moved to another visualizer module.
+# Probably to be moved to another visualizer module.
 #
+
+    def plot_bpm_positions(self) -> None:
+        """Plot BPM positions and differences in a 1x3 subplot figure."""
+        # Initialize figure with 1x3 subplots:
+        # full grid, roi closeup, differences
+        if self.rms_diff_roi is None:
+            # ROI can be unavailable for sparse/incomplete scans.
+            is_1d = True
+        else:
+            is_1d = (self.rms_diff_roi.ndim == 1 or
+                     (self.rms_diff_roi.ndim == 2 and
+                      min(self.rms_diff_roi.shape) == 1))
+        gridspec = {'width_ratios': [1, 1, 0.1]} if is_1d else None
+        self.fig, (ax_all, ax_close, ax_color) = plt.subplots(
+            1, 3, figsize=(18, 6), constrained_layout=True,
+            gridspec_kw=gridspec
+        )
+
+        # Apply layout padding similar to PositionVisualizer for consistency
+        try:
+            engine = self.fig.get_layout_engine()
+            if engine is not None and hasattr(engine, "set"):
+                engine.set(
+                    w_pad=0.02,   # space figure edge / axes, horizontal
+                    h_pad=0.0,    # space figure edge / axes, vertical
+                    wspace=0.02,  # space between axes, horizontal
+                    hspace=0.0,   # space between axes, vertical
+                )
+        except Exception:  # noqa: S110
+            pass  # Ignore if layout engine unavailable
+
+        # Plot full grid
+        self._plot_position_scatter(
+            ax_all, self.xnom, self.ynom, self.xpos, self.ypos,
+            _Title('bpm', 'total', beamline=self.prm.beamline)
+        )
+
+        # Plot ROI closeup
+        self._plot_position_scatter(
+            ax_close, self.xnom_roi, self.ynom_roi, self.xpos_roi, self.ypos_roi,
+            _Title('bpm', 'roi', beamline=self.prm.beamline)
+        )
+
+        # Plot differences heatmap with extent mapping
+        self._plot_roi_differences(ax_color, self.xnom_roi, self.ynom_roi)
 
     def _plot_roi_differences(self, axdiff: 'matplotlib.axes.Axes',
                               pos_nom_h: np.ndarray,
@@ -1277,10 +1249,10 @@ class BPMProcessor:
             pos_nom_h: Nominal horizontal positions for extent mapping.
             pos_nom_v: Nominal vertical positions for extent mapping.
         """
-        if self.bpm_roi_diffs is None:
+        if self.rms_diff_roi is None:
             return
 
-        roi_diffs = self.bpm_roi_diffs
+        roi_diffs = self.rms_diff_roi
 
         # Treat as 1-D if truly 1-D (shape = (n,)) or effectively 1-D (one
         # dimension is 1, like (1, n) or (n, 1)), or if one nominal axis is

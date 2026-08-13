@@ -3,7 +3,7 @@
 # import sys
 from dataclasses import dataclass, field
 import logging
-from typing import Any, List
+from typing import List
 
 import h5py
 import numpy as np
@@ -14,9 +14,6 @@ from xbpm_bumps.core.config import Config
 # from xbpm_bumps.core.readers import DataReader
 # from .config import Config
 from .constants import ROI_SIZE_H, ROI_SIZE_V
-from .data_structure import BeamlinePrm     as BLPrm
-from .data_structure import BeamlineRawData as BLRD
-from .data_structure import DataAnalysis    as BLDA
 
 @dataclass
 class Prm:
@@ -40,8 +37,7 @@ class Prm:
     inputfile        : str   | None = None      # HDF5 input file name.
     outputfile       : str   | None = None      # HDF5 output file name. 
     phaseorgap       : dict  | None = None      # Phase/gap for the ID.
-    section          : str   | None = None      # The SR section.
-    # blademap         : Any   | None = None
+    # blademap        : Any   | None = None
     maxradangle      : float = 20.0
 
     def __getitem__(self, key: str):
@@ -85,6 +81,7 @@ class BeamlinePrm:
     xbpmdist         : float | None = None
     skip             : int   = 0
     scalepolydeg     : int   = 1
+    sector           : list  | None = None
     usebpmref        : bool = False
     roisize          : List[int] = field(
         default_factory=lambda: [ROI_SIZE_H, ROI_SIZE_V]
@@ -95,8 +92,19 @@ class BeamlinePrm:
         """Create a BeamlinePrm instance from an HDF5 group."""
         try:
             attrs = {key: val for key, val in bln_grp.attrs.items()}
-            attrs["xbpmdist"] = Config.XBPMDISTS.get(
-                attrs.get("beamline", ""), None
+
+            beamline = attrs.get("beamline", None)
+            if "bpmdist" not in attrs:
+                attrs["bpmdist"] = Config.XBPMDISTS.get(
+                    attrs.get(beamline[:3], ""), None
+                )
+            if "sector" not in attrs:
+                attrs["sector"] = Config.SECTOR.get(
+                    attrs.get(beamline[:3], ""), None
+                    )
+            if "xbpmdist" not in attrs:
+                attrs["xbpmdist"] = Config.XBPMDISTS.get(
+                    attrs.get(beamline, ""), None
                 )
         except Exception as err:
             raise ValueError(
@@ -390,11 +398,11 @@ class BPMAnalysis:
         roi_diffs : estimated standard deviations of the differences between bpm
             and nom positions.
     """
-    prm       : dict
-    bpm       : Positions
-    nom       : Positions
-    rms       : dict
-    roi_diffs : dict
+    prm          : BeamlinePrm
+    pos_meas     : Positions
+    pos_nom      : Positions
+    rms_all_diff : dict
+    rms_roi_diff : dict
 
     @classmethod
     def compute(cls, bl_data: "BeamlineData") -> "BPMAnalysis":
@@ -407,25 +415,20 @@ class BPMAnalysis:
         Returns:
             BPMAnalysis instance with calculated BPM positions and metadata.
         """
-        # Point to sweeps for convenience.
-        swp = bl_data.raw_data.sweeps
-        # Get relevant beamline parameters.
-        gapname = f"Gap./Ph. {bl_data.prm.get('beamline', '')}"
-        gap = swp[0].prm.get(gapname, None)
-        prm = {
-            'beamline' : bl_data.prm.get('beamline', ''),
-            'bpmdist'  : bl_data.prm.bpmdist,
-            'gap'      : gap,
-        }
+        # Link to beamline parameters.
+        prm = bl_data.prm
 
+        # Instantiate BPMProcessor to calculate BPM positions.
         from .processors import BPMProcessor as BPMP
-        bpmp      = BPMP(swp)
-        bpm       = bpmp.measured
-        nom       = bpmp.nominal
-        rms       = bpmp.last_stats
-        roi_diffs = bpmp.bpm_roi_diffs
+        bpm_proc = BPMP(bl_data.raw_data.sweeps)
 
-        return cls(prm=prm, bpm=bpm, nom=nom, roi_diffs=roi_diffs, rms=rms)
+        return cls(
+            prm=prm,
+            pos_nom=bpm_proc.nominal,
+            pos_meas=bpm_proc.measured,
+            rms_roi_diff=bpm_proc.rms_diff_roi,
+            rms_all_diff=bpm_proc.rms_diff_all
+            )
 
 
 @dataclass
@@ -803,9 +806,9 @@ class BeamlineData:
     
     A structure is created to contain the raw data measured (BeamlineRawData) and, if present, previous analysis results (DataAnalysis) stored in the HDF5 file. Metadata is stored in a parameter dictionary.
     """
-    prm      : BLPrm
-    raw_data : BLRD
-    analysis : BLDA  = field(default=None)
+    prm      : BeamlinePrm
+    raw_data : BeamlineRawData
+    analysis : DataAnalysis  = field(default=None)
 
     @classmethod
     def from_hdf5(cls, bd_grp: h5py.Group,) -> "BeamlineData":
@@ -814,15 +817,17 @@ class BeamlineData:
         kwargs = {}
 
         # Beamline parameters.
-        kwargs["prm"] =  BLPrm.from_hdf5(bd_grp)
-        beamline = kwargs["prm"].beamline
+        kwargs["prm"] =  BeamlinePrm.from_hdf5(bd_grp)
+        beamline      = kwargs["prm"].beamline
 
         # Raw data.
-        kwargs["raw_data"] = BLRD.from_hdf5(bd_grp["raw_data"], beamline)
+        kwargs["raw_data"] = BeamlineRawData.from_hdf5(
+            bd_grp["raw_data"], beamline
+            )
 
         # Analysis data may be not present when data are imported.
         try:
-            kwargs["analysis"] = BLDA.from_hdf5(bd_grp["analysis"])
+            kwargs["analysis"] = DataAnalysis.from_hdf5(bd_grp["analysis"])
         except Exception as warn:
             logging.warning(
                 "### WARNING, while reading 'Data Analysis' from HDF5 file:"

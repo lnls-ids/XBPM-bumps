@@ -81,7 +81,7 @@ class Config:
     }
 
     # Sections of the ring for each beamline.
-    SECTIONS = {
+    SECTOR = {
         "CAT": ["subsec:07SP", 7],
         "CNB": ["subsec:06SB", 6],
         "MGN": ["subsec:10BC", 10],
