@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QTextEdit, QSplitter, QTabWidget,
     QStatusBar, QProgressBar, QMessageBox, QFileDialog
 )
-from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot, QThread, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt5.QtGui  import QFont
 from PyQt5.QtGui  import QCloseEvent
 
@@ -25,6 +25,7 @@ from ..core.constants         import FIGDPI
 # from ..core.parameters        import ParameterBuilder, Prm
 
 from ..core.reader_hdf5 import HDF5DataReader as H5DRead
+from ..core.data_structure import ROISlice
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +68,9 @@ class XBPMMainWindow(QMainWindow):
         self.results           = {}    # Single unified results storage
         self._last_roisize     = None
         self._analysis_running = False
-        self._roi_rerun_timer  = QTimer(self)
-        self._roi_rerun_timer.setSingleShot(True)
-        self._roi_rerun_timer.timeout.connect(self._on_run_clicked)
+        # self._roi_rerun_timer  = QTimer(self)
+        # self._roi_rerun_timer.setSingleShot(True)
+        # self._roi_rerun_timer.timeout.connect(self._on_run_clicked)
         self.setup_ui()
         # self.setup_worker_thread()
         self.setWindowTitle("XBPM Calibration and Analysis Tool")
@@ -296,7 +297,7 @@ class XBPMMainWindow(QMainWindow):
             return
 
         # Store workdir in parameter panel and update status bar
-        self.param_panel.show_workdir(os.path.dirname(workdir))
+        # self.param_panel.show_workdir(os.path.dirname(workdir))
         self.status_bar.showMessage(f"Opened: {workdir}")
 
         # Select beamline and create effective links to
@@ -309,14 +310,19 @@ class XBPMMainWindow(QMainWindow):
         self.analysis = self.workdata.analysis
 
         # Update BPM distance.
-        self.prm.bpmdist = Config.XBPMDISTS.get(self.workbeamline, None)
+        self.prm.bpmdist = Config.BPMDISTS.get(self.workbeamline, None)
 
         # Update XBPM distance.
-        self._update_xbpmdist_from_beamline(self.workbeamline)
+        self._update_xbpmdist_from_beamline()
 
-        # Set ROI defaults.
+        # Set / update ROI.
         nom_pos = self.workdata.raw_data.blade_avg.nom
-        self.param_panel.set_roi_defaults_from_grid(nom_pos)
+        self.grid_shape = self.param_panel.set_roi_defaults_from_grid(nom_pos)
+        self.prm.roi = ROISlice.update(
+            self.grid_shape,
+            [self.param_panel.roi_v_spin.value(),
+             self.param_panel.roi_h_spin.value()]
+             )
 
         self.log_message(
             f"Loading data from: {workdir} "
@@ -346,33 +352,34 @@ class XBPMMainWindow(QMainWindow):
         # Persist in parameter panel for future get_parameters() calls
         self.param_panel.set_beamline(self.workbeamline)
 
-    def _update_xbpmdist_from_beamline(self, beamline: str) -> None:
+    def _update_xbpmdist_from_beamline(self) -> None:
         """Update the XBPM distance field from Config.XBPMDISTS."""
         try:
-            if not beamline:
-                return
-            dist = Config.XBPMDISTS.get(beamline)
-            if dist is not None and hasattr(self, 'param_panel'):
-                self.param_panel.xbpmdist_spin.setValue(float(dist))
-                self.log_message(
-                    f"XBPM distance set from beamline {beamline}: {dist:.3f} m"
-                )
+            dist = Config.XBPMDISTS.get(self.workbeamline)
+            self.prm.xbpmdist = dist
+            self.param_panel.xbpmdist_spin.setValue(float(dist))
+            self.log_message(
+                "XBPM distance set from beamline"
+                f" {self.workbeamline}:"
+                f" {dist:.3f} m"
+            )
         except Exception as exc:  # pragma: no cover - defensive
             self.log_message(f"Could not set XBPM distance: {exc}")
 
     def _on_parameters_changed(self) -> None:
         """React to parameter changes; pre-select beamline on workdir set."""
         params  = self.param_panel.get_parameters()
-        workdir = params.get('workdir') or ""
+        workdir = params.get('workdir', "")
         if workdir and workdir != self._last_workdir:
             self._last_workdir = workdir
-            # self._preselected_beamline removed
+        nom_pos = self.workdata.raw_data.blade_avg.nom
+        self.grid_shape = self.param_panel.set_roi_defaults_from_grid(nom_pos)
+        self.prm.roi = ROISlice.update(
+            self.grid_shape,
+            [self.param_panel.roi_v_spin.value(),
+             self.param_panel.roi_h_spin.value()]
+             )
 
-    def _schedule_roi_rerun(self) -> None:
-        """Debounce ROI changes and re-run analysis if data is loaded."""
-        if self._roi_rerun_timer.isActive():
-            self._roi_rerun_timer.stop()
-        self._roi_rerun_timer.start(400)
 
     def _create_status_bar(self) -> None:
         """Create status bar with progress indicator."""
@@ -398,7 +405,7 @@ class XBPMMainWindow(QMainWindow):
                 self.log_message(
                     f"Beamline selected: {self.workbeamline}"
                 )
-                self._update_xbpmdist_from_beamline(self.workbeamline)
+                self._update_xbpmdist_from_beamline()
         except Exception as exc:  # pragma: no cover - defensive
             self.log_message(f"Beamline preselection failed: {exc}")
 
@@ -420,67 +427,6 @@ class XBPMMainWindow(QMainWindow):
             for line in output.split('\n'):
                 if line.strip():
                     self.log_message(line)
-
-    # def setup_worker_thread(self) -> None:
-    #     """Initialize worker thread for analysis execution."""
-    #     self.worker_thread = QThread()
-    #     # Analyzer will be re-instantiated with canonical Prm and builder
-    #     # before each run
-    #     # Temporary builder for thread setup; will be replaced before each run
-    #     self.analyzer = XBPMAnalyzer(
-    #         self.prm,
-    #         self.builder,
-    #         self.reader,
-    #         self.rawdata
-    #     )
-    #     self.analyzer.moveToThread(self.worker_thread)
-
-    #     self.analysisRequested.connect(
-    #         self._run_analysis_with_canonical_params
-    #         )
-    #     self.stop_btn.clicked.connect(self.analyzer.stop_analysis)
-
-    #     self.analyzer.analysisStarted.connect(self._on_analysis_started)
-    #     self.analyzer.analysisProgress.connect(self._on_analysis_progress)
-    #     self.analyzer.analysisComplete.connect(self._on_analysis_complete)
-    #     self.analyzer.analysisError.connect(self._on_analysis_error)
-    #     self.analyzer.logMessage.connect(self.log_message)
-    #     self.worker_thread.start()
-
-    # def _run_analysis_with_canonical_params(self, params: dict) -> None:
-    #     """Build and enrich canonical ParameterBuilder/Prm, run analysis."""
-    #     # Set canonical Prm fields directly from params
-    #     for k, v in params.items():
-    #         if hasattr(self.prm, k):
-    #             setattr(self.prm, k, v)
-
-    #     # Use canonical rawdata for parameter enrichment
-    #     self.builder.rawdata = self.rawdata
-    #     self.builder.add_beamline_parameters()
-
-    #     # Update persistent Prm reference
-    #     self.prm = self.builder.prm
-
-    #     # Always convert rawdata to expected dict format for analysis
-    #     analysis_data = self.reader._blades_fetch()
-    #     self.analyzer = XBPMAnalyzer(self.prm, self.builder,
-    #                                  self.reader, self.rawdata)
-    #     self.analyzer.moveToThread(self.worker_thread)
-    #     self.analyzer.app = None  # Reset to force re-init
-
-    #     def set_app_reader_data() -> None:
-    #         if self.analyzer.app is not None:
-    #             self.analyzer.app.reader = self.reader
-    #             self.analyzer.app.data   = analysis_data
-
-    #     self.analyzer.analysisStarted.connect(set_app_reader_data)
-    #     self.stop_btn.clicked.connect(self.analyzer.stop_analysis)
-    #     self.analyzer.analysisStarted.connect(self._on_analysis_started)
-    #     self.analyzer.analysisProgress.connect(self._on_analysis_progress)
-    #     self.analyzer.analysisComplete.connect(self._on_analysis_complete)
-    #     self.analyzer.analysisError.connect(self._on_analysis_error)
-    #     self.analyzer.logMessage.connect(self.log_message)
-    #     self.analyzer.run_analysis()
 
     @pyqtSlot(list)
     def _on_beamline_selection_request(self, beamlines: list):
@@ -1631,20 +1577,15 @@ class XBPMMainWindow(QMainWindow):
     def _format_bpm_stats_section(self) -> dict[str, list[str]]:
         """Format BPM statistics metadata section."""
         bpm_lines: list[str] = []
-        bpm_stats = self.results.get('bpm_stats', {}) if isinstance(self.results, dict) else {}
+        bpm_stats = (self.results.get('bpm_stats', {})
+                     if isinstance(self.results, dict) else {})
 
         if isinstance(bpm_stats, dict):
-            roi_size = getattr(self.prm, 'roisize', None)
-            if isinstance(roi_size, (list, tuple)) and len(roi_size) >= 2:
-                try:
-                    bpm_lines.append(
-                        f"  ROI size [H x V points] = {int(roi_size[0])} x {int(roi_size[1])}"
-                    )
-                    bpm_lines.append("")
-                except Exception:
-                    pass
-
-            bpm_lines.append("  Sigmas (all sites):")
+            bpm_lines.append(
+                "  ROI size [lines x columns points] ="
+                f" {self.prm.roi.sz_v} x {self.prm.roi.sz_h}"
+            )
+            bpm_lines.append("\n  Sigmas (all sites):")
             for key in ('sigma_h', 'sigma_v', 'sigma_total'):
                 if key in bpm_stats:
                     entry = self.BPM_STATS_DESCRIPTIONS.get(key, key)
@@ -1655,10 +1596,7 @@ class XBPMMainWindow(QMainWindow):
                     except Exception:
                         bpm_lines.append(f"  {entry:>17} = {bpm_stats[key]}")
 
-            bpm_lines.append("")
-            bpm_lines.append("")
-
-            bpm_lines.append("  Extremes (all sites):")
+            bpm_lines.append("\n  Extremes (all sites):")
             for key in ('diff_max_h', 'diff_max_v'):
                 if key in bpm_stats:
                     entry = self.BPM_STATS_DESCRIPTIONS.get(key, key)
@@ -1670,31 +1608,21 @@ class XBPMMainWindow(QMainWindow):
                         bpm_lines.append(f"  {entry:>17} = {bpm_stats[key]}")
 
             if bpm_stats.get('roi_available'):
-                roi_sigma_h = bpm_stats.get('roi_sigma_h')
-                roi_sigma_v = bpm_stats.get('roi_sigma_v')
-                roi_sigma_t = bpm_stats.get('roi_sigma_total')
-                if (roi_sigma_h is not None or
-                    roi_sigma_v is not None or
-                    roi_sigma_t is not None):
-                    bpm_lines.append("")
-                    bpm_lines.append("  Sigmas (ROI):")
-                    if roi_sigma_h is not None:
-                        bpm_lines.append(
-                            f"  {'ROI horizontal RMS':>17} = {float(roi_sigma_h):.4g}"
-                        )
-                    if roi_sigma_v is not None:
-                        bpm_lines.append(
-                            f"  {'ROI vertical RMS':>17} = {float(roi_sigma_v):.4g}"
-                        )
-                    if roi_sigma_t is not None:
-                        bpm_lines.append(
-                            f"  {'ROI total RMS':>17} = {float(roi_sigma_t):.4g}"
-                        )
-
-        return {'bpm': bpm_lines} if bpm_lines else {}
+                bpm_lines.append("\n  Sigmas (ROI):")
+                roi_sig_h = bpm_stats.get('roi_sigma_h')
+                roi_sig_v = bpm_stats.get('roi_sigma_v')
+                roi_sig_t = bpm_stats.get('roi_sigma_total')
+                roi_lines = [
+                    f" {'ROI horizontal RMS':>17} = {float(roi_sig_h):.4g}",
+                    f" {'ROI vertical RMS':>17} = {float(roi_sig_v):.4g}",
+                    f" {'ROI total RMS':>17} = {float(roi_sig_t):.4g}"
+                ]
+                bpm_lines += roi_lines
+        return {'bpm': bpm_lines}
 
     def _format_xbpm_stats_section(self,
-                                   active_tab: str) -> dict[str, list[str]]:
+                                   active_tab: str
+                                   ) -> dict[str, list[str]]:
         """Format XBPM statistics metadata section.
 
         Only shows the relevant calculation type based on active tab:

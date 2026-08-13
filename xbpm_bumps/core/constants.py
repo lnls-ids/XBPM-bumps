@@ -1,9 +1,9 @@
 """Constants for XBPM analysis."""
 
-FILE_EXTENSION = ".pickle"    # Data file type.
-ROI_SIZE_V = 5                # Default vertical ROI number of sites.
-ROI_SIZE_H = 5                # Default horizontal ROI number of sites.
-FIGDPI = 300                  # Figure dpi saving parameter.
+FILE_EXTENSION = ".pickle"  # Data file type.
+ROI_SIZE_V = 5              # Default vertical ROI number of sites (lines).
+ROI_SIZE_H = 5              # Default horizontal ROI number of sites (columns).
+FIGDPI = 300                # Figure dpi saving parameter.
 
 HELP_DESCRIPTION = (
 """

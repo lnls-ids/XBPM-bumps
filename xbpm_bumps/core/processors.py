@@ -3,7 +3,6 @@
 import os
 import numpy as np
 import matplotlib
-import matplotlib.pyplot as plt
 
 # from .parameters  import Prm
 from .visualizers import PositionVisualizer as PSV
@@ -53,8 +52,8 @@ class XBPMProcessor:
         self.blades_h = None
         self.blades_v = None
         self._initialize_ranges()
-        self.roi_h_size = prm.roisize[0] if prm.roisize else ROI_SIZE_H
-        self.roi_v_size = prm.roisize[1] if prm.roisize else ROI_SIZE_V
+        self.roi_v_size = prm.roisize[0] if prm.roisize else ROI_SIZE_V
+        self.roi_h_size = prm.roisize[1] if prm.roisize else ROI_SIZE_H
 
     def _initialize_ranges(self) -> None:
         """Initialize horizontal and vertical sweep ranges from data keys."""
@@ -831,8 +830,8 @@ class BPMProcessor:
 
         self.rawdata = rawdata
 
-        self.roisize_h = prm.roisize[0] if prm.roisize else ROI_SIZE_H
-        self.roisize_v = prm.roisize[1] if prm.roisize else ROI_SIZE_V
+        self.roisize_v = prm.roisize[0] if prm.roisize else ROI_SIZE_V
+        self.roisize_h = prm.roisize[1] if prm.roisize else ROI_SIZE_H
 
         self._print_bpm_info()
         self.calculate_positions()
@@ -881,28 +880,31 @@ class BPMProcessor:
             newkey = (key[0] * xbpm_dist, key[1] * xbpm_dist)
             positions[newkey] = tg * xbpm_dist
 
+        #
         # Assemble position data into structured grid numpy arrays.
+        #
+
         # Get unique sorted indices for x and y from the position keys.
         xidx = sorted(set([key[0] for key in positions.keys()]))
         yidx = sorted(set([key[1] for key in positions.keys()]))
         nx, ny = len(xidx), len(yidx)
 
         # Initialize numpy arrays for nominal and measured positions.
-        self.xnom = np.zeros((ny, nx))
-        self.ynom = np.zeros((ny, nx))
-        self.xpos = np.full((ny, nx), np.nan)
-        self.ypos = np.full((ny, nx), np.nan)
+        self.nom_x  = np.zeros((ny, nx))
+        self.nom_y  = np.zeros((ny, nx))
+        self.meas_x = np.full((ny, nx), np.nan)
+        self.meas_y = np.full((ny, nx), np.nan)
 
         # Fill the arrays.
         missing = 0
         for iy in range(ny):
             for ix in range(nx):
                 key = (xidx[ix], yidx[iy])
-                self.xnom[iy, ix] = key[0]
-                self.ynom[iy, ix] = key[1]
+                self.nom_x[iy, ix] = key[0]
+                self.nom_y[iy, ix] = key[1]
                 if key in positions:
-                    self.xpos[iy, ix] = positions[key][0]
-                    self.ypos[iy, ix] = positions[key][1]
+                    self.meas_x[iy, ix] = positions[key][0]
+                    self.meas_y[iy, ix] = positions[key][1]
                 else:
                     missing += 1
 
@@ -1021,13 +1023,13 @@ class BPMProcessor:
                 unavailable.
         """
         # Total differences (all sites).
-        nv, nh = self.xnom.shape[0], self.xnom.shape[1]
+        nv, nh = self.nom_x.shape[0], self.nom_x.shape[1]
         nsites_total = nv * nh
 
         # Calculate differences and filter valid (finite) points.
-        diff_h = self.xnom - self.xpos
-        diff_v = self.ynom - self.ypos
-        valid = np.isfinite(diff_h) & np.isfinite(diff_v)
+        diff_h = self.nom_x - self.meas_x
+        diff_v = self.nom_y - self.meas_y
+        valid  = np.isfinite(diff_h) & np.isfinite(diff_v)
 
         # Check if any valid points are available for RMS estimation.
         nsites = int(np.count_nonzero(valid))
@@ -1046,15 +1048,15 @@ class BPMProcessor:
 
         diff_h_min = np.abs(np.min(diff_h_valid))
         diff_h_max = np.abs(np.max(diff_h_valid))
-        sig2_h = np.mean(diff_h_valid**2)
+        sig2_h     = np.mean(diff_h_valid**2)
 
         diff_v_min = np.abs(np.min(diff_v_valid))
         diff_v_max = np.abs(np.max(diff_v_valid))
-        sig2_v = np.mean(diff_v_valid**2)
+        sig2_v     = np.mean(diff_v_valid**2)
 
-        sig_h = np.sqrt(sig2_h)
-        sig_v = np.sqrt(sig2_v)
-        sig_tot = np.sqrt(sig2_h + sig2_v)
+        sig_h      = np.sqrt(sig2_h)
+        sig_v      = np.sqrt(sig2_v)
+        sig_tot    = np.sqrt(sig2_h + sig2_v)
 
         print("Sigmas:\n"
               f"   (all sites)     H = {sig_h:.4f}\n"
@@ -1086,15 +1088,17 @@ class BPMProcessor:
             return rms_stats, None
 
         # Differences at ROI.
-        rows, cols = self._roi_slices(self.xnom.shape)
-        xnom_roi = self.xnom[rows, cols]
-        ynom_roi = self.ynom[rows, cols]
-        xpos_roi = self.xpos[rows, cols]
-        ypos_roi = self.ypos[rows, cols]
+        rows, cols = self.prm.roislice.roi_update(
+            self.nom_x.shape, (self.roisize_v, self.roisize_h)
+            )
+        nom_roi_x  = self.nom_x[rows, cols]
+        nom_roi_y  = self.nom_y[rows, cols]
+        meas_roi_x = self.meas_x[rows, cols]
+        meas_roi_y = self.meas_y[rows, cols]
 
         # Calculate differences and filter valid (finite) points in ROI.
-        diff_h_roi = np.abs(xnom_roi - xpos_roi)
-        diff_v_roi = np.abs(ynom_roi - ypos_roi)
+        diff_h_roi = np.abs(nom_roi_x - meas_roi_x)
+        diff_v_roi = np.abs(nom_roi_y - meas_roi_y)
         valid_roi  = np.isfinite(diff_h_roi) & np.isfinite(diff_v_roi)
         nroi_valid = int(np.count_nonzero(valid_roi))
         if nroi_valid == 0:
@@ -1121,8 +1125,8 @@ class BPMProcessor:
         roi_sig_tot = np.sqrt(sig2_h_roi + sig2_v_roi)
 
         print("  Differences in ROI\n"
-              f"   (x in [{np.min(xnom_roi)}, {np.max(xnom_roi)}];"
-              f"  y in [{np.min(ynom_roi)}, {np.max(ynom_roi)}])\n"
+              f"   (x in [{np.min(nom_roi_x)}, {np.max(nom_roi_x)}];"
+              f"  y in [{np.min(nom_roi_y)}, {np.max(nom_roi_y)}])\n"
               f"       H = {roi_sig_h:.4f}\n"
               f"       V = {roi_sig_v:.4f},\n"
               f"   total = {roi_sig_tot:.4f}")
@@ -1140,10 +1144,10 @@ class BPMProcessor:
             'roi_sigma_v'     : roi_sig_v,
             'roi_sigma_total' : roi_sig_tot,
             'roi_bounds'      : {
-                'x_min' : float(np.min(xnom_roi)),
-                'x_max' : float(np.max(xnom_roi)),
-                'y_min' : float(np.min(ynom_roi)),
-                'y_max' : float(np.max(ynom_roi)),
+                'x_min' : float(np.min(nom_roi_x)),
+                'x_max' : float(np.max(nom_roi_x)),
+                'y_min' : float(np.min(nom_roi_y)),
+                'y_max' : float(np.max(nom_roi_y)),
             },
         }
 
@@ -1155,26 +1159,13 @@ class BPMProcessor:
         Returns:
             Tuple (xnom_roi, ynom_roi, xpos_roi, ypos_roi) of ROI arrays.
         """
-        rows, cols = self._roi_slices(self.xnom.shape)
-        self.xnom_roi = self.xnom[rows, cols]
-        self.ynom_roi = self.ynom[rows, cols]
-        self.xpos_roi = self.xpos[rows, cols]
-        self.ypos_roi = self.ypos[rows, cols]
-
-    def _roi_slices(self, shape: tuple) -> tuple:
-        """Return row/column slices for the centered ROI."""
-        nv, nh = shape
-        roi_h = min(self.roisize_h, nh)
-        roi_v = min(self.roisize_v, nv)
-        fromh = max(0, int((nh - roi_h) / 2))
-        uptoh = min(nh, fromh + roi_h)
-        fromv = max(0, int((nv - roi_v) / 2))
-        uptov = min(nv, fromv + roi_v)
-
-        if nh == 1 or nv == 1:
-            return slice(fromv, uptov), slice(None)
-
-        return slice(fromv, uptov), slice(fromh, uptoh)
+        rows, cols = self.bana.roislice.roi_update(
+            self.nom_x.shape, (self.roisize_v, self.roisize_h)
+            )
+        self.xnom_roi = self.nom_x[rows, cols]
+        self.ynom_roi = self.nom_y[rows, cols]
+        self.xpos_roi = self.meas_x[rows, cols]
+        self.ypos_roi = self.meas_y[rows, cols]
 
     def _stack_measurement_results(self) -> tuple:
         """Compile measured and nominal coordinates into return format.
@@ -1183,212 +1174,10 @@ class BPMProcessor:
             Tuple (measured, nominal) where each is a 2-column array or None.
         """
         self.measured = (np.column_stack(
-            (self.xpos.ravel(), self.ypos.ravel()))
-            if self.xpos.size else None)
+            (self.meas_x.ravel(), self.meas_y.ravel()))
+            if self.meas_x.size else None)
         self.nominal = (np.column_stack(
-            (self.xnom.ravel(), self.ynom.ravel()))
-            if self.xnom.size else None)
+            (self.nom_x.ravel(), self.nom_y.ravel()))
+            if self.nom_x.size else None)
 
-#
-# Plotting functions. 
-# Probably to be moved to another visualizer module.
-#
-
-    def plot_bpm_positions(self) -> None:
-        """Plot BPM positions and differences in a 1x3 subplot figure."""
-        # Initialize figure with 1x3 subplots:
-        # full grid, roi closeup, differences
-        if self.rms_diff_roi is None:
-            # ROI can be unavailable for sparse/incomplete scans.
-            is_1d = True
-        else:
-            is_1d = (self.rms_diff_roi.ndim == 1 or
-                     (self.rms_diff_roi.ndim == 2 and
-                      min(self.rms_diff_roi.shape) == 1))
-        gridspec = {'width_ratios': [1, 1, 0.1]} if is_1d else None
-        self.fig, (ax_all, ax_close, ax_color) = plt.subplots(
-            1, 3, figsize=(18, 6), constrained_layout=True,
-            gridspec_kw=gridspec
-        )
-
-        # Apply layout padding similar to PositionVisualizer for consistency
-        try:
-            engine = self.fig.get_layout_engine()
-            if engine is not None and hasattr(engine, "set"):
-                engine.set(
-                    w_pad=0.02,   # space figure edge / axes, horizontal
-                    h_pad=0.0,    # space figure edge / axes, vertical
-                    wspace=0.02,  # space between axes, horizontal
-                    hspace=0.0,   # space between axes, vertical
-                )
-        except Exception:  # noqa: S110
-            pass  # Ignore if layout engine unavailable
-
-        # Plot full grid
-        self._plot_position_scatter(
-            ax_all, self.xnom, self.ynom, self.xpos, self.ypos,
-            _Title('bpm', 'total', beamline=self.prm.beamline)
-        )
-
-        # Plot ROI closeup
-        self._plot_position_scatter(
-            ax_close, self.xnom_roi, self.ynom_roi, self.xpos_roi, self.ypos_roi,
-            _Title('bpm', 'roi', beamline=self.prm.beamline)
-        )
-
-        # Plot differences heatmap with extent mapping
-        self._plot_roi_differences(ax_color, self.xnom_roi, self.ynom_roi)
-
-    def _plot_roi_differences(self, axdiff: 'matplotlib.axes.Axes',
-                              pos_nom_h: np.ndarray,
-                              pos_nom_v: np.ndarray) -> None:
-        """Plot ROI differences as scatter (1D) or heatmap (2D).
-
-        Args:
-            axdiff: Matplotlib axis for ROI differences visualization.
-            pos_nom_h: Nominal horizontal positions for extent mapping.
-            pos_nom_v: Nominal vertical positions for extent mapping.
-        """
-        if self.rms_diff_roi is None:
-            return
-
-        roi_diffs = self.rms_diff_roi
-
-        # Treat as 1-D if truly 1-D (shape = (n,)) or effectively 1-D (one
-        # dimension is 1, like (1, n) or (n, 1)), or if one nominal axis is
-        # constant (single-line sweep).
-        h_const = np.nanmax(pos_nom_h) == np.nanmin(pos_nom_h)
-        v_const = np.nanmax(pos_nom_v) == np.nanmin(pos_nom_v)
-        is_1d = (roi_diffs.ndim == 1 or
-             (roi_diffs.ndim == 2 and min(roi_diffs.shape) == 1) or
-             h_const or v_const)
-
-        if is_1d:
-            # 1D imshow: render as a thin band of square cells
-            h_min = np.nanmin(pos_nom_h)
-            h_max = np.nanmax(pos_nom_h)
-
-            color_vals = np.ravel(roi_diffs).reshape(-1, 1)
-            extent = [0, 1, pos_nom_v.min(), pos_nom_v.max()]
-            aspect = 'auto'
-
-            # Make the single column visually wider
-            axdiff.set_box_aspect(10)
-            axdiff.set_anchor('C')
-            axdiff.set_xticks([])
-
-            im = axdiff.imshow(color_vals,
-                               cmap='viridis',
-                               extent=extent,
-                               aspect=aspect,
-                               origin='lower')
-            cbar = self.fig.colorbar(im, ax=axdiff,
-                                      fraction=0.4, pad=0.3)
-            cbar.set_label(u"RMS Difference [$\\mu$m]", fontsize=14)
-
-            axdiff.set_xlabel("")
-            axdiff.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
-            axdiff.set_title(
-                _Title('bpm', 'heatmap', self.prm.beamline), pad=2
-                )
-            axdiff.grid(False)
-        else:
-            # 2D heatmap with extent mapping
-            h_min = np.nanmin(pos_nom_h)
-            h_max = np.nanmax(pos_nom_h)
-            v_min = np.nanmin(pos_nom_v)
-            v_max = np.nanmax(pos_nom_v)
-            extent = [h_min, h_max, v_min, v_max]
-
-            # Calculate aspect ratio to maintain proper physical proportions.
-            # Account for both physical extents and array shape to avoid
-            # distortion when physical x and y ranges differ significantly.
-            n_v, n_h = roi_diffs.shape
-            h_extent = h_max - h_min
-            v_extent = v_max - v_min
-            # aspect = (physical_y_per_pixel) / (physical_x_per_pixel)
-            aspect = ((v_extent / n_v) / (h_extent / n_h)
-                      if (h_extent > 0 and v_extent > 0) else 1)
-
-            # Use imshow for filled heatmap visualization
-            im = axdiff.imshow(
-                roi_diffs, cmap='viridis', extent=extent,
-                aspect=aspect, origin='lower'
-            )
-            cbar = self.fig.colorbar(im, ax=axdiff,
-                                     fraction=0.046, pad=0.04)
-            cbar.set_label(u"RMS Difference [$\\mu$m]", fontsize=14)
-
-            axdiff.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)  # noqa: W605
-            axdiff.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
-            axdiff.set_title(
-                _Title('bpm', 'heatmap', self.prm.beamline), pad=2
-                )
-            axdiff.grid(False)
-
-    def _plot_position_scatter(self, ax: 'matplotlib.axes.Axes',
-                               pos_nom_h: np.ndarray, pos_nom_v: np.ndarray,
-                               pos_h: np.ndarray, pos_v: np.ndarray,
-                               title: str) -> None:
-        """Plot measured vs nominal positions scatter plot.
-
-        Args:
-            ax: Matplotlib axis for plotting.
-            pos_nom_h: Nominal horizontal positions.
-            pos_nom_v: Nominal vertical positions.
-            pos_h: Calculated horizontal positions.
-            pos_v: Calculated vertical positions.
-            title: Plot title.
-        """
-        ax.set_title(title, pad=2)
-        pos = ax.plot(pos_h, pos_v, 'bo')
-        nom = ax.plot(pos_nom_h, pos_nom_v, 'r+')
-        ax.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)  # noqa: W605
-        ax.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
-
-        # Compute common limits to ensure equal aspect ratio with margin.
-        # Use only finite values to avoid NaN/Inf axis-limit failures.
-        all_h = np.concatenate([np.ravel(pos_h), np.ravel(pos_nom_h)])
-        all_v = np.concatenate([np.ravel(pos_v), np.ravel(pos_nom_v)])
-        all_h = all_h[np.isfinite(all_h)]
-        all_v = all_v[np.isfinite(all_v)]
-
-        if all_h.size == 0 or all_v.size == 0:
-            print("\n WARNING: no finite position data available for plotting;"
-                  " using default axis limits.")
-            ax.set_xlim(-1, 1)
-            ax.set_ylim(-1, 1)
-            ax.set_aspect('equal', adjustable='box')
-            ax.grid()
-            return
-
-        h_min, h_max = np.min(all_h), np.max(all_h)
-        v_min, v_max = np.min(all_v), np.max(all_v)
-
-        h_range = h_max - h_min if h_max > h_min else 1
-        v_range = v_max - v_min if v_max > v_min else 1
-
-        # Add 15% margin (30% total: 15% on each side)
-        total_range = max(h_range, v_range) * 1.3
-
-        # Center the limits and expand to match max range
-        h_center = (h_min + h_max) / 2
-        v_center = (v_min + v_max) / 2
-
-        ax.set_xlim(h_center - total_range / 2, h_center + total_range / 2)
-        ax.set_ylim(v_center - total_range / 2, v_center + total_range / 2)
-
-        # Force 1:1 aspect ratio after setting limits
-        ax.set_aspect('equal', adjustable='box')
-
-        handles, labels = [], []
-        if len(nom) > 0:
-            handles.append(nom[0])
-            labels.append("Nom.")
-        if len(pos) > 0:
-            handles.append(pos[0])
-            labels.append("Calc.")
-        if handles:
-            ax.legend(handles, labels)
-        ax.grid()
 

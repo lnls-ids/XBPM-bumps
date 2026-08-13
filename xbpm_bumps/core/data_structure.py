@@ -15,6 +15,7 @@ from xbpm_bumps.core.config import Config
 # from .config import Config
 from .constants import ROI_SIZE_H, ROI_SIZE_V
 
+
 @dataclass
 class Prm:
     """Typed container for command-line and runtime parameters.
@@ -65,6 +66,33 @@ class Prm:
 
 
 @dataclass
+class ROISlice:
+    sl_v: slice
+    sl_h: slice
+    sz_v : int = ROI_SIZE_V
+    sz_h : int = ROI_SIZE_H
+
+    def __post_init__(self) -> None:
+        """Update the ROI slice to the current defaults."""
+        self.sl_v = slice(0, self.sz_v)
+        self.sl_h = slice(0, self.sz_h)
+
+    @classmethod
+    def update(cls, arrayshape: tuple, roisize: List[int]) -> "ROISlice":
+        nv, nh = arrayshape
+        roi_v  = min(roisize[0], nv)   # lines for arrays
+        roi_h  = min(roisize[1], nh)   # columns for arrays
+        fromh  = max(0, int((nh - roi_h) / 2))
+        uptoh  = min(nh, fromh + roi_h)
+        fromv  = max(0, int((nv - roi_v) / 2))
+        uptov  = min(nv, fromv + roi_v)
+        return cls(
+            sl_v=slice(fromv, uptov),
+            sl_h=slice(fromh, uptoh)
+            )
+
+
+@dataclass
 class BeamlinePrm:
     """Typed container for beamline-specific parameters.
     
@@ -76,16 +104,14 @@ class BeamlinePrm:
     roisize      : ROI size (horizontal, vertical)
     usebpmref    : Whether to use BPM or nominal positions as reference
     """
-    beamline         : str   | None = None
-    bpmdist          : float | None = None
-    xbpmdist         : float | None = None
-    skip             : int   = 0
-    scalepolydeg     : int   = 1
-    sector           : list  | None = None
-    usebpmref        : bool = False
-    roisize          : List[int] = field(
-        default_factory=lambda: [ROI_SIZE_H, ROI_SIZE_V]
-        )
+    beamline     : str   | None = None
+    bpmdist      : float | None = None
+    xbpmdist     : float | None = None
+    skip         : int   = 0
+    scalepolydeg : int   = 1
+    sector       : list  | None = None
+    usebpmref    : bool = False
+    roi          : ROISlice = field(default_factory=ROISlice)
 
     @classmethod
     def from_hdf5(cls, bln_grp: h5py.Group) -> "BeamlinePrm":
@@ -106,17 +132,13 @@ class BeamlinePrm:
                 attrs["xbpmdist"] = Config.XBPMDISTS.get(
                     attrs.get(beamline, ""), None
                 )
+            attrs["roi"] = ROISlice()
         except Exception as err:
             raise ValueError(
                 "### ERROR while reading 'BeamlinePrm' from HDF5 group:\n"
                 f" {err}"
             )
         return cls(**attrs)
-
-    @classmethod
-    def roisize_update(cls, roisize: List[int]) -> None:
-        """Update the ROI size to the current defaults."""
-        cls.roisize = roisize
 
 #
 # Generic data structures.
@@ -401,8 +423,8 @@ class BPMAnalysis:
     prm          : BeamlinePrm
     pos_meas     : Positions
     pos_nom      : Positions
-    rms_all_diff : dict
-    rms_roi_diff : dict
+    rms_diff_all : dict
+    rms_diff_roi : dict
 
     @classmethod
     def compute(cls, bl_data: "BeamlineData") -> "BPMAnalysis":
@@ -420,14 +442,18 @@ class BPMAnalysis:
 
         # Instantiate BPMProcessor to calculate BPM positions.
         from .processors import BPMProcessor as BPMP
-        bpm_proc = BPMP(bl_data.raw_data.sweeps)
+        bpm_proc = BPMP(
+            rawdata=bl_data.raw_data,
+            prm=bl_data.prm,
+            sweeps=bl_data.raw_data.sweeps,
+        )
 
         return cls(
             prm=prm,
             pos_nom=bpm_proc.nominal,
             pos_meas=bpm_proc.measured,
-            rms_roi_diff=bpm_proc.rms_diff_roi,
-            rms_all_diff=bpm_proc.rms_diff_all
+            rms_diff_roi=bpm_proc.rms_diff_roi,
+            rms_diff_all=bpm_proc.rms_diff_all
             )
 
 

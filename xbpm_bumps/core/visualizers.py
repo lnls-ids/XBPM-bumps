@@ -5,9 +5,10 @@ import matplotlib
 import matplotlib.pyplot as plt
 import logging
 
-from .parameters import Prm
 from .constants import FIGDPI
 from .config import Config
+from .data_structure import BPMAnalysis
+from .data_structure import BeamlinePrm
 
 _Title = Config.get_plot_title   # shorthand used throughout this module
 
@@ -43,10 +44,10 @@ class BladeMapVisualizer:
 
     Attributes:
         data (dict): Measurement data dictionary.
-        prm (Prm): Parameters dataclass.
+        prm (BeamlinePrm): Parameters dataclass.
     """
 
-    def __init__(self, data: dict, prm: Prm):
+    def __init__(self, data: dict, prm: BeamlinePrm):
         """Initialize visualizer with data and parameters.
 
         Args:
@@ -173,13 +174,13 @@ class PositionVisualizer:
     with or without suppression matrix corrections.
 
     Attributes:
-        prm (Prm): Parameters dataclass.
+        prm (BeamlinePrm): Parameters dataclass.
         title (str): Title for the visualization.
         fig (matplotlib.figure.Figure): Matplotlib figure object for
              current visualization.
     """
 
-    def __init__(self, prm: Prm, title: str = "", titles: dict = None):
+    def __init__(self, prm: BeamlinePrm, title: str = "", titles: dict = None):
         """Initialize visualizer with parameters.
 
         Args:
@@ -1198,3 +1199,236 @@ class BladeCurrentVisualizer:
         fig.tight_layout()
 
         return fig
+
+
+class BPMVisualizer:
+    """Unified visualizer for BPM analysis.
+
+    Creates BPM plots from either:
+    - Live analysis data (from processors)
+    - HDF5 stored data (from readers)
+
+    This eliminates redundancy between processors.show_bpm_at_center()
+    and readers._reconstruct_bpm_center().
+    """
+    def __init__(self, bpm_ana: BPMAnalysis):
+        self.bana     = bpm_ana
+        self.beamline = bpm_ana.prm.beamline
+        self.pos_meas = bpm_ana.pos_meas
+        self.pos_nom  = bpm_ana.pos_nom
+
+        # Abbreviated names for plotting convenience.
+        self.nom_x  = self.pos_nom.x
+        self.nom_y  = self.pos_nom.y
+        self.meas_x = self.pos_meas.x
+        self.meas_y = self.pos_meas.y
+
+    def plot_bpm_positions(self) -> None:
+        """Plot BPM positions and differences in a 1x3 subplot figure."""
+        # Initialize figure with 1x3 subplots:
+        # full grid, roi closeup, differences
+        if self.bana.rms_diff_roi is None:
+            # ROI can be unavailable for sparse/incomplete scans.
+            is_1d = True
+        else:
+            is_1d = (self.bana.rms_diff_roi.ndim == 1 or
+                     (self.bana.rms_diff_roi.ndim == 2 and
+                      min(self.bana.rms_diff_roi.shape) == 1))
+        gridspec = {'width_ratios': [1, 1, 0.1]} if is_1d else None
+        self.fig, bpm_axes = plt.subplots(
+            1, 3, figsize=(18, 6), constrained_layout=True,
+            gridspec_kw=gridspec
+        )
+        # The plotting axes for BPM: all points, roi closeup,
+        # and colorbar for differences.
+        self.ax_all, self.ax_roi, self.ax_diff = bpm_axes
+
+        # Apply layout padding similar to PositionVisualizer for consistency
+        try:
+            engine = self.fig.get_layout_engine()
+            if engine is not None and hasattr(engine, "set"):
+                engine.set(
+                    w_pad=0.02,   # space figure edge / axes, horizontal
+                    h_pad=0.0,    # space figure edge / axes, vertical
+                    wspace=0.02,  # space between axes, horizontal
+                    hspace=0.0,   # space between axes, vertical
+                )
+        except Exception:  # noqa: S110
+            pass  # Ignore if layout engine unavailable
+
+        # Plot full grid
+        self._plot_position_scatter(
+            self.ax_all,
+            self.meas_x,
+            self.nom_x,
+            self.meas_y,
+            self.nom_y,
+            _Title('bpm', 'total', beamline=self.beamline)
+        )
+
+        # Plot ROI closeup
+        sl_h, sl_v = self.bana.prm.roi.sl_h, self.bana.prm.roi.sl_v
+        self.nom_roi_x = self.nom_x[sl_v, sl_h]
+        self.nom_roi_y = self.nom_y[sl_v, sl_h]
+        self._plot_position_scatter(
+            self.ax_roi, _Title('bpm', 'roi', beamline=self.beamline)
+        )
+
+        # Plot differences heatmap with extent mapping
+        self._plot_roi_differences(
+            self.ax_diff, self.nom_roi_x, self.nom_roi_y
+            )
+
+    def _plot_position_scatter(self,
+                               ax: 'matplotlib.axes.Axes',
+                               meas_x: np.array,
+                               nom_x: np.array,
+                               meas_y: np.array,
+                               nom_y: np.array,
+                               title: str
+                               ) -> None:
+        """Plot measured vs nominal positions scatter plot.
+
+        Args:
+            ax    : Matplotlib axis for plotting.
+            title : Plot title.
+        """
+        ax.set_title(title, pad=2)
+        pos = ax.plot(meas_x, meas_y, 'bo')
+        nom = ax.plot(nom_x, nom_y, 'r+') 
+        ax.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)  # noqa: W605
+        ax.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
+
+        # Compute common limits to ensure equal aspect ratio with margin.
+        # Use only finite values to avoid NaN/Inf axis-limit failures.
+        all_h = np.concatenate([np.ravel(meas_x), np.ravel(nom_x)])
+        all_v = np.concatenate([np.ravel(meas_y), np.ravel(nom_y)])
+        all_h = all_h[np.isfinite(all_h)]
+        all_v = all_v[np.isfinite(all_v)]
+
+        if all_h.size == 0 or all_v.size == 0:
+            print("\n WARNING: no finite position data available for plotting;"
+                  " using default axis limits.")
+            ax.set_xlim(-1, 1)
+            ax.set_ylim(-1, 1)
+            ax.set_aspect('equal', adjustable='box')
+            ax.grid()
+            return
+
+        h_min, h_max = np.min(all_h), np.max(all_h)
+        v_min, v_max = np.min(all_v), np.max(all_v)
+
+        h_range = h_max - h_min if h_max > h_min else 1
+        v_range = v_max - v_min if v_max > v_min else 1
+
+        # Add 15% margin (30% total: 15% on each side)
+        total_range = max(h_range, v_range) * 1.3
+
+        # Center the limits and expand to match max range
+        h_center = (h_min + h_max) / 2
+        v_center = (v_min + v_max) / 2
+
+        ax.set_xlim(h_center - total_range / 2, h_center + total_range / 2)
+        ax.set_ylim(v_center - total_range / 2, v_center + total_range / 2)
+
+        # Force 1:1 aspect ratio after setting limits
+        ax.set_aspect('equal', adjustable='box')
+
+        handles, labels = [], []
+        if len(nom) > 0:
+            handles.append(nom[0])
+            labels.append("Nom.")
+        if len(pos) > 0:
+            handles.append(pos[0])
+            labels.append("Calc.")
+        if handles:
+            ax.legend(handles, labels)
+        ax.grid()
+
+    def _plot_roi_differences(self, axdiff,
+                              pos_nom_h: np.ndarray,
+                              pos_nom_v: np.ndarray) -> None:
+        """Plot ROI differences as scatter (1D) or heatmap (2D).
+
+        Args:
+            axdiff: Matplotlib axis for ROI differences visualization.
+            pos_nom_h: Nominal horizontal positions for extent mapping.
+            pos_nom_v: Nominal vertical positions for extent mapping.
+        """
+        if self.bana.rms_diff_roi is None:
+            return
+
+        roi_diffs = self.bana.rms_diff_roi
+
+        # Treat as 1-D if truly 1-D (shape = (n,)) or effectively 1-D (one
+        # dimension is 1, like (1, n) or (n, 1)), or if one nominal axis is
+        # constant (single-line sweep).
+        h_const = np.nanmax(pos_nom_h) == np.nanmin(pos_nom_h)
+        v_const = np.nanmax(pos_nom_v) == np.nanmin(pos_nom_v)
+        is_1d = (roi_diffs.ndim == 1 or
+             (roi_diffs.ndim == 2 and min(roi_diffs.shape) == 1) or
+             h_const or v_const)
+
+        if is_1d:
+            # 1D imshow: render as a thin band of square cells
+            h_min = np.nanmin(pos_nom_h)
+            h_max = np.nanmax(pos_nom_h)
+
+            color_vals = np.ravel(roi_diffs).reshape(-1, 1)
+            extent = [0, 1, pos_nom_v.min(), pos_nom_v.max()]
+            aspect = 'auto'
+
+            # Make the single column visually wider
+            self.ax_diff.set_box_aspect(10)
+            self.ax_diff.set_anchor('C')
+            self.ax_diff.set_xticks([])
+
+            im = self.ax_diff.imshow(color_vals,
+                               cmap='viridis',
+                               extent=extent,
+                               aspect=aspect,
+                               origin='lower')
+            cbar = self.fig.colorbar(im, ax=self.ax_diff,
+                                      fraction=0.4, pad=0.3)
+            cbar.set_label(u"RMS Difference [$\\mu$m]", fontsize=14)
+
+            self.ax_diff.set_xlabel("")
+            self.ax_diff.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
+            self.ax_diff.set_title(
+                _Title('bpm', 'heatmap', self.beamline), pad=2
+                )
+            self.ax_diff.grid(False)
+        else:
+            # 2D heatmap with extent mapping
+            h_min = np.nanmin(pos_nom_h)
+            h_max = np.nanmax(pos_nom_h)
+            v_min = np.nanmin(pos_nom_v)
+            v_max = np.nanmax(pos_nom_v)
+            extent = [h_min, h_max, v_min, v_max]
+
+            # Calculate aspect ratio to maintain proper physical proportions.
+            # Account for both physical extents and array shape to avoid
+            # distortion when physical x and y ranges differ significantly.
+            n_v, n_h = roi_diffs.shape
+            h_extent = h_max - h_min
+            v_extent = v_max - v_min
+            # aspect = (physical_y_per_pixel) / (physical_x_per_pixel)
+            aspect = ((v_extent / n_v) / (h_extent / n_h)
+                      if (h_extent > 0 and v_extent > 0) else 1)
+
+            # Use imshow for filled heatmap visualization
+            im = self.ax_diff.imshow(
+                roi_diffs, cmap='viridis', extent=extent,
+                aspect=aspect, origin='lower'
+            )
+            cbar = self.fig.colorbar(im, ax=self.ax_diff,
+                                     fraction=0.046, pad=0.04)
+            cbar.set_label(u"RMS Difference [$\\mu$m]", fontsize=14)
+
+            self.ax_diff.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)
+            self.ax_diff.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
+            self.ax_diff.set_title(
+                _Title('bpm', 'heatmap', self.beamline), pad=2
+                )
+            self.ax_diff.grid(False)
+

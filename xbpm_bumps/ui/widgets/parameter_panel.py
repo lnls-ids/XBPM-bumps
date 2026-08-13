@@ -219,6 +219,7 @@ class ParameterPanel(QWidget):
         nv = len(np.unique(coords.y))
         self.roi_h_spin.setValue(max(1, nh))
         self.roi_v_spin.setValue(max(1, nv))
+        return (nh, nv)  # Return the grid shape for reference
 
     def get_parameters(self) -> dict:
         """Extract current parameter values as a dictionary.
@@ -233,8 +234,8 @@ class ParameterPanel(QWidget):
             'beamline'   : self.beamline,
             'xbpmdist'   : self.xbpmdist_spin.value(),
             'roisize'    : [
-                int(self.roi_h_spin.value()),
                 int(self.roi_v_spin.value()),
+                int(self.roi_h_spin.value()),
                 ],
             'showblademap'     : self.blademap_check.isChecked(),
             'centralsweep'     : self.central_check.isChecked(),

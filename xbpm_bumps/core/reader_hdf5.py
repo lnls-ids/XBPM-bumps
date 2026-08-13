@@ -329,9 +329,10 @@ class HDF5FigureReconstructor:
 
     @staticmethod
     def _reconstruct_bpm_from_raw(h5_file: h5py.File,
-            analysis_grp: h5py.Group) -> "matplotlib.figure.Figure":
+                                  analysis_grp: h5py.Group
+                                  ) -> "matplotlib.figure.Figure":
         """Fallback reconstruction of BPM positions from raw_data sweeps."""
-        from .parameters import Prm
+        from .data_structure import BeamlinePrm
         from .processors import BPMProcessor
         from .config import Config
 
@@ -357,7 +358,7 @@ class HDF5FigureReconstructor:
                 "to reconstruct from raw_data"
             )
 
-        prm = Prm()
+        prm = BeamlinePrm()
         prm.beamline = beamline
         prm.section = section
         prm.bpmdist = Config.BPMDISTS.get(base_bl)
@@ -433,7 +434,7 @@ class HDF5FigureReconstructor:
         if not raw_data:
             return None
 
-        from .parameters import Prm
+        from .data_structure import BeamlinePrm as Prm
         from .processors import BPMProcessor
         from .config import Config
         from contextlib import redirect_stdout, redirect_stderr
