@@ -13,7 +13,7 @@ from datetime    import datetime, timezone
 from io          import BytesIO
 from typing      import Optional
 
-from .parameters import Prm
+from .data_structure import Prm
 from .config     import Config
 
 logger = logging.getLogger(__name__)
@@ -2241,7 +2241,7 @@ class Exporter:
                                  in ['MGN', 'MNC'] else 'A')
 
         # Store grid coordinates
-        data_keys = np.array(list(processor.data.keys()))
+        data_keys = np.array(list(processor.blade_avg.keys()))
         x_coords = np.unique(data_keys[:, 0])
         y_coords = np.unique(data_keys[:, 1])
         blade_grp.create_dataset('x_coords', data=x_coords.astype(np.float32))

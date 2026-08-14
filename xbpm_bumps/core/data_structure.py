@@ -491,17 +491,17 @@ class SweepLine:
     sfixcalc : std dev of calculated fixed coordinate
     fixfit   : values of fitted affine line to fixed coordinate
     """
+    blades   : Blades
     index    : np.ndarray
     fixed    : np.ndarray
-    blades   : Blades
     fixcalc  : np.ndarray
     sfixcalc : np.ndarray
     fixfit   : np.ndarray
 
     @classmethod
     def from_hdf5(cls,
-                        h5group: h5py.Group,
-                        dir: str) -> "SweepLine":
+                  sln_grp: h5py.Group,
+                  dir: str) -> "SweepLine":
         """Create a SweepLine instance from an HDF5 group.
         
         h5group: HDF5 group containing the central sweep data.
@@ -523,12 +523,12 @@ class SweepLine:
 
         # Assemble the SweepLine instance.
         return cls(
-            index    = h5group[f"{ind}_index"][:],
-            fixed    = h5group[f"{fix}_fix"][:],
-            fixcalc  = h5group[f"{fix}_calc"][:],
-            sfixcalc = h5group[f"s_{fix}_calc"][:],
-            fixfit   = h5group[f"{fix}_fit"][:],
-            blades   = Blades.from_hdf5(h5group)
+            index    = sln_grp[f"{ind}_index"][:],
+            fixed    = sln_grp[f"{fix}_fix"][:],
+            fixcalc  = sln_grp[f"{fix}_calc"][:],
+            sfixcalc = sln_grp[f"s_{fix}_calc"][:],
+            fixfit   = sln_grp[f"{fix}_fit"][:],
+            blades   = Blades.from_hdf5(sln_grp)
         )
 
 

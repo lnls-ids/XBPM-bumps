@@ -93,8 +93,8 @@ class HDF5FigureReconstructor:
             'blade_map'             : 'blade_figure',
             'sweeps'                : 'sweeps_figure',
             'blades_center'         : 'blades_center_figure',
-            'blades_at_sweeps'      : 'blades_center_figure',
-            'blades_sweeps'         : 'blades_center_figure',
+            'blades_at_sweeps'      : 'blades_at_sweeps_figure',
+            'blade_sweeps'          : 'blade_sweeps_figure',
             'xbpm_raw_positions'    : 'xbpm_raw_pairwise_figure',
             'xbpm_scaled_positions' : 'xbpm_scaled_pairwise_figure',
             'bpm_positions'         : 'bpm_figure',
@@ -370,7 +370,6 @@ class HDF5FigureReconstructor:
         bpm_processor = BPMProcessor(raw_data, prm)
         bpm_processor.calculate_positions()
         return bpm_processor.fig
-
 
     # @staticmethod
     # def parse_measurement_dataset(raw_grp: h5py.Group,

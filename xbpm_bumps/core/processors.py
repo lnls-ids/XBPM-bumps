@@ -9,7 +9,7 @@ from .visualizers import PositionVisualizer as PSV
 from .visualizers import SweepVisualizer as SWV
 from .visualizers import BladeCurrentVisualizer as BCV
 
-from .data_structure import BeamlinePrm, SweepData
+from .data_structure import BeamlinePrm, BladeAvgData, Prm, SweepData, SweepLine, Blades
 from .config         import Config    
 from .constants      import ROI_SIZE_V, ROI_SIZE_H, FIGDPI
 
@@ -40,26 +40,30 @@ class XBPMProcessor:
         blades_v (dict): Blade measurements along vertical center line.
     """
 
-    def __init__(self, data: dict, prm: BeamlinePrm):
+    def __init__(self,
+                 blade_avg: BladeAvgData,
+                 prm: Prm,
+                 prm_bl: BeamlinePrm,
+                 ) -> None:
         """Initialize processor with data and parameters.
 
         Args:
-            data : Measurement data dictionary.
+            blade_avg : BladeAvgData instance containing measurement data.
             prm  : Parameters dataclass instance.
         """
-        self.data     = data
-        self.prm      = prm
-        self.blades_h = None
-        self.blades_v = None
+        self.blade_avg  = blade_avg
+        self.prm        = prm
+        self.prm_bl     = prm_bl
+        self.blades_h   = None
+        self.blades_v   = None
         self._initialize_ranges()
-        self.roi_v_size = prm.roisize[0] if prm.roisize else ROI_SIZE_V
-        self.roi_h_size = prm.roisize[1] if prm.roisize else ROI_SIZE_H
+        self.roi_v_size = prm.roisize[0]
+        self.roi_h_size = prm.roisize[1]
 
     def _initialize_ranges(self) -> None:
         """Initialize horizontal and vertical sweep ranges from data keys."""
-        keys = np.array(list(self.data.keys()))
-        self.range_h = np.unique(keys[:, 0])
-        self.range_v = np.unique(keys[:, 1])
+        self.range_h = np.unique(self.blade_avg.nom.x)
+        self.range_v = np.unique(self.blade_avg.nom.y)
 
     def analyze_central_sweeps(self, show: bool = False) -> tuple:
         """Analyze blade behavior at central sweep positions.
@@ -92,52 +96,66 @@ class XBPMProcessor:
         if show:
             self._central_sweeps_show(pos_ch_v, fit_ch_v, pos_cv_h, fit_cv_h)
 
-        return (self.range_h, self.range_v, self.blades_h, self.blades_v,
-                pos_ch_v, pos_cv_h, fit_ch_v, fit_cv_h)
+        return (self.range_h, self.range_v,
+                self.blades_h, self.blades_v,
+                pos_ch_v, pos_cv_h,
+                fit_ch_v, fit_cv_h)
 
-    def _central_sweep_horizontal(self) -> tuple:
-        """Extract blade measurements along horizontal center line."""
-        return self._central_sweep_profile(
-            self.range_h,
-            lambda jj: (jj, 0),
-            lambda to, ti, bi, bo:
-                ((to + ti) - (bo + bi)) / ((to + ti) + (bo + bi)),
-            "horizontal",
-        )
+    def _central_sweep_horizontal(self) -> "SweepLine":
+        mask = np.isclose(self.blade_avg.nom.y, 0)
+        idx  = np.argsort(self.blade_avg.nom.x[mask])
+        bld  = self.blade_avg.blades
+        to = bld.to[mask][idx]
+        ti = bld.ti[mask][idx]
+        bi = bld.bi[mask][idx]
+        bo = bld.bo[mask][idx]
+        s_top = to + ti
+        s_bot = bo + bi
+        pos   = (s_top - s_bot) / (s_top + s_bot)
+        fit, cov  = np.polyfit(self.range_h, pos, deg=1, cov=True)
+        sa, sb = np.sqrt(np.diag(cov))
+        yfit = np.polyval(fit, self.range_h)
+        yerr = np.sqrt((self.range_h * sa)**2 + sb**2)
+        blades = Blades(to=to, ti=ti, bi=bi, bo=bo,
+                        sto=bld.sto[mask][idx],
+                        sti=bld.sti[mask][idx],
+                        sbi=bld.sbi[mask][idx],
+                        sbo=bld.sbo[mask][idx])
+        return SweepLine(index=self.range_h,
+                         fixed=self.blade_avg.nom.y[mask][idx],
+                         blades=blades,
+                         fixcalc=pos,
+                         fixfit=yfit,
+                         sfixcalc=yerr,
+                         )
 
-    def _central_sweep_vertical(self) -> tuple:
-        """Extract blade measurements along vertical center line."""
-        return self._central_sweep_profile(
-            self.range_v,
-            lambda jj: (0, jj),
-            lambda to, ti, bi, bo:
-                ((to + bo) - (ti + bi)) / ((to + bo) + (ti + bi)),
-            "vertical",
-        )
-
-    def _central_sweep_profile(self, sweep_range, key_builder,
-                               position_formula, axis_name: str) -> tuple:
-        """Extract central-sweep blade profiles and fit the position curve."""
-        try:
-            to = np.array([self.data[key_builder(jj)][0]
-                           for jj in sweep_range])
-            ti = np.array([self.data[key_builder(jj)][1]
-                           for jj in sweep_range])
-            bi = np.array([self.data[key_builder(jj)][2]
-                           for jj in sweep_range])
-            bo = np.array([self.data[key_builder(jj)][3]
-                           for jj in sweep_range])
-            blades = {"to": to, "ti": ti, "bi": bi, "bo": bo}
-        except Exception as err:
-            print(f"\n WARNING: {axis_name} sweeping interrupted,"
-                  f" data grid may be incomplete: {err}")
-            blades = {bl: np.array([[1., 0] for _ in sweep_range])
-                      for bl in ["to", "ti", "bi", "bo"]}
-            return None, None, blades
-
-        pos = position_formula(to, ti, bi, bo)
-        fit = np.polyfit(sweep_range, pos, deg=1)
-        return pos, fit, blades
+    def _central_sweep_vertical(self) -> "SweepLine":
+        mask = np.isclose(self.blade_avg.nom.x, 0)
+        idx  = np.argsort(self.blade_avg.nom.y[mask])
+        bld  = self.blade_avg.blades
+        to = bld.to[mask][idx]
+        ti = bld.ti[mask][idx]
+        bi = bld.bi[mask][idx]
+        bo = bld.bo[mask][idx]
+        s_left  = to + bo
+        s_right = ti + bi
+        pos   = (s_left - s_right) / (s_left + s_right)
+        fit, cov  = np.polyfit(self.range_v, pos, deg=1, cov=True)
+        sa, sb = np.sqrt(np.diag(cov))
+        yfit = np.polyval(fit, self.range_v)
+        yerr = np.sqrt((self.range_v * sa)**2 + sb**2)
+        blades = Blades(to=to, ti=ti, bi=bi, bo=bo,
+                        sto=bld.sto[mask][idx],
+                        sti=bld.sti[mask][idx],
+                        sbi=bld.sbi[mask][idx],
+                        sbo=bld.sbo[mask][idx])
+        return SweepLine(index=self.range_v,
+                         fixed=self.blade_avg.nom.x[mask][idx],
+                         blades=blades,
+                         fixcalc=pos,
+                         fixfit=yfit,
+                         sfixcalc=yerr,
+                         )
 
     def _central_sweeps_show(self, pos_ch_v: np.ndarray, fit_ch_v: np.ndarray,
                              pos_cv_h: np.ndarray, fit_cv_h: np.ndarray):
@@ -158,7 +176,7 @@ class XBPMProcessor:
         )
 
         if self.prm.outputfile:
-            outfile = f"xbpm_sweeps_{self.prm.beamline}.png"
+            outfile = f"xbpm_sweeps_{self.prm_bl.beamline}.png"
             fig.savefig(outfile, dpi=FIGDPI)
             print(f" Figure of central sweeps saved to file {outfile}.\n")
 
@@ -177,11 +195,11 @@ class XBPMProcessor:
         fig = BCV.plot_blade_center_from_dicts(
             self.blades_h, self.blades_v,
             self.range_h, self.range_v,
-            beamline=self.prm.beamline
+            beamline=self.prm_bl.beamline
             )
 
         if self.prm.outputfile:
-            outfile = f"central_sweep_{self.prm.beamline}.png"
+            outfile = f"central_sweep_{self.prm_bl.beamline}.png"
             fig.savefig(outfile, dpi=FIGDPI)
             print("\n Figure of blades behaviour at central sweeps"
                   f" saved to file {outfile}.\n")
@@ -280,15 +298,15 @@ class XBPMProcessor:
         # Build title map for visualizer with formatted titles from registry.
         title_map = {
             'total'   : _Title('xbpm_positions', 'total',
-                               beamline=self.prm.beamline,
+                               beamline=self.prm_bl.beamline,
                                rort=transform,
                                calc_type=calc_type),
             'roi'     : _Title('xbpm_positions', 'roi',
-                               beamline=self.prm.beamline,
+                               beamline=self.prm_bl.beamline,
                                rort=transform,
                                calc_type=calc_type),
             'heatmap' : _Title('xbpm_positions', 'heatmap',
-                               beamline=self.prm.beamline,
+                               beamline=self.prm_bl.beamline,
                                rort=transform,
                                calc_type=calc_type),
         }
@@ -360,7 +378,7 @@ class XBPMProcessor:
         # Keys are always derived from the raw scan grid (data.keys() angles ×
         # xbpmdist) so they are regular and sortable regardless of whether the
         # optimisation reference is the nominal grid or BPM-measured positions.
-        gridlist  = np.array(list(self.data.keys()))
+        gridlist  = np.array(list(self.blade_avg.keys()))
         grid_lin  = np.unique(gridlist[:, 1])   # sorted y scan angles
         grid_col  = np.unique(gridlist[:, 0])   # sorted x scan angles
         dist      = self.prm.xbpmdist
@@ -589,7 +607,7 @@ class XBPMProcessor:
     def beam_position_pair(self, supmat: np.ndarray) -> dict:
         """Calculate beam position from blades' currents (pairwise)."""
         positions = dict()
-        for pos, bld in self.data.items():
+        for pos, bld in self.blade_avg.items():
             dsps = supmat @ bld[:, 0]
             positions[pos] = np.array([dsps[0] / dsps[1], dsps[2] / dsps[3]])
         return positions
@@ -768,7 +786,7 @@ class XBPMProcessor:
 
     def data_parse(self) -> tuple:
         """Extract each blade's data from whole data dict into arrays."""
-        dk = np.array(list(self.data.keys()))
+        dk = np.array(list(self.blade_avg.keys()))
 
         try:
             nh = np.unique(dk[:, 0])
@@ -790,19 +808,19 @@ class XBPMProcessor:
                 ilin = ngrid[0] - ii - 1
                 icol = jj
 
-                if key not in self.data.keys():
+                if key not in self.blade_avg.keys():
                     break
 
                 try:
-                    to[ilin, icol]  = self.data[key][0, 0]
-                    ti[ilin, icol]  = self.data[key][1, 0]
-                    bi[ilin, icol]  = self.data[key][2, 0]
-                    bo[ilin, icol]  = self.data[key][3, 0]
+                    to[ilin, icol]  = self.blade_avg[key][0, 0]
+                    ti[ilin, icol]  = self.blade_avg[key][1, 0]
+                    bi[ilin, icol]  = self.blade_avg[key][2, 0]
+                    bo[ilin, icol]  = self.blade_avg[key][3, 0]
 
-                    sto[ilin, icol] = self.data[key][0, 1]
-                    sti[ilin, icol] = self.data[key][1, 1]
-                    sbi[ilin, icol] = self.data[key][2, 1]
-                    sbo[ilin, icol] = self.data[key][3, 1]
+                    sto[ilin, icol] = self.blade_avg[key][0, 1]
+                    sti[ilin, icol] = self.blade_avg[key][1, 1]
+                    sbi[ilin, icol] = self.blade_avg[key][2, 1]
+                    sbo[ilin, icol] = self.blade_avg[key][3, 1]
                 except Exception as err:
                     print(f"\n WARNING, when trying to parse blade data: {err}"
                           f"\n nominal position: {err},"

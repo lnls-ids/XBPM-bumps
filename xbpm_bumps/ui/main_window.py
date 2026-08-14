@@ -46,7 +46,7 @@ class XBPMMainWindow(QMainWindow):
     ANALYSIS_SECTION_TITLES = {
         'positions'       : 'Positions',
         'sweep_positions' : 'Sweep Positions',
-        'blades_sweeps'   : 'Blades at Sweeps',
+        'blade_sweeps'    : 'Blades at Sweeps',
         'bpm'             : 'BPM',
     }
 
@@ -1303,7 +1303,7 @@ class XBPMMainWindow(QMainWindow):
         if 'blade map' in text:
             return 'none'
         if 'blades at' in text or 'blades at sweeps' in text:
-            return 'blades_sweeps'
+            return 'blade_sweeps'
         if ('positions along sweep' in text or
             'positions along sweeps' in text):
             return 'sweep_positions'
@@ -1572,7 +1572,7 @@ class XBPMMainWindow(QMainWindow):
                     blades_lines.append(f"  * {label} {blade}:")
                     blades_lines.append("   " + ", ".join(parts))
 
-        return {'blades_sweeps': blades_lines} if blades_lines else {}
+        return {'blade_sweeps': blades_lines} if blades_lines else {}
 
     def _format_bpm_stats_section(self) -> dict[str, list[str]]:
         """Format BPM statistics metadata section."""
