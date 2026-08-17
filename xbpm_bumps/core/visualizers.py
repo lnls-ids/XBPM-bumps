@@ -9,6 +9,7 @@ from .constants import FIGDPI
 from .config import Config
 from .data_structure import BPMAnalysis
 from .data_structure import BeamlinePrm
+from .data_structure import SweepLine
 
 _Title = Config.get_plot_title   # shorthand used throughout this module
 
@@ -725,12 +726,13 @@ class SweepVisualizer:
     and readers._reconstruct_sweeps().
     """
     @staticmethod
-    def plot_from_arrays(range_h: np.ndarray, range_v: np.ndarray,
-                         pos_h: np.ndarray, pos_v: np.ndarray,
-                         fit_h: np.ndarray = None, fit_v: np.ndarray = None,
-                         fit_h_line: np.ndarray = None,
-                         fit_v_line: np.ndarray = None,
-                         xbpm_dist: float = 1.0, figsize: tuple = (12, 5)):
+    def plot_from_arrays(
+        sweepline_h: SweepLine,
+        sweepline_v: SweepLine,
+        nom_pos_h: np.ndarray,
+        xbpm_dist: float = 1.0,
+        figsize: tuple = (12, 5)
+        ) -> "matplotlib.figure.Figure":
         """Create sweep figure from numpy arrays (position reconstruction path).
 
         This is used when sweeps data is stored as pre-calculated positions
@@ -749,47 +751,39 @@ class SweepVisualizer:
         Returns:
             matplotlib.figure.Figure
         """
-        # fig, axes = plt.subplots(nrows=1, ncols=2, figsize=figsize)
-
+        # Scale for the beamline (source-XBPM distance).
         fig, (axh, axv) = plt.subplots(nrows=1, ncols=2, figsize=figsize)
 
-        # Horizontal sweep plot
-        if range_h is not None and pos_h is not None:
-            x_vals = range_h * xbpm_dist
-            y_vals = pos_h * xbpm_dist
+        if sweepline_h is not None:
+            nom_pos_h   = xbpm_dist * sweepline_h.index
+            calc_pos_v  = xbpm_dist * sweepline_h.calc_pos
+            fit_pos_v   = xbpm_dist * sweepline_h.fit_pos
+            # fit_pos_err = xbpm_dist * sweepline_h.fit_pos_err
 
-            axh.plot(x_vals, y_vals, 'o-', label="H sweep", zorder=2)
-
-            if fit_h_line is not None:
-                fit_line = fit_h_line * xbpm_dist
-                axh.plot(x_vals, fit_line, '^-', label="H fit", zorder=3)
-            elif fit_h is not None:
-                fit_line = (fit_h[0] * range_h + fit_h[1]) * xbpm_dist
-                axh.plot(x_vals, fit_line, '^-', label="H fit", zorder=3)
-
+            axh.plot(nom_pos_h, calc_pos_v, 'o-', label="H calc", zorder=2)
+            axh.plot(nom_pos_h, fit_pos_v,  '^-', label="H fit", zorder=3)
+            # axh.errorbar(nom_pos_h, fit_pos_v, fit_pos_err,
+            #              '^-', label="H fit")
             axh.set_xlabel("$x$ [$\\mu$m]")
             axh.set_ylabel("$y$ [$\\mu$m]")
-            axh.set_title(_Title('sweeps', 'h'))
+            axh.set_title(_Title('sweeps', 'H'))
             axh.grid(True)
             axh.legend()
 
-        # Vertical sweep plot
-        if range_v is not None and pos_v is not None:
-            x_vals = pos_v * xbpm_dist
-            y_vals = range_v * xbpm_dist
 
-            axv.plot(x_vals, y_vals, 'o-', label="V sweep", zorder=2)
+        if sweepline_v is not None:
+            nom_pos_v   = xbpm_dist * sweepline_v.index
+            calc_pos_h  = xbpm_dist * sweepline_v.calc_pos
+            fit_pos_h   = xbpm_dist * sweepline_v.fit_pos
+            # fit_pos_err = xbpm_dist * sweepline_v.fit_pos_err
 
-            if fit_v_line is not None:
-                fit_line = fit_v_line * xbpm_dist
-                axv.plot(fit_line, y_vals, '^-', label="V fit", zorder=3)
-            elif fit_v is not None:
-                fit_line = (fit_v[0] * range_v + fit_v[1]) * xbpm_dist
-                axv.plot(fit_line, y_vals, '^-', label="V fit", zorder=3)
-
+            axv.plot(nom_pos_v, calc_pos_h, 'o-', label="V calc", zorder=2)
+            axv.plot(nom_pos_v, fit_pos_h,  '^-', label="V fit", zorder=3)
+            # axv.errorbar(nom_pos_h, fit_pos_v, fit_pos_err,
+            #              '^-', label="V fit")
             axv.set_xlabel("$x$ [$\\mu$m]")
             axv.set_ylabel("$y$ [$\\mu$m]")
-            axv.set_title(_Title('sweeps', 'v'))
+            axv.set_title(_Title('sweeps', 'V'))
             axv.grid(True)
             axv.legend()
 

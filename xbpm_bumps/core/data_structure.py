@@ -9,6 +9,7 @@ import h5py
 import numpy as np
 
 from xbpm_bumps.core.config import Config
+from xbpm_bumps.core.processors import XBPMProcessor
 
 # Import DataReader for canonical _extract_beamlines
 # from xbpm_bumps.core.readers import DataReader
@@ -299,7 +300,7 @@ class BPMRawData:
             )
     
         descr = bpm_grp.attrs["Description"]
-        pos  = Positions.from_hdf5(bpm_grp)
+        pos   = Positions.from_hdf5(bpm_grp)
         return cls(descr=descr, pos=pos)
 
 
@@ -365,47 +366,139 @@ class SweepData:
 class BeamlineRawData:
     """Container for all sweep data and associated metadata for a beamline.
     
-    sweeps: List of SweepData instances
-    blade_avg: BladeAvgData instance
+    metadata  : Metadata info for raw_data group. 
+    sweeps    : List of SweepData instances
+    blade_avg : BladeAvgData instance
     """
     metadata   : dict
-    sweeps     : dict[int, SweepData] = field(default_factory=dict)
+    sweeps_bld : dict[int, BladeRawData] = field(default_factory=dict)
+    sweeps_bpm : dict[int, BPMRawData] = field(default_factory=dict)
     blade_avg  : BladeAvgData | None  = None
 
     @classmethod
     def from_hdf5(cls,
-                        raw_grp  : h5py.Group,
-                        beamline : str) -> "BeamlineRawData":
+                  raw_grp  : h5py.Group,
+                  beamline : str) -> "BeamlineRawData":
         """Extract raw data from the a raw_data HDF5 group."""
+        # Group metadata.
         kwargs = dict(metadata=dict(raw_grp.attrs.items()))
 
+        # Run through all stored data.
         sweeps = {}
         for key, data in raw_grp.items():
-            # Sweep data.
-            if key.startswith('sweep_'):
-                # Extract sweep number
-                num         = int(key.split('_')[1])
-                sweeps[num] = SweepData.from_hdf5(swp_grp=data,
-                                                  beamline=beamline)
-
             # Blade averages.
-            elif key == "blade_averages":
+            if key == "blade_averages":
                 # Blade average data is a numpy array structure, not keyed.
                 kwargs["blade_avg"] = BladeAvgData.from_hdf5(
                     avg_grp=data
+                    )
+
+            # Sweep data.
+            elif key.startswith('sweep_'):
+                # Extract sweep number
+                num         = int(key.split('_')[1])
+                sweeps[num] = SweepData.from_hdf5(
+                    swp_grp=data, beamline=beamline
                     )
 
             else:
                 print(f" WARNING: Unknown key '{key}'"
                       f" in beamline '{beamline}'. Skipping.")
 
-        kwargs["sweeps"] = sweeps
+        # Build structures for blade and BPM data separately.
+        blds, bpms = {}, {}
+        for key, val in sweeps.items():
+            blds[key] = val.blades
+            bpms[key] = val.bpm
+        kwargs["sweeps_bld"] = blds
+        kwargs["sweeps_bpm"] = bpms
+
         return cls(**kwargs)
 
 
 #
 # Structures for data analysis.
 #
+
+@dataclass
+class RMSStatistics:
+    """Computed RMS statistics between nominal and measured data."""
+    h      : np.ndarray
+    v      : np.ndarray
+    t      : np.ndarray
+
+    min_h  : float
+    max_h  : float
+    min_v  : float
+    max_v  : float
+
+    mean_h : float
+    mean_v : float
+    mean_t : float
+
+    @classmethod
+    def compute(cls,
+                nom_x : np.ndarray,
+                nom_y : np.ndarray,
+                meas_x : np.ndarray,
+                meas_y : np.ndarray
+                ) -> "RMSStatistics":
+        rms_all = XBPMProcessor.calculate_grid_stats(
+            nom_x, nom_y, meas_x, meas_y
+        )
+        rms = {
+            "h"      : rms_all['rms_h'],
+            "v"      : rms_all['rms_v'],
+            "t"      : rms_all['rms_t'],
+            "min_h"  : rms_all['rms_min_h'],
+            "max_h"  : rms_all['rms_max_h'],
+            "min_v"  : rms_all['rms_min_v'],
+            "max_v"  : rms_all['rms_max_v'],
+            "mean_h" : rms_all['rms_mean_h'],
+            "mean_v" : rms_all['rms_mean_v'],
+            "mean_t" : rms_all['rms_mean_t'],
+        }
+        return cls(**rms)
+
+@dataclass
+class RMSGridStatistics:
+    """Statistics calculated at a given ROI."""
+    # Full grid statistics.
+    all : RMSStatistics
+    roi : RMSStatistics
+
+    roi_bounds: ROISlice | None = None
+
+    @classmethod
+    def compute(cls,
+                nom_x   : np.ndarray,
+                nom_y   : np.ndarray,
+                meas_x  : np.ndarray,
+                meas_y  : np.ndarray,
+                roislice : ROISlice
+                ) -> "RMSGridStatistics":
+        """Calculate RMS statistics from position differences in ROI."""
+        rms_all = RMSStatistics.compute(nom_x, nom_y, meas_x, meas_y)
+
+        # Statistics at ROI: select data from slices and calculate RMS values.
+        sl_v, sl_h = roislice.sl_v, roislice.sl_h
+        nom_roi_x  = nom_x[sl_v, sl_h]
+        nom_roi_y  = nom_y[sl_v, sl_h]
+        meas_roi_x = meas_x[sl_v, sl_h]
+        meas_roi_y = meas_y[sl_v, sl_h]
+        rms_roi = RMSStatistics.compute(
+            nom_roi_x,
+            nom_roi_y,
+            meas_roi_x,
+            meas_roi_y
+            )
+
+        return cls(
+            all=rms_all,
+            roi=rms_roi,
+            roi_bounds=roislice
+        )
+
 
 @dataclass
 class BPMAnalysis:
@@ -443,7 +536,7 @@ class BPMAnalysis:
         from .processors import BPMProcessor as BPMP
         bpm_proc = BPMP(
             rawdata=bl_data.raw_data,
-            prm=bl_data.prm,
+            prm_bml=bl_data.prm,
             sweeps=bl_data.raw_data.sweeps,
         )
 
@@ -483,19 +576,23 @@ class BladeMap:
 class SweepLine:
     """Container for central sweep data.
     
-    index    : variable coordinate
-    fixed    : fixed coordinate
-    blades   : values of the blades along the central sweep
-    fixcalc  : calculated values for the fixed coordinate
-    sfixcalc : std dev of calculated fixed coordinate
-    fixfit   : values of fitted affine line to fixed coordinate
+    A sweep is performed along a line (horizontal or vertical) through the center of the blade map. It is supposed that there is no variation in the other direction, but distortions of measurements create an undesired slope, to be evaluated. The sweep data is then used to analyze the behavior of the blades along the sweep line, so the variation in the fixed coordinate is captured.
+
+    blades       : values of the blades along the central sweep
+    index        : variable coordinate values along the central sweep
+                (x for horizontal sweep, y for vertical sweep)
+    fixed        : fixed coordinate values along the central sweep
+                (h: x ~ 0 for vertical sweep, v: y ~ 0 for horizontal sweep)
+    calc_fix     : calculated values for the fixed coordinate
+    calc_fix_err : std dev of calculated fixed coordinate
+    fit_fix : values of fitted affine line to fixed coordinate
     """
-    blades   : Blades
-    index    : np.ndarray
-    fixed    : np.ndarray
-    fixcalc  : np.ndarray
-    sfixcalc : np.ndarray
-    fixfit   : np.ndarray
+    blades      : Blades
+    index       : np.ndarray
+    fixed       : np.ndarray
+    calc_pos    : np.ndarray
+    fit_pos     : np.ndarray
+    fit_pos_err : np.ndarray
 
     @classmethod
     def from_hdf5(cls,
@@ -516,18 +613,18 @@ class SweepLine:
             fix = 'x'
         else:
             raise ValueError(
-                " Invalid direction. Use 'h' for horizontal"
-                " or 'v' for vertical."
+                " Invalid direction."
+                " Use 'h' for horizontal or 'v' for vertical."
             )
 
         # Assemble the SweepLine instance.
         return cls(
-            index    = sln_grp[f"{ind}_index"][:],
-            fixed    = sln_grp[f"{fix}_fix"][:],
-            fixcalc  = sln_grp[f"{fix}_calc"][:],
-            sfixcalc = sln_grp[f"s_{fix}_calc"][:],
-            fixfit   = sln_grp[f"{fix}_fit"][:],
-            blades   = Blades.from_hdf5(sln_grp)
+            blades=Blades.from_hdf5(sln_grp),
+            index=sln_grp[f"{ind}_index"][:],
+            fixed=sln_grp[f"{fix}_fix"][:],
+            calc_pos=sln_grp[f"{fix}_calc"][:],
+            fit_pos=sln_grp[f"{fix}_fit"][:],
+            fit_pos_err=sln_grp[f"s_{fix}_fit"][:],
         )
 
 
