@@ -803,7 +803,8 @@ class XBPMProcessor:
 
         # Check for valid points, since the sweeping might be interrupted.
         valid  = np.isfinite(diff_x2) & np.isfinite(diff_y2)
-        if int(np.count_nonzero(valid)) == 0:
+        nsites = int(np.count_nonzero(valid))
+        if nsites == 0:
             print("\n WARNING: no valid BPM points found for RMS estimation.")
             rms_stats = {
                 key : np.nan
@@ -814,10 +815,14 @@ class XBPMProcessor:
                     ]}
             return rms_stats
 
+        # Valid points only.
+        vld_diff_x2 = diff_x2[valid]
+        vld_diff_y2 = diff_y2[valid]
+
         # Absolute values of differences.
-        rms_h = np.sqrt(diff_x2)
-        rms_v = np.sqrt(diff_y2)
-        rms_t = np.sqrt(diff_x2 + diff_y2)
+        rms_h = np.sqrt(vld_diff_x2)
+        rms_v = np.sqrt(vld_diff_y2)
+        rms_t = np.sqrt(vld_diff_x2 + vld_diff_y2)
 
         # RMS minimum and maximum values.
         rms_max_h = np.max(rms_h)
@@ -826,11 +831,17 @@ class XBPMProcessor:
         rms_min_v = np.min(rms_v)
 
         # RMS global estimates.
-        rms_mean_h = np.sqrt(np.mean(diff_x2))
-        rms_mean_v = np.sqrt(np.mean(diff_y2))
-        rms_mean_t = np.sqrt(np.mean(diff_x2 + diff_y2))
+        rms_mean_h = np.sqrt(np.mean(vld_diff_x2))
+        rms_mean_v = np.sqrt(np.mean(vld_diff_y2))
+        rms_mean_t = np.sqrt(np.mean(vld_diff_x2 + vld_diff_y2))
 
-        return {
+        nsites_total = int(diff_x2.size)
+        if nsites < nsites_total:
+            print("\n WARNING: sweeping looks incomplete, no ROI was defined"
+              f" ({nsites} valid sites, out of {nsites_total}"
+                  " in total). Skipping ROI analysis.")
+
+        rms = {
             'h'      : rms_h,
             'v'      : rms_v,
             't'      : rms_t,
@@ -842,6 +853,7 @@ class XBPMProcessor:
             'mean_v' : rms_mean_v,
             'mean_t' : rms_mean_t,
         }
+        return rms
 
     def data_parse(self) -> tuple:
         """Extract each blade's data from whole data dict into arrays."""
@@ -902,7 +914,7 @@ class BPMProcessor:
                  ) -> None:
         """Store raw BPM/XBPM dataset and parameters for later processing."""
         self.rawdata = rawdata
-        self.sweeps  = rawdata.sweeps
+        self.sweeps  = rawdata.sweeps_bpm
         self.prm_bml = prm_bml
 
 
@@ -930,7 +942,12 @@ class BPMProcessor:
         self._positions_from_tangents()
 
         # Estimate standard deviations.
-        self.rms_diff_all, self.rms_diff_roi = self.std_dev_estimate()
+        self.rms_grid_stats = RMSGridStatistics(
+            self.nom_x,  self.nom_y,
+            self.meas_x, self.meas_y,
+            self.prm_bml.roi
+            )
+        # self.rms_diff_all, self.rms_diff_roi = self.std_dev_estimate()
 
         # Extract ROI data for closeup view.
         self._extract_roi_positions()
@@ -1083,181 +1100,6 @@ class BPMProcessor:
 
         return (offset_x, offset_x_nxt, offset_y, offset_y_nxt)
 
-    def std_dev_estimate(self,
-                         nom_x  : np.array,
-                         nom_y  : np.array,
-                         meas_x : np.array,
-                         meas_y : np.array
-                         ) -> RMSGridStatistics:
-        """Estimate RMS deviations between measured and nominal positions.
-        
-        Uses:
-            self.xnom: Nominal horizontal positions grid.
-            self.ynom: Nominal vertical positions grid.
-            self.xpos: Measured horizontal positions grid.
-            self.ypos: Measured vertical positions grid.
-
-        Returns:
-            Tuple (rms_stats, roi_diffs) where:
-            rms_stats: Dictionary with overall RMS statistics for all sites.
-            roi_diffs: 2D array of differences at ROI or None if ROI
-                unavailable.
-        """
-        # Total differences (all sites).
-        nv, nh = nom_x.shape[0], nom_x.shape[1]
-        nsites_total = nv * nh
-
-        # Calculate differences and filter valid (finite) points.
-        diff_h = nom_x - meas_x
-        diff_v = nom_y - meas_y
-        valid  = np.isfinite(diff_h) & np.isfinite(diff_v)
-
-        # Check if any valid points are available for RMS estimation.
-        nsites = int(np.count_nonzero(valid))
-        if nsites == 0:
-            print("\n WARNING: no valid BPM points found for RMS estimation.")
-            rms_stats = {key : np.nan for key in [
-                'sigma_h', 'sigma_v', 'sigma_total',
-                'diff_min_h', 'diff_min_v', 'diff_max_h', 'diff_max_v'
-                ]}
-            rms_stats['roi_available'] = False
-            return rms_stats, None
-
-        # Calculate statistics using only valid points to avoid NaN/Inf issues.
-        diff_h_valid = diff_h[valid]
-        diff_v_valid = diff_v[valid]
-
-        diff_h_min = np.abs(np.min(diff_h_valid))
-        diff_h_max = np.abs(np.max(diff_h_valid))
-        sig2_h     = np.mean(diff_h_valid**2)
-
-        diff_v_min = np.abs(np.min(diff_v_valid))
-        diff_v_max = np.abs(np.max(diff_v_valid))
-        sig2_v     = np.mean(diff_v_valid**2)
-
-        sig_h      = np.sqrt(sig2_h)
-        sig_v      = np.sqrt(sig2_v)
-        sig_tot    = np.sqrt(sig2_h + sig2_v)
-
-        # print("Sigmas:\n"
-        #       f"   (all sites)     H = {sig_h:.4f}\n"
-        #       f"   (all sites)     V = {sig_v:.4f},\n"
-        #       f"   (all sites) total = {sig_tot:.4f}\n"
-        #       "\n  Maximum difference:\n"
-        #       f"   (all sites) H = {diff_h_max:.4f}\n"
-        #       f"   (all sites) V = {diff_v_max:.4f},\n"
-        #       "\n  Minimum difference:\n"
-        #       f"   (all sites) H = {diff_h_min:.4f}\n"
-        #       f"   (all sites) V = {diff_v_min:.4f},\n"
-        #       )
-
-        # Check whether the sweeping is complete.
-        if nsites < nsites_total:
-            print("\n WARNING: sweeping looks incomplete, no ROI was defined"
-              f" ({nsites} valid sites, out of {nsites_total}"
-                  " in total). Skipping ROI analysis.")
-            rms_stats = RMSGridStatistics(
-                rms_all_h=sig_h,
-                rms_all_v=sig_v,
-                rms_total=sig_tot,
-            )
-
-            
-            rms_stats = {
-                'sigma_h'       : sig_h,
-                'sigma_v'       : sig_v,
-                'sigma_total'   : sig_tot,
-                'diff_min_h'    : diff_h_min,
-                'diff_min_v'    : diff_v_min,
-                'diff_max_h'    : diff_h_max,
-                'diff_max_v'    : diff_v_max,
-                'roi_available' : False,
-            }
-            return rms_stats, None
-
-        # Differences at ROI.
-        rows, cols = self.prm_bml.roi.update(
-            self.nom_x.shape,
-            (self.roisize_v, self.roisize_h)
-            )
-        nom_roi_x  = self.nom_x[rows, cols]
-        nom_roi_y  = self.nom_y[rows, cols]
-        meas_roi_x = self.meas_x[rows, cols]
-        meas_roi_y = self.meas_y[rows, cols]
-
-        # Calculate differences and filter valid (finite) points in ROI.
-        diff_h_roi = np.abs(nom_roi_x - meas_roi_x)
-        diff_v_roi = np.abs(nom_roi_y - meas_roi_y)
-        valid_roi  = np.isfinite(diff_h_roi) & np.isfinite(diff_v_roi)
-        nroi_valid = int(np.count_nonzero(valid_roi))
-        if nroi_valid == 0:
-            print("\n WARNING: no valid ROI points found."
-                  " Skipping ROI analysis.")
-            rms_stats = RMSGridStatistics(
-                rms_all_h=sig_h,
-                rms_all_v=sig_v,
-                rms_total=sig_tot,
-            )
-
-            
-            rms_stats = {
-                'sigma_h'       : sig_h,
-                'sigma_v'       : sig_v,
-                'sigma_total'   : sig_tot,
-                'diff_min_h'    : diff_h_min,
-                'diff_min_v'    : diff_v_min,
-                'diff_max_h'    : diff_h_max,
-                'diff_max_v'    : diff_v_max,
-                'roi_available' : False,
-            }
-            return rms_stats, None
-
-        # Calculate total differences in ROI for visualization.
-        sig2_v_roi  = np.mean((diff_v_roi[valid_roi])**2)
-        sig2_h_roi  = np.mean((diff_h_roi[valid_roi])**2)
-        diff_roi    = np.sqrt(diff_h_roi**2 + diff_v_roi**2)
-
-        roi_sig_h   = np.sqrt(sig2_h_roi)
-        roi_sig_v   = np.sqrt(sig2_v_roi)
-        roi_sig_tot = np.sqrt(sig2_h_roi + sig2_v_roi)
-
-        diff_h_min = np.abs(np.min(diff_h_valid))
-        diff_h_max = np.abs(np.max(diff_h_valid))
-        sig2_h     = np.mean(diff_h_valid**2)
-
-        diff_v_min = np.abs(np.min(diff_v_valid))
-        diff_v_max = np.abs(np.max(diff_v_valid))
-        sig2_v     = np.mean(diff_v_valid**2)
-
-        # print("  Differences in ROI\n"
-        #       f"   (x in [{np.min(nom_roi_x)}, {np.max(nom_roi_x)}];"
-        #       f"  y in [{np.min(nom_roi_y)}, {np.max(nom_roi_y)}])\n"
-        #       f"       H = {roi_sig_h:.4f}\n"
-        #       f"       V = {roi_sig_v:.4f},\n"
-        #       f"   total = {roi_sig_tot:.4f}")
-
-        rms_stats = {
-            'sigma_h'         : sig_h,
-            'sigma_v'         : sig_v,
-            'sigma_total'     : sig_tot,
-            'diff_min_h'      : diff_h_min,
-            'diff_min_v'      : diff_v_min,
-            'diff_max_h'      : diff_h_max,
-            'diff_max_v'      : diff_v_max,
-            'roi_available'   : True,
-            'roi_sigma_h'     : roi_sig_h,
-            'roi_sigma_v'     : roi_sig_v,
-            'roi_sigma_total' : roi_sig_tot,
-            'roi_bounds'      : {
-                'x_min' : float(np.min(nom_roi_x)),
-                'x_max' : float(np.max(nom_roi_x)),
-                'y_min' : float(np.min(nom_roi_y)),
-                'y_max' : float(np.max(nom_roi_y)),
-            },
-        }
-
-        return rms_stats, diff_roi
-
     def _extract_roi_positions(self) -> tuple:
         """Extract ROI positions from full grid for closeup view.
 
@@ -1286,3 +1128,78 @@ class BPMProcessor:
             if self.nom_x.size else None)
 
 
+def calculate_grid_stats(
+    nom_x   : np.ndarray,
+    nom_y   : np.ndarray,
+    meas_x  : np.ndarray,
+    meas_y  : np.ndarray,
+    ) -> "RMSGridStatistics":
+    """Calculate RMS statistics from squared position differences in ROI.
+
+    Args:
+        nom_x  : nominal values in x direction
+        nom_y  : nominal values in y direction
+        meas_x : measured values in x direction
+        meas_y : measured values in y direction
+
+    Returns:
+        dict: Statistics with rms_h, rms_v, rms_total,
+                rms_max_h, rms_min_h, rms_max_v, rms_min_v.
+    """
+    # Squared differences.
+    diff_x2 = (meas_x - nom_x) ** 2
+    diff_y2 = (meas_y - nom_y) ** 2
+
+    # Check for valid points, since the sweeping might be interrupted.
+    valid  = np.isfinite(diff_x2) & np.isfinite(diff_y2)
+    nsites = int(np.count_nonzero(valid))
+    if nsites == 0:
+        print("\n WARNING: no valid BPM points found for RMS estimation.")
+        rms_stats = {
+            key : np.nan
+            for key in [
+                'h', 'v', 't',
+                'min_h', 'max_h', 'min_v', 'max_v',
+                'mean_h', 'mean_v', 'mean_t',
+                ]}
+        return rms_stats
+
+    # Valid points only.
+    vld_diff_x2 = diff_x2[valid]
+    vld_diff_y2 = diff_y2[valid]
+
+    # Absolute values of differences.
+    rms_h = np.sqrt(vld_diff_x2)
+    rms_v = np.sqrt(vld_diff_y2)
+    rms_t = np.sqrt(vld_diff_x2 + vld_diff_y2)
+
+    # RMS minimum and maximum values.
+    rms_max_h = np.max(rms_h)
+    rms_min_h = np.min(rms_h)
+    rms_max_v = np.max(rms_v)
+    rms_min_v = np.min(rms_v)
+
+    # RMS global estimates.
+    rms_mean_h = np.sqrt(np.mean(vld_diff_x2))
+    rms_mean_v = np.sqrt(np.mean(vld_diff_y2))
+    rms_mean_t = np.sqrt(np.mean(vld_diff_x2 + vld_diff_y2))
+
+    nsites_total = int(diff_x2.size)
+    if nsites < nsites_total:
+        print("\n WARNING: sweeping looks incomplete, no ROI was defined"
+            f" ({nsites} valid sites, out of {nsites_total}"
+                " in total). Skipping ROI analysis.")
+
+    rms = {
+        'h'      : rms_h,
+        'v'      : rms_v,
+        't'      : rms_t,
+        'min_h'  : rms_min_h,
+        'max_h'  : rms_max_h,
+        'min_v'  : rms_min_v,
+        'max_v'  : rms_max_v,
+        'mean_h' : rms_mean_h,
+        'mean_v' : rms_mean_v,
+        'mean_t' : rms_mean_t,
+    }
+    return rms

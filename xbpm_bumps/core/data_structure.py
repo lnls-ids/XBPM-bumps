@@ -9,7 +9,7 @@ import h5py
 import numpy as np
 
 from xbpm_bumps.core.config import Config
-from xbpm_bumps.core.processors import XBPMProcessor
+from xbpm_bumps.core.processors import XBPMProcessor, calculate_grid_stats
 
 # Import DataReader for canonical _extract_beamlines
 # from xbpm_bumps.core.readers import DataReader
@@ -423,15 +423,18 @@ class BeamlineRawData:
 @dataclass
 class RMSStatistics:
     """Computed RMS statistics between nominal and measured data."""
+    # Horizontal, vertical and total differences at each site.
     h      : np.ndarray
     v      : np.ndarray
     t      : np.ndarray
 
+    # Minimum and maximum values of the differences.
     min_h  : float
     max_h  : float
     min_v  : float
     max_v  : float
 
+    # Mean values of the differences.
     mean_h : float
     mean_v : float
     mean_t : float
@@ -443,7 +446,7 @@ class RMSStatistics:
                 meas_x : np.ndarray,
                 meas_y : np.ndarray
                 ) -> "RMSStatistics":
-        rms = XBPMProcessor.calculate_grid_stats(
+        rms = calculate_grid_stats(
             nom_x, nom_y, meas_x, meas_y
         )
         rms = {
@@ -463,11 +466,9 @@ class RMSStatistics:
 @dataclass
 class RMSGridStatistics:
     """Statistics calculated at a given ROI."""
-    # Full grid statistics.
-    all : RMSStatistics
-    roi : RMSStatistics
-
-    roi_bounds: ROISlice | None = None
+    all      : RMSStatistics             # Full grid statistics.
+    roi      : RMSStatistics             # ROI statistics.
+    roislice : ROISlice | None = None    # ROI bounds.
 
     @classmethod
     def compute(cls,
@@ -479,7 +480,7 @@ class RMSGridStatistics:
                 ) -> "RMSGridStatistics":
         """Calculate RMS statistics from position differences in ROI."""
         rms_all = RMSStatistics.compute(
-            nom_x, nom_y,
+            nom_x,  nom_y,
             meas_x, meas_y
             )
 
@@ -490,14 +491,14 @@ class RMSGridStatistics:
         meas_roi_x = meas_x[sl_v, sl_h]
         meas_roi_y = meas_y[sl_v, sl_h]
         rms_roi = RMSStatistics.compute(
-            nom_roi_x, nom_roi_y,
+            nom_roi_x,  nom_roi_y,
             meas_roi_x, meas_roi_y
             )
 
         return cls(
             all=rms_all,
             roi=rms_roi,
-            roi_bounds=roislice
+            roislice=roislice
         )
 
 
@@ -513,11 +514,10 @@ class BPMAnalysis:
         roi_diffs : estimated standard deviations of the differences between bpm
             and nom positions.
     """
-    prm          : BeamlinePrm
-    pos_meas     : Positions
-    pos_nom      : Positions
-    rms_diff_all : dict
-    rms_diff_roi : dict
+    prm      : BeamlinePrm
+    pos_meas : Positions
+    pos_nom  : Positions
+    rms_diff : RMSGridStatistics
 
     @classmethod
     def compute(cls, bl_data: "BeamlineData") -> "BPMAnalysis":
@@ -538,15 +538,19 @@ class BPMAnalysis:
         bpm_proc = BPMP(
             rawdata=bl_data.raw_data,
             prm_bml=bl_data.prm,
-            sweeps=bl_data.raw_data.sweeps,
         )
+
+        rms_diff = RMSGridStatistics.compute(
+            bpm_proc.nom_x, bpm_proc.nom_y,
+            bpm_proc.meas_x, bpm_proc.meas_y,
+            prm.roi
+            )
 
         return cls(
             prm=prm,
             pos_nom=bpm_proc.nominal,
             pos_meas=bpm_proc.measured,
-            rms_diff_roi=bpm_proc.rms_diff_roi,
-            rms_diff_all=bpm_proc.rms_diff_all
+            rms_diff=rms_diff,
             )
 
 
