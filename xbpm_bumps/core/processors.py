@@ -803,8 +803,7 @@ class XBPMProcessor:
 
         # Check for valid points, since the sweeping might be interrupted.
         valid  = np.isfinite(diff_x2) & np.isfinite(diff_y2)
-        nsites = int(np.count_nonzero(valid))
-        if nsites == 0:
+        if int(np.count_nonzero(valid)) == 0:
             print("\n WARNING: no valid BPM points found for RMS estimation.")
             rms_stats = {
                 key : np.nan
@@ -1161,7 +1160,6 @@ class BPMProcessor:
                 rms_all_h=sig_h,
                 rms_all_v=sig_v,
                 rms_total=sig_tot,
-
             )
 
             

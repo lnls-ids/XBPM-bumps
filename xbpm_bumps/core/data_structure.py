@@ -443,20 +443,20 @@ class RMSStatistics:
                 meas_x : np.ndarray,
                 meas_y : np.ndarray
                 ) -> "RMSStatistics":
-        rms_all = XBPMProcessor.calculate_grid_stats(
+        rms = XBPMProcessor.calculate_grid_stats(
             nom_x, nom_y, meas_x, meas_y
         )
         rms = {
-            "h"      : rms_all['rms_h'],
-            "v"      : rms_all['rms_v'],
-            "t"      : rms_all['rms_t'],
-            "min_h"  : rms_all['rms_min_h'],
-            "max_h"  : rms_all['rms_max_h'],
-            "min_v"  : rms_all['rms_min_v'],
-            "max_v"  : rms_all['rms_max_v'],
-            "mean_h" : rms_all['rms_mean_h'],
-            "mean_v" : rms_all['rms_mean_v'],
-            "mean_t" : rms_all['rms_mean_t'],
+            "h"      : rms['h'],
+            "v"      : rms['v'],
+            "t"      : rms['t'],
+            "min_h"  : rms['min_h'],
+            "max_h"  : rms['max_h'],
+            "min_v"  : rms['min_v'],
+            "max_v"  : rms['max_v'],
+            "mean_h" : rms['mean_h'],
+            "mean_v" : rms['mean_v'],
+            "mean_t" : rms['mean_t'],
         }
         return cls(**rms)
 
@@ -471,26 +471,27 @@ class RMSGridStatistics:
 
     @classmethod
     def compute(cls,
-                nom_x   : np.ndarray,
-                nom_y   : np.ndarray,
-                meas_x  : np.ndarray,
-                meas_y  : np.ndarray,
+                nom_x    : np.ndarray,
+                nom_y    : np.ndarray,
+                meas_x   : np.ndarray,
+                meas_y   : np.ndarray,
                 roislice : ROISlice
                 ) -> "RMSGridStatistics":
         """Calculate RMS statistics from position differences in ROI."""
-        rms_all = RMSStatistics.compute(nom_x, nom_y, meas_x, meas_y)
+        rms_all = RMSStatistics.compute(
+            nom_x, nom_y,
+            meas_x, meas_y
+            )
 
-        # Statistics at ROI: select data from slices and calculate RMS values.
+        # Statistics at ROI.
         sl_v, sl_h = roislice.sl_v, roislice.sl_h
         nom_roi_x  = nom_x[sl_v, sl_h]
         nom_roi_y  = nom_y[sl_v, sl_h]
         meas_roi_x = meas_x[sl_v, sl_h]
         meas_roi_y = meas_y[sl_v, sl_h]
         rms_roi = RMSStatistics.compute(
-            nom_roi_x,
-            nom_roi_y,
-            meas_roi_x,
-            meas_roi_y
+            nom_roi_x, nom_roi_y,
+            meas_roi_x, meas_roi_y
             )
 
         return cls(
