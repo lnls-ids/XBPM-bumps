@@ -229,24 +229,24 @@ class ParameterPanel(QWidget):
             ParameterBuilder.from_cli() format.
         """
         params = {
-            'inputfile'  : self.inputfile,
-            'outputfile' : self.outputfile,
-            'beamline'   : self.beamline,
-            'xbpmdist'   : self.xbpmdist_spin.value(),
-            'roisize'    : [
+            'inputfile'             : self.inputfile,
+            'outputfile'            : self.outputfile,
+            'beamline'              : self.beamline,
+            'xbpmdist'              : self.xbpmdist_spin.value(),
+            'roisize'               : [
                 int(self.roi_v_spin.value()),
                 int(self.roi_h_spin.value()),
                 ],
-            'showblademap'     : self.blademap_check.isChecked(),
-            'centralsweep'     : self.central_check.isChecked(),
-            'showbladescenter' : self.center_check.isChecked(),
-            'xbpmpositions'    : self.xbpm_check.isChecked(),
-            'showbpmpositions' : self.bpm_check.isChecked(),
-            'xbpmpositionsraw' : self.xbpm_raw_check.isChecked(),
+            'show_blademap'         : self.blademap_check.isChecked(),
+            'show_centralsweep'     : self.central_check.isChecked(),
+            'show_bladecenter'      : self.center_check.isChecked(),
+            'show_xbpmpositions'    : self.xbpm_check.isChecked(),
+            'show_bpmpositions'     : self.bpm_check.isChecked(),
+            'show_xbpmpositionsraw' : self.xbpm_raw_check.isChecked(),
 
-            'skip'             : self.skip_spin.value(),
-            'scalepolydeg'     : self.scalepolydeg.value(),
-            'usebpmref'        : self.bpm_ref_check.isChecked(),
+            'skip'                  : self.skip_spin.value(),
+            'scalepolydeg'          : self.scalepolydeg.value(),
+            'usebpmref'             : self.bpm_ref_check.isChecked(),
         }
 
         # Define variables in parameters dataclass.

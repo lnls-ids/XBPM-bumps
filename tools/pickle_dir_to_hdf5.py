@@ -167,7 +167,7 @@ def _reverse_blade_map(beamline: str) -> dict:
     return {v: k for k, v in bmap.items()}
 
 
-def _blade_average(blade: list) -> tuple:
+def blade_average(blade: list) -> tuple:
     """Calculate the average of blades' values for current beamline.
     
     Values are converted to Amperes using Config.AMPSUB (unit map).
@@ -208,7 +208,7 @@ def extract_and_average_blade_data(rawdata0: dict, beamline: str) -> dict:
     pvs    = ['A', 'B', 'C', 'D']
     for pv in pvs:
         # Get average, std dev, and raw values for the blade.
-        avg, std, vals = _blade_average(rawdata0[pv + "_val"])
+        avg, std, vals = blade_average(rawdata0[pv + "_val"])
 
         # Store raw values: _val, _range, _saturation.
         rawblades[pv + "_val"]   = np.array(vals)

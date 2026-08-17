@@ -17,7 +17,9 @@ from .data_structure import BeamlineData
 class HDF5DataReader:
     """Encapsulates HDF5 file access and data extraction for XBPM.
     
-    An object is created containing all beamline data from the HDF5 file. It encapsulates more than one beamline, if present, since BeamlineData extracts the data for each beamline separately.
+    An object is created containing all beamline data from the HDF5 file.
+    It encapsulates more than one beamline, if present, since BeamlineData
+    extracts the data for each beamline separately.
 
     Args:
         filepath (str): Path to the HDF5 file.

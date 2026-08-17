@@ -4,14 +4,20 @@ import os
 import numpy as np
 import matplotlib
 
-# from .parameters  import Prm
 from .visualizers import PositionVisualizer as PSV
 from .visualizers import SweepVisualizer as SWV
 from .visualizers import BladeCurrentVisualizer as BCV
 
-from .data_structure import BeamlinePrm, BladeAvgData, Prm, SweepData, SweepLine, Blades
 from .config         import Config    
 from .constants      import ROI_SIZE_V, ROI_SIZE_H, FIGDPI
+from .data_structure import (
+    BeamlinePrm,
+    BladeAvgData,
+    Prm,
+    SweepData,
+    SweepLine,
+    Blades
+    )
 
 _Title = Config.get_plot_title   # shorthand for plot titles
 # from .exporters import Exporter
@@ -32,38 +38,49 @@ class XBPMProcessor:
     - Blade behavior analysis at central positions
 
     Attributes:
-        data (dict): Measurement data dictionary.
-        prm (BeamlinePrm): Parameters dataclass.
-        range_h (np.ndarray): Horizontal sweep range.
-        range_v (np.ndarray): Vertical sweep range.
-        blades_h (dict): Blade measurements along horizontal center line.
-        blades_v (dict): Blade measurements along vertical center line.
+        blade_avg (BladeAvgData): Blade average data structure.
+        prm (Prm): Parameters dataclass instance.
+        prm_bl (BeamlinePrm): Beamline parameters dataclass instance.
     """
 
     def __init__(self,
                  blade_avg: BladeAvgData,
-                 prm: Prm,
-                 prm_bl: BeamlinePrm,
+                 prm_bml: BeamlinePrm,
+                 prm_gen: Prm
                  ) -> None:
         """Initialize processor with data and parameters.
 
         Args:
             blade_avg : BladeAvgData instance containing measurement data.
-            prm  : Parameters dataclass instance.
+            prm_gen   : General parameters dataclass instance.
+            prm_bml   : Beamline parameters dataclass instance.
         """
+        # Get blade data structures.
         self.blade_avg  = blade_avg
-        self.prm        = prm
-        self.prm_bl     = prm_bl
+        self.blades     = blade_avg.blades
+        self.prm_avg    = blade_avg.prm
+        self.prm_gen    = prm_gen
+
+        # Beamline parameters.
+        self.prm_bml    = prm_bml
+        self.beamline   = self.prm_bml.beamline
+        # ROI defines V and H sizes (sz_h/v), and respective slices (sl_h/v).
+        self.roi        = self.prm_bml.roi
+
+        # Nominal positions.
+        self.nom_pos_x  = self.blade_avg.nom.x
+        self.nom_pos_y  = self.blade_avg.nom.y
+
+        # Calculate ranges.
+        self.range_h    = np.unique(self.nom_pos_x)
+        self.range_v    = np.unique(self.nom_pos_y)
+
+        # Are these really needed?
         self.blades_h   = None
         self.blades_v   = None
         self._initialize_ranges()
-        self.roi_v_size = prm.roisize[0]
-        self.roi_h_size = prm.roisize[1]
-
-    def _initialize_ranges(self) -> None:
-        """Initialize horizontal and vertical sweep ranges from data keys."""
-        self.range_h = np.unique(self.blade_avg.nom.x)
-        self.range_v = np.unique(self.blade_avg.nom.y)
+        self.roi_v_size = self.prm_bml.roisize[0]
+        self.roi_h_size = self.prm_bml.roisize[1]
 
     def analyze_central_sweeps(self, show: bool = False) -> tuple:
         """Analyze blade behavior at central sweep positions.
@@ -172,11 +189,11 @@ class XBPMProcessor:
             self.range_h, self.range_v,
             pos_h, pos_v,
             fit_h, fit_v,
-            xbpm_dist=self.prm.xbpmdist
+            xbpm_dist=self.prm_bml.xbpmdist
         )
 
-        if self.prm.outputfile:
-            outfile = f"xbpm_sweeps_{self.prm_bl.beamline}.png"
+        if self.prm_gen.outputfile:
+            outfile = f"xbpm_sweeps_{self.prm_bml.beamline}.png"
             fig.savefig(outfile, dpi=FIGDPI)
             print(f" Figure of central sweeps saved to file {outfile}.\n")
 
@@ -195,11 +212,11 @@ class XBPMProcessor:
         fig = BCV.plot_blade_center_from_dicts(
             self.blades_h, self.blades_v,
             self.range_h, self.range_v,
-            beamline=self.prm_bl.beamline
+            beamline=self.prm_bml.beamline
             )
 
-        if self.prm.outputfile:
-            outfile = f"central_sweep_{self.prm_bl.beamline}.png"
+        if self.prm_gen.outputfile:
+            outfile = f"central_sweep_{self.prm_bml.beamline}.png"
             fig.savefig(outfile, dpi=FIGDPI)
             print("\n Figure of blades behaviour at central sweeps"
                   f" saved to file {outfile}.\n")
@@ -298,15 +315,15 @@ class XBPMProcessor:
         # Build title map for visualizer with formatted titles from registry.
         title_map = {
             'total'   : _Title('xbpm_positions', 'total',
-                               beamline=self.prm_bl.beamline,
+                               beamline=self.prm_bml.beamline,
                                rort=transform,
                                calc_type=calc_type),
             'roi'     : _Title('xbpm_positions', 'roi',
-                               beamline=self.prm_bl.beamline,
+                               beamline=self.prm_bml.beamline,
                                rort=transform,
                                calc_type=calc_type),
             'heatmap' : _Title('xbpm_positions', 'heatmap',
-                               beamline=self.prm_bl.beamline,
+                               beamline=self.prm_bml.beamline,
                                rort=transform,
                                calc_type=calc_type),
         }
@@ -324,7 +341,7 @@ class XBPMProcessor:
         diffroi    = np.sqrt(diffx2_roi + diffy2_roi)
 
         # Visualize
-        visualizer = PSV(self.prm, titles=title_map)
+        visualizer = PSV(self.prm_gen, titles=title_map)
         visualizer.show_position_results(
             pos_nom_h, pos_nom_v,
             pos_all_h_scaled, pos_all_v_scaled,
@@ -363,10 +380,10 @@ class XBPMProcessor:
         cross_visualizer = cross_result['visualizer']
 
         # Save figures if requested
-        if self.prm.outputfile:
+        if self.prm_gen.outputfile:
             outdir = '.'
             sup = "raw" if nosuppress else "scaled"
-            bl = self.prm.beamline
+            bl = self.prm_bml.beamline
 
             outfile_p = os.path.join(outdir, f"xbpm_pair_pos_{sup}_{bl}.png")
             pair_visualizer.save_figure(outfile_p)
@@ -381,7 +398,7 @@ class XBPMProcessor:
         gridlist  = np.array(list(self.blade_avg.keys()))
         grid_lin  = np.unique(gridlist[:, 1])   # sorted y scan angles
         grid_col  = np.unique(gridlist[:, 0])   # sorted x scan angles
-        dist      = self.prm.xbpmdist
+        dist      = self.prm_bml.xbpmdist
 
         scaled_pos_pair  = dict()
         scaled_pos_cross = dict()
@@ -434,7 +451,7 @@ class XBPMProcessor:
             },
             'supmat'     : supmat,
             'stddevmat'  : stddevmat,
-            'phaseorgap' : self.prm.phaseorgap,
+            'phaseorgap' : self.prm_gen.phaseorgap,
             'xbpm_stats' : {
                 'pairwise' : pair_result['stats'],
                 'cross'    : cross_result['stats'],
@@ -556,7 +573,7 @@ class XBPMProcessor:
         ])
 
         if showmatrix:
-            print(f'\nUndulator phase or gap: {self.prm.phaseorgap}')
+            print(f'\nUndulator phase or gap: {self.prm_gen.phaseorgap}')
             print("\nSuppression matrix:")
             for ii, lin in enumerate(supmat):
                 for jj, col in enumerate(lin):
@@ -688,7 +705,7 @@ class XBPMProcessor:
 
         coeffs_x, deltas_x = self._poly_fitting(nom_h, nom_h_cln, pos_h_cln)
         coeffs_y, deltas_y = self._poly_fitting(nom_v, nom_v_cln, pos_v_cln)
-        if self.prm.scalepolydeg == 1:
+        if self.prm_bml.scalepolydeg == 1:
             qx, kx, deltax    = 0., coeffs_x[0], coeffs_x[1]
             sqx, skx, sdeltax = 0., deltas_x[0], deltas_x[1]
 
@@ -696,7 +713,7 @@ class XBPMProcessor:
             sqy, sky, sdeltay = 0., deltas_y[0], deltas_y[1]
 
             qxtxt, qytxt = "", ""
-        elif self.prm.scalepolydeg == 2:
+        elif self.prm_bml.scalepolydeg == 2:
             qx, kx, deltax    = coeffs_x
             sqx, skx, sdeltax = deltas_x
 
@@ -722,7 +739,7 @@ class XBPMProcessor:
             covs   = None
             try:
                 coeffs, covs = np.polyfit(
-                    pos_cln, nom_cln, deg=self.prm.scalepolydeg, cov=True
+                    pos_cln, nom_cln, deg=self.prm_bml.scalepolydeg, cov=True
                 )
             except Exception:
                 # Keep fitted coefficients even if covariance cannot be
@@ -730,24 +747,24 @@ class XBPMProcessor:
                 # applied (polyfit crashes if covariance cannot be estimated).
                 try:
                     coeffs = np.polyfit(
-                        pos_cln, nom_cln, deg=self.prm.scalepolydeg
+                        pos_cln, nom_cln, deg=self.prm_bml.scalepolydeg
                         )
                     covs = None
                 except Exception as err:
                     print(f"\n WARNING: when calculating horizontal scaling"
                           f" coefficients:\n{err}\n"
                           " Setting to default values.")
-                    coeffs = np.zeros(self.prm.scalepolydeg + 1)
+                    coeffs = np.zeros(self.prm_bml.scalepolydeg + 1)
                     covs   = None
 
             # Extract standard deviations from covariance matrix if available.
             if covs is not None:
                 deltas = np.sqrt(np.diag(covs))
             else:
-                deltas = np.zeros(self.prm.scalepolydeg + 1)
+                deltas = np.zeros(self.prm_bml.scalepolydeg + 1)
         else:
-            coeffs = np.zeros(self.prm.scalepolydeg + 1)
-            deltas = np.zeros(self.prm.scalepolydeg + 1)
+            coeffs = np.zeros(self.prm_bml.scalepolydeg + 1)
+            deltas = np.zeros(self.prm_bml.scalepolydeg + 1)
         return (coeffs, deltas)
 
     @staticmethod

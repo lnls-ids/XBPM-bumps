@@ -13,7 +13,7 @@ from xbpm_bumps.core.config import Config
 # Import DataReader for canonical _extract_beamlines
 # from xbpm_bumps.core.readers import DataReader
 # from .config import Config
-from .constants import ROI_SIZE_H, ROI_SIZE_V
+from .constants import ROI_SIZE_H, ROI_SIZE_V, MAX_RAD_ANGLE
 
 
 @dataclass
@@ -26,20 +26,19 @@ class Prm:
     """
     sr_current       : float | None = None      # Synchrotron current
 
-    # What to calculate and show.
-    showblademap     : bool = False
-    centralsweep     : bool = False
-    showbladescenter : bool = False
-    xbpmpositions    : bool = False
-    showbpmpositions : bool = False
-    xbpmpositionsraw : bool = False
-
     # File names and analysis parameters.
     inputfile        : str   | None = None      # HDF5 input file name.
     outputfile       : str   | None = None      # HDF5 output file name. 
     phaseorgap       : dict  | None = None      # Phase/gap for the ID.
-    # blademap        : Any   | None = None
-    maxradangle      : float = 20.0
+    maxradangle      : float = MAX_RAD_ANGLE    # Maximum angle of bumps in mrad.
+
+    # What to calculate and show.
+    show_bpmpositions     : bool = False
+    show_blademap         : bool = False
+    show_centralsweep     : bool = False
+    show_bladecenter      : bool = False
+    show_xbpmpositionsraw : bool = False
+    show_xbpmpositions    : bool = False
 
     def __getitem__(self, key: str):
         """Dictionary-style access (prm['key']) for backward compatibility."""
