@@ -15,8 +15,8 @@ from .data_structure import (
     BeamlineRawData,
     BladeAvgData,
     Prm,
-    SweepData,
-    SweepLine,
+    CentralSweeps,
+    CentralSweepLine,
     Blades,
     RMSGridStatistics
     )
@@ -81,37 +81,18 @@ class XBPMProcessor:
         self.roisize_v = self.prm_bml.roisize[0]
         self.roisize_h = self.prm_bml.roisize[1]
 
-    def analyze_central_sweeps(
-            self,
-            show: bool = False
-            ) -> tuple[np.array, np.array, SweepLine, SweepLine]:
-        """Analyze blade behavior at central sweep positions.
-
-        Examines blade measurements along central horizontal and vertical
-        lines to understand blade response and calculate suppression factors.
-
-        Args:
-            show: Whether to display sweep plots.
+    def analyze_central_sweeps(self) -> "CentralSweeps":
+        """Assemble the central sweep analysis.
 
         Returns:
-            Tuple of (np.array, np.array, SweepLine, SweepLine).
+            CentralSweeps instance containing horizontal and vertical central sweeps.
         """
-        # Run through central horizontal line if data is not just a point
-        self.sweepline_h = (self._central_sweep_h()
-                            if len(self.range_h) > 1 else None)
+        # Run through central lines if data is not just a point.
+        h = (self.central_sweep_h() if len(self.range_h) > 1 else None)
+        v = (self.central_sweep_v() if len(self.range_v) > 1 else None)
+        return CentralSweeps(h=h, v=v)
 
-        # Run through central vertical line if data is not just a point
-        self.sweepline_v = (self._central_sweep_v()
-                            if len(self.range_v) > 1 else None)
-
-        return (
-            self.range_h,
-            self.range_v,
-            self.sweepline_h,
-            self.sweepline_v
-            )
-
-    def _central_sweep_h(self) -> "SweepLine":
+    def central_sweep_h(self) -> "CentralSweepLine":
         """Analyze blade behavior along the central horizontal line."""
         # Select blades at y ~ 0 (central horizontal line).
         pos_nom_x = self.blade_avg.nom.x
@@ -143,7 +124,7 @@ class XBPMProcessor:
 
         # Build the SweepLine data structure for horizontal sweep.
         blades = Blades(to, ti, bi, bo, sto, sti, sbi, sbo)
-        return SweepLine(
+        return CentralSweepLine(
             blades=blades,
             index=self.range_h,
             fixed=pos_nom_y[mask][idx],
@@ -152,7 +133,7 @@ class XBPMProcessor:
             fit_pos_err=fit_v_err
             )
 
-    def _central_sweep_v(self) -> "SweepLine":
+    def central_sweep_v(self) -> "CentralSweepLine":
         """Analyze blade behavior along the central vertical line."""
         # Select blades at x ~ 0 (central vertical line).
         pos_nom_x = self.blade_avg.nom.x
@@ -182,7 +163,7 @@ class XBPMProcessor:
 
         # Build the SweepLine data structure for vertical sweep.
         blades = Blades(to, ti, bi, bo, sto, sti, sbi, sbo)
-        return SweepLine(
+        return CentralSweepLine(
             blades=blades,
             index=self.range_v,
             fixed=pos_nom_x[mask][idx],
@@ -238,7 +219,7 @@ class XBPMProcessor:
         else:
             return array[fr_row:up_row, fr_col:up_col]
 
-    def _scale_positions(self, calc_type: str,
+    def _scale_positions(self,
                          pos_all_h: np.ndarray, pos_all_v: np.ndarray,
                          pos_roi_h: np.ndarray, pos_roi_v: np.ndarray,
                          pos_nom_h: np.ndarray, pos_nom_v: np.ndarray,
@@ -258,9 +239,10 @@ class XBPMProcessor:
             Dict with scaled positions, scales, stats, visualizer.
         """
         # Perform scaling fit
-        label = "Δ/Σ" if calc_type == "pairwise" else "Partial Δ/Σ"
+        # label = "Δ/Σ" if calc_type == "pairwise" else "Partial Δ/Σ"
         (scalesx, sigmasx, scalesy, sigmasy) = self.scaling_fit(
-            pos_roi_h, pos_roi_v, pos_nom_h_roi, pos_nom_v_roi, label
+            pos_roi_h, pos_roi_v, pos_nom_h_roi, pos_nom_v_roi,
+            polydeg=self.prm_bml.scalepolydeg,
         )
         (qx, kx, deltax), (sqx, skx, sdeltax) = scalesx, sigmasx
         (qy, ky, deltay), (sqy, sky, sdeltay) = scalesy, sigmasy
@@ -272,10 +254,19 @@ class XBPMProcessor:
         pos_roi_v_scaled = qy * pos_roi_v**2 + ky * pos_roi_v + deltay
 
         # Compute statistics
-        diffx2_roi = (pos_roi_h_scaled - pos_nom_h_roi) ** 2
-        diffy2_roi = (pos_roi_v_scaled - pos_nom_v_roi) ** 2
-        stats      = self.calculate_grid_stats(diffx2_roi, diffy2_roi)
-        diffroi    = np.sqrt(diffx2_roi + diffy2_roi)
+        rms_all = self.calculate_grid_stats(
+            pos_all_h,
+            pos_all_v,
+            pos_all_h_scaled,
+            pos_all_v_scaled,
+        )
+
+        rms_roi = self.calculate_grid_stats(
+            pos_roi_h,
+            pos_roi_v,
+            pos_roi_h_scaled,
+            pos_roi_v_scaled,
+        )
 
         return {
             'h_scaled'     : pos_all_h_scaled,
@@ -294,7 +285,8 @@ class XBPMProcessor:
             'sdx'          : sdeltax,
             'dy'           : deltay,
             'sdy'          : sdeltay,
-            'stats'        : stats,
+            'rms_all'      : rms_all,
+            'rms_roi'      : rms_roi,
         }
 
     def _compile_results(self, pair_result: dict, cross_result: dict,
@@ -383,7 +375,8 @@ class XBPMProcessor:
         # Parse and compute core data
         blades, _ = self.data_parse()
         supmat, stddevmat = self.suppression_matrix(
-            showmatrix=showmatrix, nosuppress=nosuppress
+            showmatrix=showmatrix,
+            nosuppress=nosuppress
             )
 
         # Extract nominal ROI slices.
@@ -401,10 +394,14 @@ class XBPMProcessor:
 
         # Process data: fitting, scaling, stats, visualization.
         pairwise_result = self._scale_positions(
-                'pairwise', pos_h, pos_v,
-                pos_roi_pair_h, pos_roi_pair_v,
-                pos_nom_h, pos_nom_v,
-                pos_nom_h_roi, pos_nom_v_roi, nosuppress
+                pos_h,
+                pos_v,
+                pos_roi_pair_h,
+                pos_roi_pair_v,
+                pos_nom_h,
+                pos_nom_v,
+                pos_nom_h_roi,
+                pos_nom_v_roi
             )
 
         # Cross-blade calculation (partial Delta/Sigma).
@@ -583,8 +580,13 @@ class XBPMProcessor:
         vpos = (v1 + v2)
         return [hpos, vpos]
 
-    def scaling_fit(self, pos_h: np.ndarray, pos_v: np.ndarray,
-                    nom_h: np.ndarray, nom_v: np.ndarray, calctype=""):
+    def scaling_fit(self,
+                    pos_h: np.ndarray,
+                    pos_v: np.ndarray,
+                    nom_h: np.ndarray,
+                    nom_v: np.ndarray,
+                    polydeg: int = 1,
+                    ) -> tuple:
         """Calculate scaling coefficients from fitted positions.
         
         Args:
@@ -592,15 +594,16 @@ class XBPMProcessor:
             pos_v    : Measured vertical positions array.
             nom_h    : Nominal horizontal positions array.
             nom_v    : Nominal vertical positions array.
-            calctype : Type of calculation (for logging purposes).
+            polydeg  : Degree of the polynomial fit.
         
         Returns:
             kx     : Horizontal scaling factor.
             deltax : Horizontal offset.
             ky     : Vertical scaling factor.
             deltay : Vertical offset.
+            s*     : Standard deviations of the respective coefficients.
         """
-        print(f"\n#### {calctype} blades:")
+        # print(f"\n#### {calctype} blades:")
 
         h_finitemask = np.isfinite(pos_h)
         pos_h_cln = pos_h[h_finitemask]
@@ -610,69 +613,54 @@ class XBPMProcessor:
         pos_v_cln = pos_v[v_finitemask]
         nom_v_cln = nom_v[v_finitemask]
 
-        coeffs_x, deltas_x = self._poly_fitting(nom_h, nom_h_cln, pos_h_cln)
-        coeffs_y, deltas_y = self._poly_fitting(nom_v, nom_v_cln, pos_v_cln)
+        coeffs_x, sigmas_x = self.poly_fitting(nom_h_cln, pos_h_cln, polydeg)
+        coeffs_y, sigmas_y = self.poly_fitting(nom_v_cln, pos_v_cln, polydeg)
         if self.prm_bml.scalepolydeg == 1:
-            qx, kx, deltax    = 0., coeffs_x[0], coeffs_x[1]
-            sqx, skx, sdeltax = 0., deltas_x[0], deltas_x[1]
+            qx, qy, sqx, sqy = 0., 0., 0., 0.
+            kx, deltax    = 0., coeffs_x[0], coeffs_x[1]
+            sqx, skx, sdeltax = 0., sigmas_x[0], sigmas_x[1]
 
-            qy, ky, deltay    = 0., coeffs_y[0], coeffs_y[1]
-            sqy, sky, sdeltay = 0., deltas_y[0], deltas_y[1]
+            ky, deltay   = coeffs_y[0], coeffs_y[1]
+            sky, sdeltay = sigmas_y[0], sigmas_y[1]
 
-            qxtxt, qytxt = "", ""
         elif self.prm_bml.scalepolydeg == 2:
             qx, kx, deltax    = coeffs_x
-            sqx, skx, sdeltax = deltas_x
+            sqx, skx, sdeltax = sigmas_x
 
             qy, ky, deltay    = coeffs_y
-            sqy, sky, sdeltay = deltas_y
+            sqy, sky, sdeltay = sigmas_y
 
-            qxtxt = f"qx = {qx:12.4f} ({sqx:4.1f}),\t"
-            qytxt = f"qy = {qy:12.4f} ({sqy:4.1f}),\t"
-
-        print(qxtxt, f"kx = {kx:12.4f} ({skx:4.1f}),"
-              f"   deltax = {deltax:12.4f} ({sdeltax:4.1f})")
-        print(qytxt, f"ky = {ky:12.4f} ({sky:4.1f}),"
-              f"   deltay = {deltay:12.4f} ({sdeltay:4.1f})\n")
         return ((qx, kx, deltax), (sqx, skx, sdeltax),
                 (qy, ky, deltay), (sqy, sky, sdeltay))
 
-    def _poly_fitting(self, nom_val: np.ndarray,
-                      nom_cln: np.ndarray,
-                      pos_cln: np.ndarray) -> tuple:
+    def poly_fitting(self,
+                     nom: np.ndarray,
+                     meas: np.ndarray,
+                     polydeg: int = 1,
+                     ) -> tuple:
         """Return fitting parameters for scaling fit."""
-        if len(set(nom_val.ravel())) > 1 and pos_cln.size >= 2:
-            coeffs = None
-            covs   = None
-            try:
-                coeffs, covs = np.polyfit(
-                    pos_cln, nom_cln, deg=self.prm_bml.scalepolydeg, cov=True
-                )
-            except Exception:
-                # Keep fitted coefficients even if covariance cannot be
-                # estimated (e.g., small sample count), so scaling is still
-                # applied (polyfit crashes if covariance cannot be estimated).
-                try:
-                    coeffs = np.polyfit(
-                        pos_cln, nom_cln, deg=self.prm_bml.scalepolydeg
-                        )
-                    covs = None
-                except Exception as err:
-                    print(f"\n WARNING: when calculating horizontal scaling"
-                          f" coefficients:\n{err}\n"
-                          " Setting to default values.")
-                    coeffs = np.zeros(self.prm_bml.scalepolydeg + 1)
-                    covs   = None
+        # Default values.
+        coeffs  = np.zeros(polydeg + 1)
+        sigmas  = np.zeros(polydeg + 1)
+        covs    = None
 
-            # Extract standard deviations from covariance matrix if available.
-            if covs is not None:
-                deltas = np.sqrt(np.diag(covs))
-            else:
-                deltas = np.zeros(self.prm_bml.scalepolydeg + 1)
-        else:
-            coeffs = np.zeros(self.prm_bml.scalepolydeg + 1)
-            deltas = np.zeros(self.prm_bml.scalepolydeg + 1)
-        return (coeffs, deltas)
+        # Check if the nominal values are constant or if
+        # there are too few valid points
+        if len(set(nom.ravel())) <= 1 or meas.size < 2:
+            return (coeffs, sigmas)
+
+        try:
+            coeffs, covs = np.polyfit(meas, nom, deg=polydeg, cov=True)
+            sigmas = np.sqrt(np.diag(covs))
+        except Exception:
+            # Keep fitted coefficients if covariance cannot be estimated.
+            try:
+                coeffs = np.polyfit(meas, nom, deg=polydeg)
+            except Exception as err:
+                print(f"\n WARNING: when calculating horizontal scaling"
+                        f" coefficients:\n{err}\n"
+                        " Setting to default values.")
+        return (coeffs, sigmas)
 
     @staticmethod
     def calculate_grid_stats(

@@ -14,7 +14,7 @@ from .constants import FIGDPI
 from .config import Config
 from .data_structure import BPMAnalysis
 from .data_structure import BeamlinePrm
-from .data_structure import SweepLine
+from .data_structure import CentralSweepLine
 
 _Title = Config.get_plot_title   # shorthand used throughout this module
 
@@ -391,6 +391,21 @@ class PositionVisualizer:
                                rort=transform,
                                calc_type=calc_type),
         }
+
+        #
+        # From scaling fit.
+        #
+        qx, qy, sqx, sqy = 0, 0, 0, 0
+        kx, ky, skx, sky = 0, 0, 0, 0
+        deltax, sdeltax, deltay, sdeltay = 0, 0, 0, 0
+        qxtxt = f"qx = {qx:12.4f} ({sqx:4.1f}),\t"
+        qytxt = f"qy = {qy:12.4f} ({sqy:4.1f}),\t"
+
+        print(qxtxt, f"kx = {kx:12.4f} ({skx:4.1f}),"
+              f"   deltax = {deltax:12.4f} ({sdeltax:4.1f})")
+        print(qytxt, f"ky = {ky:12.4f} ({sky:4.1f}),"
+              f"   deltay = {deltay:12.4f} ({sdeltay:4.1f})\n")
+
      
         # Visualize
         # visualizer = PositionVisualizer(self.prm_gen, titles=title_map)
@@ -810,8 +825,8 @@ class SweepVisualizer:
     """
     @staticmethod
     def plot_from_arrays(
-        sweepline_h: SweepLine,
-        sweepline_v: SweepLine,
+        sweepline_h: CentralSweepLine,
+        sweepline_v: CentralSweepLine,
         nom_pos_h: np.ndarray,
         xbpm_dist: float = 1.0,
         figsize: tuple = (12, 5)

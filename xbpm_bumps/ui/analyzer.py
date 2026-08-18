@@ -12,7 +12,7 @@ from ..core.visualizers import BladeMapVisualizer as BMV
 from ..core.exporters   import Exporter
 # from ..core.parameters  import Prm
 # from ..core.app         import XBPMApp
-from ..core.processors  import XBPMProcessor
+from ..core.processors  import XBPMProcessor as XBPMP
 # from ..core.visualizers import SweepVisualizer as SWV
 from ..core.data_structure import Prm, BeamlinePrm
 
@@ -53,6 +53,8 @@ class XBPMAnalyzer(QObject):
         self.reader       = reader
         self.rawdata      = rawdata
         self._should_stop = False
+
+        self.processor = XBPMP(self.rawdata, self.prm)
         # self._preselected_beamline: Optional[str] = None
 
     @pyqtSlot(dict)
@@ -64,11 +66,11 @@ class XBPMAnalyzer(QObject):
         try:
             # The main window/controller must have already set up Prm and
             # builder
-            self.app         = XBPMApp()
-            self.app.prm     = self.prm
-            self.app.builder = self.builder
-            self.app.reader  = self.reader
-            self.app.data, self.app.rawblades = self.reader._blades_fetch()
+            # self.app         = XBPMApp()
+            # self.app.prm     = self.prm
+            # self.app.builder = self.builder
+            # self.app.reader  = self.reader
+            # self.app.data, self.app.rawblades = self.reader._blades_fetch()
 
             # Capture stdout/stderr for logging
             log_capture = StringIO()
@@ -105,8 +107,8 @@ class XBPMAnalyzer(QObject):
         """Initialize processor/exporter and run analysis steps."""
         # Initialize processor and exporter
         self.analysisProgress.emit("Initializing processor...")
-        self.app.processor = XBPMProcessor(self.app.data, self.app.prm)
-        self.app.exporter = Exporter(self.app.prm)
+        self.processor = XBPMP(self.rawdata, self.prm)
+        self.exporter = Exporter(self.prm)
 
         # Run analysis steps
         results = self._run_analysis_steps()
@@ -127,11 +129,11 @@ class XBPMAnalyzer(QObject):
         try:
             # The main window/controller must have already set up Prm and
             # builder
-            self.app         = XBPMApp()
-            self.app.prm     = self.prm
-            self.app.builder = self.builder
-            self.app.reader  = self.reader
-            self.app.data, self.app.rawblades = self.reader._blades_fetch()
+            # self.app         = XBPMApp()
+            # self.app.prm     = self.prm
+            # self.app.builder = self.builder
+            # self.app.reader  = self.reader
+            # self.app.data, self.app.rawblades = self.reader._blades_fetch()
 
             # Beamline is now always set in canonical Prm
             # Capture stdout/stderr for logging
@@ -287,15 +289,15 @@ class XBPMAnalyzer(QObject):
             Tuple (pos_nom_h, pos_nom_v) - nominal position grids scaled
             by XBPM distance.
         """
-        supmat, _ = self.app.processor.suppression_matrix(
+        supmat, _ = self.processor.suppression_matrix(
                 showmatrix=False, nosuppress=True
             )
-        pair = self.app.processor.beam_position_pair(supmat)
+        pair = self.processor.beam_position_pair(supmat)
         pos_nom_h, pos_nom_v, _, _ = (
-            self.app.processor.position_dict_parse(pair)
+            self.processor.position_dict_parse(pair)
         )
-        pos_nom_h *= self.app.prm.xbpmdist
-        pos_nom_v *= self.app.prm.xbpmdist
+        pos_nom_h *= self.prm.xbpmdist
+        pos_nom_v *= self.prm.xbpmdist
         return pos_nom_h, pos_nom_v
 
     def _resolve_reference_positions(self, results: dict):
@@ -307,7 +309,7 @@ class XBPMAnalyzer(QObject):
         Returns:
             Tuple (pos_nom_h, pos_nom_v) - reference position grids.
         """
-        if not self.app.prm.usebpmref:
+        if not self.prm.usebpmref:
             # Use nominal grid from beam position pair
             return self._compute_nominal_grid()
 
@@ -430,8 +432,9 @@ class XBPMAnalyzer(QObject):
         """Calculate raw XBPM positions."""
         self.analysisProgress.emit("\n# Calculating raw XBPM positions...")
         pos_nom_h, pos_nom_v = self._resolve_reference_positions(results)
-        result_data = self.app.processor.xbpm_position_calculation(
-            pos_nom_h, pos_nom_v,
+        result_data = self.processor.xbpm_position_calculation(
+            pos_nom_h,
+            pos_nom_v,
             nosuppress=True,
             showmatrix=True,
         )

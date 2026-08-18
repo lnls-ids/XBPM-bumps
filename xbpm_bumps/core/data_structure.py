@@ -372,8 +372,8 @@ class BeamlineRawData:
     """
     metadata   : dict
     sweeps_bld : dict[int, BladeRawData] = field(default_factory=dict)
-    sweeps_bpm : dict[int, BPMRawData] = field(default_factory=dict)
-    blade_avg  : BladeAvgData | None  = None
+    sweeps_bpm : dict[int, BPMRawData]   = field(default_factory=dict)
+    blade_avg  : BladeAvgData | None     = None
 
     @classmethod
     def from_hdf5(cls,
@@ -578,7 +578,7 @@ class BladeMap:
 
 
 @dataclass
-class SweepLine:
+class CentralSweepLine:
     """Container for central sweep data.
     
     A sweep is performed along a line (horizontal or vertical) through the center of the blade map. It is supposed that there is no variation in the other direction, but distortions of measurements create an undesired slope, to be evaluated. The sweep data is then used to analyze the behavior of the blades along the sweep line, so the variation in the fixed coordinate is captured.
@@ -602,7 +602,7 @@ class SweepLine:
     @classmethod
     def from_hdf5(cls,
                   sln_grp: h5py.Group,
-                  dir: str) -> "SweepLine":
+                  dir: str) -> "CentralSweepLine":
         """Create a SweepLine instance from an HDF5 group.
         
         h5group: HDF5 group containing the central sweep data.
@@ -634,22 +634,22 @@ class SweepLine:
 
 
 @dataclass
-class CentralSweep:
+class CentralSweeps:
     """Container for central sweep data and associated metadata.
 
     Attributes:
         h: SweepLine for horizontal direction
         v: SweepLine for vertical direction
     """
-    h : SweepLine | None = None
-    v : SweepLine | None = None
+    h : CentralSweepLine | None = None
+    v : CentralSweepLine | None = None
 
     @classmethod
-    def from_hdf5(cls, swp_grp) -> "CentralSweep":
+    def from_hdf5(cls, swp_grp) -> "CentralSweeps":
         """Create a CentralSweep instance from an HDF5 group."""
         return cls(
-            h = SweepLine.from_hdf5(swp_grp["blades_h"], dir='h'),
-            v = SweepLine.from_hdf5(swp_grp["blades_v"], dir='v')
+            h = CentralSweepLine.from_hdf5(swp_grp["blades_h"], dir='h'),
+            v = CentralSweepLine.from_hdf5(swp_grp["blades_v"], dir='v')
         )
 
 
@@ -888,7 +888,7 @@ class DataAnalysis:
     bpm          : BPMAnalysis       | None = None
     blademap     : BladeMap          | None = None
     positions    : AnalyzedPositions | None = None
-    centralsweep : CentralSweep      | None = None
+    centralsweep : CentralSweeps     | None = None
     scales       : AllScales         | None = None
     supmat       : SupressionMatrix  | None = None
 
@@ -908,7 +908,7 @@ class DataAnalysis:
         positions = AnalyzedPositions.from_hdf5(anl_grp["positions"])
 
         # Central sweeps.
-        centralsweep = CentralSweep.from_hdf5(anl_grp["central_sweeps"])
+        centralsweep = CentralSweeps.from_hdf5(anl_grp["central_sweeps"])
 
         # Extract scaling factors and suppression matrices.
         scales = AllScales.from_hdf5(anl_grp["scales"])
