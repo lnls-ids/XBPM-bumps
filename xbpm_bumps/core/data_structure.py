@@ -884,13 +884,13 @@ class DataAnalysis:
     supmat       : Suppression matrices
     """
     # Beamline, description and XBPM-source distance.
-    prm          : BeamlinePrm       | None = None
-    bpm          : BPMAnalysis       | None = None
-    blademap     : BladeMap          | None = None
-    positions    : AnalyzedPositions | None = None
-    centralsweep : CentralSweeps     | None = None
-    scales       : AllScales         | None = None
-    supmat       : SupressionMatrix  | None = None
+    prm           : BeamlinePrm       | None = None
+    bpm           : BPMAnalysis       | None = None
+    blademap      : BladeMap          | None = None
+    positions     : AnalyzedPositions | None = None
+    centralsweeps : CentralSweeps     | None = None
+    scales        : AllScales         | None = None
+    supmat        : SupressionMatrix  | None = None
 
     @classmethod
     def from_hdf5(cls, anl_grp: h5py.Group) -> "DataAnalysis":
@@ -908,7 +908,7 @@ class DataAnalysis:
         positions = AnalyzedPositions.from_hdf5(anl_grp["positions"])
 
         # Central sweeps.
-        centralsweep = CentralSweeps.from_hdf5(anl_grp["central_sweeps"])
+        centralsweeps = CentralSweeps.from_hdf5(anl_grp["central_sweeps"])
 
         # Extract scaling factors and suppression matrices.
         scales = AllScales.from_hdf5(anl_grp["scales"])
@@ -917,13 +917,13 @@ class DataAnalysis:
         supmat = SupressionMatrix.from_hdf5(anl_grp["matrices"])
 
         return cls(
-            prm          = prm,
-            bpm          = bpm,
-            blademap     = blademap,
-            positions    = positions,
-            centralsweep = centralsweep,
-            scales       = scales,
-            supmat       = supmat,
+            prm           = prm,
+            bpm           = bpm,
+            blademap      = blademap,
+            positions     = positions,
+            centralsweeps = centralsweeps,
+            scales        = scales,
+            supmat        = supmat,
         )
 
 
