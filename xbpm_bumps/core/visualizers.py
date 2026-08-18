@@ -4,6 +4,11 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import logging
+import matplotlib.pyplot as plt
+import os
+
+from typing import Optional
+from pyparsing import Optional
 
 from .constants import FIGDPI
 from .config import Config
@@ -35,6 +40,8 @@ matplotlib.rcParams['legend.handletextpad'] = 0.8
 
 # Module logger
 logger = logging.getLogger(__name__)
+
+
 
 
 class BladeMapVisualizer:
@@ -124,43 +131,43 @@ class BladeMapVisualizer:
 
         return fig
 
-    @staticmethod
-    def plot_from_hdf5(blade_grp: np.ndarray) -> "matplotlib.figure.Figure":
-        """Create blade map figure from HDF5 dataset.
+    # @staticmethod
+    # def plot_from_hdf5(blade_grp: np.ndarray) -> "matplotlib.figure.Figure":
+    #     """Create blade map figure from HDF5 dataset.
 
-        Args:
-            blade_grp: HDF5 group containing blade_map data
+    #     Args:
+    #         blade_grp: HDF5 group containing blade_map data
 
-        Returns:
-            matplotlib.figure.Figure
-        """
-        import matplotlib.pyplot as plt
+    #     Returns:
+    #         matplotlib.figure.Figure
+    #     """
+    #     import matplotlib.pyplot as plt
 
-        # Load blade data and coordinates
-        to = blade_grp['to'][:]
-        ti = blade_grp['ti'][:]
-        bi = blade_grp['bi'][:]
-        bo = blade_grp['bo'][:]
-        x_coords = blade_grp['x_coords'][:]
-        y_coords = blade_grp['y_coords'][:]
-        extent = (x_coords[0], x_coords[-1], y_coords[0], y_coords[-1])
+    #     # Load blade data and coordinates
+    #     to = blade_grp['to'][:]
+    #     ti = blade_grp['ti'][:]
+    #     bi = blade_grp['bi'][:]
+    #     bo = blade_grp['bo'][:]
+    #     x_coords = blade_grp['x_coords'][:]
+    #     y_coords = blade_grp['y_coords'][:]
+    #     extent = (x_coords[0], x_coords[-1], y_coords[0], y_coords[-1])
 
-        # Create 2x2 figure: [[TI, TO], [BI, BO]]
-        fig, axes = plt.subplots(2, 2, figsize=(8, 5))
-        quad = [[ti, to], [bi, bo]]
-        names = [["TI", "TO"], ["BI", "BO"]]
+    #     # Create 2x2 figure: [[TI, TO], [BI, BO]]
+    #     fig, axes = plt.subplots(2, 2, figsize=(8, 5))
+    #     quad = [[ti, to], [bi, bo]]
+    #     names = [["TI", "TO"], ["BI", "BO"]]
 
-        for row in range(2):
-            for col in range(2):
-                ax = axes[row][col]
-                # Keep orientation consistent with live plotting path.
-                ax.imshow(quad[row][col], extent=extent)
-                ax.set_xlabel(u"$x$ [$\\mu$rad]", fontsize=14)
-                ax.set_ylabel(u"$y$ [$\\mu$rad]", fontsize=14)
-                ax.set_title(names[row][col])
+    #     for row in range(2):
+    #         for col in range(2):
+    #             ax = axes[row][col]
+    #             # Keep orientation consistent with live plotting path.
+    #             ax.imshow(quad[row][col], extent=extent)
+    #             ax.set_xlabel(u"$x$ [$\\mu$rad]", fontsize=14)
+    #             ax.set_ylabel(u"$y$ [$\\mu$rad]", fontsize=14)
+    #             ax.set_title(names[row][col])
 
-        fig.tight_layout(pad=0., w_pad=-17., h_pad=2.)
-        return fig
+    #     fig.tight_layout(pad=0., w_pad=-17., h_pad=2.)
+    #     return fig
 
 
 class PositionVisualizer:
@@ -338,6 +345,82 @@ class PositionVisualizer:
             ax.legend(handles, labels)
         ax.grid()
 
+    def inheritance_from_processors(self,
+            show : bool,
+            calc_type: str,
+            nosuppress: bool,
+            pair_result: dict,
+            cross_result: dict) -> None:
+        """Legacy structures to be transferred to visualizers."""
+        #
+        # From analyze_central_sweeps.
+        #
+        if show:
+            fig = SweepVisualizer.plot_from_arrays(
+                self.range_h,
+                self.range_v,
+                self.sweepline_h,
+                self.sweepline_v,
+                xbpm_dist=self.prm_bml.xbpmdist
+            )
+
+            if self.prm_gen.outputfile:
+                outfile = f"xbpm_sweeps_{self.prm_bml.beamline}.png"
+                fig.savefig(outfile, dpi=FIGDPI)
+                print(f" Figure of central sweeps saved to file {outfile}.\n")
+
+        #
+        # From _scale_positions.
+        #
+        
+        # Set raw (R) or transformed (T) graph type.
+        transform = "R" if nosuppress else "T"
+
+        # Build title map for visualizer with formatted titles from registry.
+        title_map = {
+            'total'   : _Title('xbpm_positions', 'total',
+                               beamline=self.prm_bml.beamline,
+                               rort=transform,
+                               calc_type=calc_type),
+            'roi'     : _Title('xbpm_positions', 'roi',
+                               beamline=self.prm_bml.beamline,
+                               rort=transform,
+                               calc_type=calc_type),
+            'heatmap' : _Title('xbpm_positions', 'heatmap',
+                               beamline=self.prm_bml.beamline,
+                               rort=transform,
+                               calc_type=calc_type),
+        }
+     
+        # Visualize
+        # visualizer = PositionVisualizer(self.prm_gen, titles=title_map)
+        # visualizer.show_position_results(
+        #     pos_nom_h, pos_nom_v,
+        #     pos_all_h_scaled, pos_all_v_scaled,
+        #     pos_roi_h_scaled, pos_roi_v_scaled,
+        #     pos_nom_h_roi, pos_nom_v_roi,
+        #     diffroi
+        # )
+
+        #
+        # From _compile_results.
+        #
+        pair_visualizer  = pair_result['visualizer']
+        cross_visualizer = cross_result['visualizer']
+
+        # Save figures if requested
+        if self.prm_gen.outputfile:
+            outdir = '.'
+            sup = "raw" if nosuppress else "scaled"
+            bl = self.prm_bml.beamline
+
+            outfile_p = os.path.join(outdir, f"xbpm_pair_pos_{sup}_{bl}.png")
+            pair_visualizer.save_figure(outfile_p)
+
+            outfile_c = os.path.join(outdir, f"xbpm_cross_pos_{sup}_{bl}.png")
+            cross_visualizer.save_figure(outfile_c)
+
+
     def _plot_position_differences(self, ax: plt.Axes,
                                    diffroi: np.ndarray,
                                    pos_nom_h: np.ndarray,
@@ -434,187 +517,187 @@ class PositionVisualizer:
             self.fig.savefig(filename, dpi=FIGDPI, bbox_inches='tight')
             logger.info("Figure saved to %s", filename)
 
-    @staticmethod
-    def plot_from_hdf5(pos_data, beamline: str = "",
-                       rort: str = "", calc: str = "",
-                       roi_bounds: dict = None,
-                       roi_size: tuple = None):
-        """Create position comparison figure from HDF5 dataset.
+    # @staticmethod
+    # def plot_from_hdf5(pos_data, beamline: str = "",
+    #                    rort: str = "", calc: str = "",
+    #                    roi_bounds: dict = None,
+    #                    roi_size: tuple = None):
+    #     """Create position comparison figure from HDF5 dataset.
 
-        Args:
-            pos_data: HDF5 dataset with structured array containing
-                position data.
-            beamline: Optional beamline code (e.g. MNC1) for title templates.
-            rort: Optional transform mode string (e.g. 'raw', 'Transf.').
-            calc: Optional calculation type ('pairwise' or 'cross').
+    #     Args:
+    #         pos_data: HDF5 dataset with structured array containing
+    #             position data.
+    #         beamline: Optional beamline code (e.g. MNC1) for title templates.
+    #         rort: Optional transform mode string (e.g. 'raw', 'Transf.').
+    #         calc: Optional calculation type ('pairwise' or 'cross').
 
-        Returns:
-            matplotlib.figure.Figure with 3 subplots
-        """
-        import matplotlib.pyplot as plt
+    #     Returns:
+    #         matplotlib.figure.Figure with 3 subplots
+    #     """
+    #     import matplotlib.pyplot as plt
 
-        if not hasattr(pos_data.dtype, 'names') or not pos_data.dtype.names:
-            raise ValueError("pos_data is not a structured array")
+    #     if not hasattr(pos_data.dtype, 'names') or not pos_data.dtype.names:
+    #         raise ValueError("pos_data is not a structured array")
 
-        # Extract nominal and measured positions
-        nom_x = pos_data['x_nom'][:]
-        nom_y = pos_data['y_nom'][:]
+    #     # Extract nominal and measured positions
+    #     nom_x = pos_data['x_nom'][:]
+    #     nom_y = pos_data['y_nom'][:]
 
-        # Determine measured field names based on position type
-        if 'x_raw' in pos_data.dtype.names:
-            meas_x = pos_data['x_raw'][:]
-            meas_y = pos_data['y_raw'][:]
-        elif 'x_scaled' in pos_data.dtype.names:
-            meas_x = pos_data['x_scaled'][:]
-            meas_y = pos_data['y_scaled'][:]
-        elif 'x' in pos_data.dtype.names:
-            meas_x = pos_data['x'][:]
-            meas_y = pos_data['y'][:]
-        else:
-            raise ValueError("Cannot find measured position fields in dataset")
+    #     # Determine measured field names based on position type
+    #     if 'x_raw' in pos_data.dtype.names:
+    #         meas_x = pos_data['x_raw'][:]
+    #         meas_y = pos_data['y_raw'][:]
+    #     elif 'x_scaled' in pos_data.dtype.names:
+    #         meas_x = pos_data['x_scaled'][:]
+    #         meas_y = pos_data['y_scaled'][:]
+    #     elif 'x' in pos_data.dtype.names:
+    #         meas_x = pos_data['x'][:]
+    #         meas_y = pos_data['y'][:]
+    #     else:
+    #         raise ValueError("Cannot find measured position fields in dataset")
 
-        # Calculate differences
-        diff_x = meas_x - nom_x
-        diff_y = meas_y - nom_y
-        diff_rms = np.sqrt(diff_x**2 + diff_y**2)
+    #     # Calculate differences
+    #     diff_x = meas_x - nom_x
+    #     diff_y = meas_y - nom_y
+    #     diff_rms = np.sqrt(diff_x**2 + diff_y**2)
 
-        # Create 3-subplot figure with wider proportions
-        fig, (ax1, ax2, ax3) = plt.subplots(
-            1, 3, figsize=(20, 5), constrained_layout=True
-        )
+    #     # Create 3-subplot figure with wider proportions
+    #     fig, (ax1, ax2, ax3) = plt.subplots(
+    #         1, 3, figsize=(20, 5), constrained_layout=True
+    #     )
 
-        beamline_ctx = beamline or pos_data.attrs.get('beamline', '')
-        t_total = _Title('xbpm_positions', 'total',   beamline_ctx, rort, calc)
-        t_roi   = _Title('xbpm_positions', 'roi',     beamline_ctx, rort, calc)
-        t_heat  = _Title('xbpm_positions', 'heatmap', beamline_ctx, rort, calc)
+    #     beamline_ctx = beamline or pos_data.attrs.get('beamline', '')
+    #     t_total = _Title('xbpm_positions', 'total',   beamline_ctx, rort, calc)
+    #     t_roi   = _Title('xbpm_positions', 'roi',     beamline_ctx, rort, calc)
+    #     t_heat  = _Title('xbpm_positions', 'heatmap', beamline_ctx, rort, calc)
 
-        # Plot 1: All positions on full grid
-        ax1.plot(meas_x, meas_y, 'bo', label='Calc.')
-        ax1.plot(nom_x, nom_y, 'r+', label='Nom.', markersize=8)
-        ax1.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)
-        ax1.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
-        ax1.set_title(t_total or _Title('xbpm_positions', 'total'))
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-        PositionVisualizer._apply_equal_limits(
-            ax1, meas_x, meas_y, nom_x, nom_y
-        )
+    #     # Plot 1: All positions on full grid
+    #     ax1.plot(meas_x, meas_y, 'bo', label='Calc.')
+    #     ax1.plot(nom_x, nom_y, 'r+', label='Nom.', markersize=8)
+    #     ax1.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)
+    #     ax1.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
+    #     ax1.set_title(t_total or _Title('xbpm_positions', 'total'))
+    #     ax1.legend()
+    #     ax1.grid(True, alpha=0.3)
+    #     PositionVisualizer._apply_equal_limits(
+    #         ax1, meas_x, meas_y, nom_x, nom_y
+    #     )
 
-        # Reconstruct ROI and heatmap using index-based square-grid recovery
-        # when possible. This matches live plotting behavior better than
-        # coordinate masking for XBPM exports.
-        roi_meas_x = np.array([])
-        roi_meas_y = np.array([])
-        roi_nom_x = np.array([])
-        roi_nom_y = np.array([])
-        roi_diff_2d = None
-        roi_extent = None
+    #     # Reconstruct ROI and heatmap using index-based square-grid recovery
+    #     # when possible. This matches live plotting behavior better than
+    #     # coordinate masking for XBPM exports.
+    #     roi_meas_x = np.array([])
+    #     roi_meas_y = np.array([])
+    #     roi_nom_x = np.array([])
+    #     roi_nom_y = np.array([])
+    #     roi_diff_2d = None
+    #     roi_extent = None
 
-        n_pts = int(len(nom_x))
-        n_side = int(round(np.sqrt(n_pts)))
-        use_square_grid = (n_pts > 0 and n_side * n_side == n_pts)
+    #     n_pts = int(len(nom_x))
+    #     n_side = int(round(np.sqrt(n_pts)))
+    #     use_square_grid = (n_pts > 0 and n_side * n_side == n_pts)
 
-        if use_square_grid and (calc or rort):
-            nom_x_2d = np.asarray(nom_x, dtype=float).reshape(n_side, n_side)
-            nom_y_2d = np.asarray(nom_y, dtype=float).reshape(n_side, n_side)
-            meas_x_2d = np.asarray(meas_x, dtype=float).reshape(n_side, n_side)
-            meas_y_2d = np.asarray(meas_y, dtype=float).reshape(n_side, n_side)
-            diff_2d_full = np.asarray(diff_rms, dtype=float).reshape(n_side,
-                                                                     n_side)
+    #     if use_square_grid and (calc or rort):
+    #         nom_x_2d = np.asarray(nom_x, dtype=float).reshape(n_side, n_side)
+    #         nom_y_2d = np.asarray(nom_y, dtype=float).reshape(n_side, n_side)
+    #         meas_x_2d = np.asarray(meas_x, dtype=float).reshape(n_side, n_side)
+    #         meas_y_2d = np.asarray(meas_y, dtype=float).reshape(n_side, n_side)
+    #         diff_2d_full = np.asarray(diff_rms, dtype=float).reshape(n_side,
+    #                                                                  n_side)
 
-            # Priority 1: use explicitly stored roi_size from HDF5 attrs.
-            if roi_size is not None:
-                roi_h, roi_v = roi_size
-                roi_side = min(int(roi_h), int(roi_v), n_side)
-            else:
-                # Priority 2: infer from coordinate bounds.
-                roi_side = PositionVisualizer._infer_roi_side_from_bounds(
-                    nom_x_2d, nom_y_2d, roi_bounds
-                )
-            # Priority 3: fall back to half the grid.
-            if roi_side is None or roi_side <= 0:
-                roi_side = max(1, n_side // 2)
+    #         # Priority 1: use explicitly stored roi_size from HDF5 attrs.
+    #         if roi_size is not None:
+    #             roi_h, roi_v = roi_size
+    #             roi_side = min(int(roi_h), int(roi_v), n_side)
+    #         else:
+    #             # Priority 2: infer from coordinate bounds.
+    #             roi_side = PositionVisualizer._infer_roi_side_from_bounds(
+    #                 nom_x_2d, nom_y_2d, roi_bounds
+    #             )
+    #         # Priority 3: fall back to half the grid.
+    #         if roi_side is None or roi_side <= 0:
+    #             roi_side = max(1, n_side // 2)
 
-            sl = PositionVisualizer._center_slice(n_side, roi_side)
+    #         sl = PositionVisualizer._center_slice(n_side, roi_side)
 
-            roi_nom_x_2d = nom_x_2d[sl, sl]
-            roi_nom_y_2d = nom_y_2d[sl, sl]
-            roi_meas_x_2d = meas_x_2d[sl, sl]
-            roi_meas_y_2d = meas_y_2d[sl, sl]
-            roi_diff_2d = diff_2d_full[sl, sl]
+    #         roi_nom_x_2d = nom_x_2d[sl, sl]
+    #         roi_nom_y_2d = nom_y_2d[sl, sl]
+    #         roi_meas_x_2d = meas_x_2d[sl, sl]
+    #         roi_meas_y_2d = meas_y_2d[sl, sl]
+    #         roi_diff_2d = diff_2d_full[sl, sl]
 
-            roi_nom_x = roi_nom_x_2d.ravel()
-            roi_nom_y = roi_nom_y_2d.ravel()
-            roi_meas_x = roi_meas_x_2d.ravel()
-            roi_meas_y = roi_meas_y_2d.ravel()
+    #         roi_nom_x = roi_nom_x_2d.ravel()
+    #         roi_nom_y = roi_nom_y_2d.ravel()
+    #         roi_meas_x = roi_meas_x_2d.ravel()
+    #         roi_meas_y = roi_meas_y_2d.ravel()
 
-            roi_extent = [
-                float(np.nanmin(roi_nom_x_2d)),
-                float(np.nanmax(roi_nom_x_2d)),
-                float(np.nanmin(roi_nom_y_2d)),
-                float(np.nanmax(roi_nom_y_2d)),
-            ]
-        else:
-            roi_mask = PositionVisualizer._build_roi_mask(
-                nom_x, nom_y, roi_bounds
-            )
-            roi_meas_x = meas_x[roi_mask]
-            roi_meas_y = meas_y[roi_mask]
-            roi_nom_x = nom_x[roi_mask]
-            roi_nom_y = nom_y[roi_mask]
+    #         roi_extent = [
+    #             float(np.nanmin(roi_nom_x_2d)),
+    #             float(np.nanmax(roi_nom_x_2d)),
+    #             float(np.nanmin(roi_nom_y_2d)),
+    #             float(np.nanmax(roi_nom_y_2d)),
+    #         ]
+    #     else:
+    #         roi_mask = PositionVisualizer._build_roi_mask(
+    #             nom_x, nom_y, roi_bounds
+    #         )
+    #         roi_meas_x = meas_x[roi_mask]
+    #         roi_meas_y = meas_y[roi_mask]
+    #         roi_nom_x = nom_x[roi_mask]
+    #         roi_nom_y = nom_y[roi_mask]
 
-        if len(roi_meas_x) > 0:
-            ax2.plot(roi_meas_x, roi_meas_y, 'bo', label='Calc.')
-            ax2.plot(roi_nom_x, roi_nom_y, 'r+', label='Nom.', markersize=8)
-        else:
-            ax2.plot(meas_x, meas_y, 'bo', label='Calc.')
-            ax2.plot(nom_x, nom_y, 'r+', label='Nom.', markersize=8)
+    #     if len(roi_meas_x) > 0:
+    #         ax2.plot(roi_meas_x, roi_meas_y, 'bo', label='Calc.')
+    #         ax2.plot(roi_nom_x, roi_nom_y, 'r+', label='Nom.', markersize=8)
+    #     else:
+    #         ax2.plot(meas_x, meas_y, 'bo', label='Calc.')
+    #         ax2.plot(nom_x, nom_y, 'r+', label='Nom.', markersize=8)
 
-        ax2.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)
-        ax2.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
-        ax2.set_title(t_roi or _Title('xbpm_positions', 'roi'))
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
-        PositionVisualizer._apply_equal_limits(
-            ax2,
-            roi_meas_x if len(roi_meas_x) > 0 else meas_x,
-            roi_meas_y if len(roi_meas_y) > 0 else meas_y,
-            roi_nom_x if len(roi_nom_x) > 0 else nom_x,
-            roi_nom_y if len(roi_nom_y) > 0 else nom_y,
-        )
+    #     ax2.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)
+    #     ax2.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
+    #     ax2.set_title(t_roi or _Title('xbpm_positions', 'roi'))
+    #     ax2.legend()
+    #     ax2.grid(True, alpha=0.3)
+    #     PositionVisualizer._apply_equal_limits(
+    #         ax2,
+    #         roi_meas_x if len(roi_meas_x) > 0 else meas_x,
+    #         roi_meas_y if len(roi_meas_y) > 0 else meas_y,
+    #         roi_nom_x if len(roi_nom_x) > 0 else nom_x,
+    #         roi_nom_y if len(roi_nom_y) > 0 else nom_y,
+    #     )
 
-        # Plot 3: RMS differences in ROI, matching live plots.
-        if roi_diff_2d is not None and roi_extent is not None:
-            im = ax3.imshow(
-                roi_diff_2d,
-                cmap='viridis',
-                origin='lower',
-                extent=roi_extent,
-                aspect='auto',
-            )
-        else:
-            hm_nom_x = roi_nom_x if len(roi_nom_x) > 0 else nom_x
-            hm_nom_y = roi_nom_y if len(roi_nom_y) > 0 else nom_y
-            hm_diff = diff_rms[roi_mask] if len(roi_meas_x) > 0 else diff_rms
+    #     # Plot 3: RMS differences in ROI, matching live plots.
+    #     if roi_diff_2d is not None and roi_extent is not None:
+    #         im = ax3.imshow(
+    #             roi_diff_2d,
+    #             cmap='viridis',
+    #             origin='lower',
+    #             extent=roi_extent,
+    #             aspect='auto',
+    #         )
+    #     else:
+    #         hm_nom_x = roi_nom_x if len(roi_nom_x) > 0 else nom_x
+    #         hm_nom_y = roi_nom_y if len(roi_nom_y) > 0 else nom_y
+    #         hm_diff = diff_rms[roi_mask] if len(roi_meas_x) > 0 else diff_rms
 
-            x_grid, y_grid, diff_2d = PositionVisualizer._grid_from_points(
-                hm_nom_x, hm_nom_y, hm_diff
-            )
-            im = ax3.pcolormesh(x_grid, y_grid, diff_2d,
-                                cmap='viridis', shading='auto')
+    #         x_grid, y_grid, diff_2d = PositionVisualizer._grid_from_points(
+    #             hm_nom_x, hm_nom_y, hm_diff
+    #         )
+    #         im = ax3.pcolormesh(x_grid, y_grid, diff_2d,
+    #                             cmap='viridis', shading='auto')
 
-        # No grid for heatmaps, and set aspect ratio to match data
-        ax3.set_aspect('equal', adjustable='box')
-        cbar = plt.colorbar(
-            im, ax=ax3, label='RMS Difference [$\\mu$m]',
-            fraction=0.046, pad=0.04
-        )
-        cbar.set_label('RMS Difference [$\\mu$m]', fontsize=14)
-        ax3.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)
-        ax3.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
-        ax3.set_title(t_heat or _Title('xbpm_positions', 'heatmap'))
+    #     # No grid for heatmaps, and set aspect ratio to match data
+    #     ax3.set_aspect('equal', adjustable='box')
+    #     cbar = plt.colorbar(
+    #         im, ax=ax3, label='RMS Difference [$\\mu$m]',
+    #         fraction=0.046, pad=0.04
+    #     )
+    #     cbar.set_label('RMS Difference [$\\mu$m]', fontsize=14)
+    #     ax3.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)
+    #     ax3.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
+    #     ax3.set_title(t_heat or _Title('xbpm_positions', 'heatmap'))
 
-        return fig
+    #     return fig
 
     @staticmethod
     def _build_roi_mask(nom_x: np.ndarray, nom_y: np.ndarray,
@@ -790,63 +873,63 @@ class SweepVisualizer:
         fig.tight_layout()
         return fig
 
-    @staticmethod
-    def plot_from_hdf5(h_data: np.ndarray, v_data: np.ndarray,
-                       figsize=(12, 5)):
-        """Create sweep figure from HDF5 datasets (reconstruction path).
+    # @staticmethod
+    # def plot_from_hdf5(h_data: np.ndarray, v_data: np.ndarray,
+    #                    figsize=(12, 5)):
+    #     """Create sweep figure from HDF5 datasets (reconstruction path).
 
-        This reads pre-calculated sweep positions from HDF5 and plots them
-        with the same formatting as canonical plot_central_sweeps.
+    #     This reads pre-calculated sweep positions from HDF5 and plots them
+    #     with the same formatting as canonical plot_central_sweeps.
 
-        Args:
-            h_data: HDF5 dataset for horizontal sweep (structured array)
-            v_data: HDF5 dataset for vertical sweep (structured array)
-            figsize: Figure size tuple
+    #     Args:
+    #         h_data: HDF5 dataset for horizontal sweep (structured array)
+    #         v_data: HDF5 dataset for vertical sweep (structured array)
+    #         figsize: Figure size tuple
 
-        Returns:
-            matplotlib.figure.Figure
-        """
-        # Select fitted data.
-        if h_data is not None and 'y_fit' in h_data.dtype.names:
-            range_h    = h_data['x_index'][:]
-            pos_h      = h_data['y_calc'][:]
-            fit_h_line = h_data['y_fit'][:]
-            fit_prm_h  = np.array([h_data.attrs['k'], h_data.attrs['delta']])
+    #     Returns:
+    #         matplotlib.figure.Figure
+    #     """
+    #     # Select fitted data.
+    #     if h_data is not None and 'y_fit' in h_data.dtype.names:
+    #         range_h    = h_data['x_index'][:]
+    #         pos_h      = h_data['y_calc'][:]
+    #         fit_h_line = h_data['y_fit'][:]
+    #         fit_prm_h  = np.array([h_data.attrs['k'], h_data.attrs['delta']])
 
-        if v_data is not None and 'x_fit' in v_data.dtype.names:
-            range_v    = v_data['y_index'][:]
-            pos_v      = v_data['x_calc'][:]
-            fit_v_line = v_data['x_fit'][:]
-            fit_prm_v  = np.array([v_data.attrs['k'], v_data.attrs['delta']])
+    #     if v_data is not None and 'x_fit' in v_data.dtype.names:
+    #         range_v    = v_data['y_index'][:]
+    #         pos_v      = v_data['x_calc'][:]
+    #         fit_v_line = v_data['x_fit'][:]
+    #         fit_prm_v  = np.array([v_data.attrs['k'], v_data.attrs['delta']])
 
-        if (fit_h_line is None and
-            'k' in h_data.attrs and
-            'delta' in h_data.attrs):
-            fit_prm_h = np.array([h_data.attrs['k'], h_data.attrs['delta']])
-        elif (fit_h_line is None and
-              range_h is not None and
-              'y_fit' in h_data.dtype.names):
-            try:
-                fit_prm_h = np.polyfit(range_h, h_data['y_fit'][:], deg=1)
-            except Exception:
-                fit_prm_h = None
+    #     if (fit_h_line is None and
+    #         'k' in h_data.attrs and
+    #         'delta' in h_data.attrs):
+    #         fit_prm_h = np.array([h_data.attrs['k'], h_data.attrs['delta']])
+    #     elif (fit_h_line is None and
+    #           range_h is not None and
+    #           'y_fit' in h_data.dtype.names):
+    #         try:
+    #             fit_prm_h = np.polyfit(range_h, h_data['y_fit'][:], deg=1)
+    #         except Exception:
+    #             fit_prm_h = None
 
-        if (fit_v_line is None and 'k' in v_data.attrs and
-            'delta' in v_data.attrs):
-            fit_prm_v = np.array([v_data.attrs['k'], v_data.attrs['delta']])
-        elif (fit_v_line is None and range_v is not None
-                and 'x_fit' in v_data.dtype.names):
-            try:
-                fit_prm_v = np.polyfit(range_v, v_data['x_fit'][:], deg=1)
-            except Exception:
-                fit_prm_v = None
+    #     if (fit_v_line is None and 'k' in v_data.attrs and
+    #         'delta' in v_data.attrs):
+    #         fit_prm_v = np.array([v_data.attrs['k'], v_data.attrs['delta']])
+    #     elif (fit_v_line is None and range_v is not None
+    #             and 'x_fit' in v_data.dtype.names):
+    #         try:
+    #             fit_prm_v = np.polyfit(range_v, v_data['x_fit'][:], deg=1)
+    #         except Exception:
+    #             fit_prm_v = None
 
-        return SweepVisualizer.plot_from_arrays(
-            range_h, range_v, pos_h, pos_v,
-            fit_h=fit_prm_h, fit_v=fit_prm_v,
-            fit_h_line=fit_h_line, fit_v_line=fit_v_line,
-            xbpm_dist=1.0, figsize=figsize
-        )
+    #     return SweepVisualizer.plot_from_arrays(
+    #         range_h, range_v, pos_h, pos_v,
+    #         fit_h=fit_prm_h, fit_v=fit_prm_v,
+    #         fit_h_line=fit_h_line, fit_v_line=fit_v_line,
+    #         xbpm_dist=1.0, figsize=figsize
+    #     )
 
 
 class BladeCurrentVisualizer:
@@ -861,9 +944,13 @@ class BladeCurrentVisualizer:
     """
 
     @staticmethod
-    def _plot_blade(ax: plt.Axes, rng: np.ndarray,
-                    y: np.ndarray, yerr: np.ndarray,
-                    marker: str, blade_name: str):
+    def _plot_blade(
+        ax: plt.Axes,
+        rng: np.ndarray,
+        y: np.ndarray,
+        yerr: np.ndarray,
+        marker: str,
+        blade_name: str) -> Optional[plt.Line2D]:
         if yerr is not None:
             container = ax.errorbar(
                 rng, y, yerr=yerr, fmt=marker, label=blade_name, zorder=2
@@ -893,59 +980,59 @@ class BladeCurrentVisualizer:
             coef = np.polyfit(rng, y, deg=1, w=weights)
         return coef
 
-    @staticmethod
-    def plot_from_hdf5(h_data: np.ndarray, v_data: np.ndarray,
-                       figsize: tuple = (10, 5)):
-        """Create blade current figure from HDF5 datasets.
+    # @staticmethod
+    # def plot_from_hdf5(h_data: np.ndarray, v_data: np.ndarray,
+    #                    figsize: tuple = (10, 5)):
+    #     """Create blade current figure from HDF5 datasets.
 
-        Extracts blade data and uses canonical plot_blade_center_from_dicts
-        for consistent formatting across live and reconstruction paths.
+    #     Extracts blade data and uses canonical plot_blade_center_from_dicts
+    #     for consistent formatting across live and reconstruction paths.
 
-        Args:
-            h_data: HDF5 dataset for horizontal blades (structured array)
-            v_data: HDF5 dataset for vertical blades (structured array)
-            figsize: Figure size tuple
+    #     Args:
+    #         h_data: HDF5 dataset for horizontal blades (structured array)
+    #         v_data: HDF5 dataset for vertical blades (structured array)
+    #         figsize: Figure size tuple
 
-        Returns:
-            matplotlib.figure.Figure
-        """
-        # Extract blade data from HDF5 into dicts matching live format
-        blades_h = None
-        range_h = None
-        if h_data is not None:
-            rng = h_data['x_index'][:]
-            blades_h = {}
-            for blade_name in ['to', 'ti', 'bi', 'bo']:
-                vals = h_data[blade_name][:]
-                err_name = f's_{blade_name}'
-                errs = (h_data[err_name][:]
-                        if err_name in h_data.dtype.names else None)
-                if errs is not None:
-                    blades_h[blade_name] = np.column_stack([vals, errs])
-                else:
-                    blades_h[blade_name] = vals
-            range_h = rng
+    #     Returns:
+    #         matplotlib.figure.Figure
+    #     """
+    #     # Extract blade data from HDF5 into dicts matching live format
+    #     blades_h = None
+    #     range_h = None
+    #     if h_data is not None:
+    #         rng = h_data['x_index'][:]
+    #         blades_h = {}
+    #         for blade_name in ['to', 'ti', 'bi', 'bo']:
+    #             vals = h_data[blade_name][:]
+    #             err_name = f's_{blade_name}'
+    #             errs = (h_data[err_name][:]
+    #                     if err_name in h_data.dtype.names else None)
+    #             if errs is not None:
+    #                 blades_h[blade_name] = np.column_stack([vals, errs])
+    #             else:
+    #                 blades_h[blade_name] = vals
+    #         range_h = rng
 
-        blades_v = None
-        range_v = None
-        if v_data is not None:
-            rng = v_data['y_index'][:]
-            blades_v = {}
-            for blade_name in ['to', 'ti', 'bi', 'bo']:
-                vals = v_data[blade_name][:]
-                err_name = f's_{blade_name}'
-                errs = (v_data[err_name][:]
-                        if err_name in v_data.dtype.names else None)
-                if errs is not None:
-                    blades_v[blade_name] = np.column_stack([vals, errs])
-                else:
-                    blades_v[blade_name] = vals
-            range_v = rng
+    #     blades_v = None
+    #     range_v = None
+    #     if v_data is not None:
+    #         rng = v_data['y_index'][:]
+    #         blades_v = {}
+    #         for blade_name in ['to', 'ti', 'bi', 'bo']:
+    #             vals = v_data[blade_name][:]
+    #             err_name = f's_{blade_name}'
+    #             errs = (v_data[err_name][:]
+    #                     if err_name in v_data.dtype.names else None)
+    #             if errs is not None:
+    #                 blades_v[blade_name] = np.column_stack([vals, errs])
+    #             else:
+    #                 blades_v[blade_name] = vals
+    #         range_v = rng
 
-        # Use canonical plotting function
-        return BladeCurrentVisualizer.plot_blade_center_from_dicts(
-            blades_h, blades_v, range_h, range_v, ""
-            )
+    #     # Use canonical plotting function
+    #     return BladeCurrentVisualizer.plot_blade_center_from_dicts(
+    #         blades_h, blades_v, range_h, range_v, ""
+    #         )
 
     @staticmethod
     def _plot_side(ax: plt.Axes, blades: dict,
@@ -999,200 +1086,200 @@ class BladeCurrentVisualizer:
         ax.grid()
         ax.legend(fontsize=11)
 
-    @staticmethod
-    def _plot_blades_common(blades_h: dict, blades_v: dict,
-                            range_h: np.ndarray, range_v: np.ndarray,
-                            attrs_h: dict = None, attrs_v: dict = None,
-                            beamline: str = "", figsize: tuple = (10, 5)):
-        """Shared plotting path for blade currents (live and HDF5)."""
-        # Keep fit lines consistent and visually overlaid on data.
-        fit_style = {"linestyle": "--",
-                 "linewidth": 2.0,
-                 "alpha": 1.0,
-                 "zorder": 6}
+    # @staticmethod
+    # def _plot_blades_common(blades_h: dict, blades_v: dict,
+    #                         range_h: np.ndarray, range_v: np.ndarray,
+    #                         attrs_h: dict = None, attrs_v: dict = None,
+    #                         beamline: str = "", figsize: tuple = (10, 5)):
+    #     """Shared plotting path for blade currents (live and HDF5)."""
+    #     # Keep fit lines consistent and visually overlaid on data.
+    #     fit_style = {"linestyle": "--",
+    #              "linewidth": 2.0,
+    #              "alpha": 1.0,
+    #              "zorder": 6}
 
-        fig, (axh, axv) = plt.subplots(1, 2, figsize=figsize)
+    #     fig, (axh, axv) = plt.subplots(1, 2, figsize=figsize)
 
-        BladeCurrentVisualizer._plot_side(
-            axh, blades_h, range_h, attrs_h,
-            [('to', 'o-'), ('ti', 's-'), ('bi', 'd-'), ('bo', '^-')],
-            (attrs_h or {}).get('xlabel_blades', 'x [μrad]'),
-            fit_style, 'horizontal')
-        BladeCurrentVisualizer._plot_side(
-            axv, blades_v, range_v, attrs_v,
-            [('to', 'o-'), ('ti', 's-'), ('bi', 'd-'), ('bo', 'v-')],
-            (attrs_v or {}).get('xlabel_blades', 'y [μrad]'),
-            fit_style, 'vertical')
+    #     BladeCurrentVisualizer._plot_side(
+    #         axh, blades_h, range_h, attrs_h,
+    #         [('to', 'o-'), ('ti', 's-'), ('bi', 'd-'), ('bo', '^-')],
+    #         (attrs_h or {}).get('xlabel_blades', 'x [μrad]'),
+    #         fit_style, 'horizontal')
+    #     BladeCurrentVisualizer._plot_side(
+    #         axv, blades_v, range_v, attrs_v,
+    #         [('to', 'o-'), ('ti', 's-'), ('bi', 'd-'), ('bo', 'v-')],
+    #         (attrs_v or {}).get('xlabel_blades', 'y [μrad]'),
+    #         fit_style, 'vertical')
 
-        ylabel = (u"$I$ [# counts]" if beamline[:3] in ["MGN", "MNC"]
-                 else u"$I$ [A]")
-        axh.set_ylabel(ylabel, fontsize=14)
-        axv.set_ylabel(ylabel, fontsize=14)
-        axh.set_title(_Title('blades_at_sweeps', 'h'))
-        axv.set_title(_Title('blades_at_sweeps', 'v'))
+    #     ylabel = (u"$I$ [# counts]" if beamline[:3] in ["MGN", "MNC"]
+    #              else u"$I$ [A]")
+    #     axh.set_ylabel(ylabel, fontsize=14)
+    #     axv.set_ylabel(ylabel, fontsize=14)
+    #     axh.set_title(_Title('blades_at_sweeps', 'h'))
+    #     axv.set_title(_Title('blades_at_sweeps', 'v'))
 
-        fig.suptitle(
-            _Title('blades_at_sweeps', 'suptitle'), fontsize=12, fontweight='bold'
-        )
-        fig.tight_layout()
-        return fig
+    #     fig.suptitle(
+    #         _Title('blades_at_sweeps', 'suptitle'), fontsize=12, fontweight='bold'
+    #     )
+    #     fig.tight_layout()
+    #     return fig
 
     # ============================================================================
     # Canonical plotting functions for live and HDF5 reconstruction paths
     # ============================================================================
-    @staticmethod
-    def plot_central_sweeps(range_h: np.ndarray, range_v: np.ndarray,
-                            blades_h: dict, blades_v: dict, xbpmdist: float):
-        """Generate central sweep position plots (canonical version).
+    # @staticmethod
+    # def plot_central_sweeps(range_h: np.ndarray, range_v: np.ndarray,
+    #                         blades_h: dict, blades_v: dict, xbpmdist: float):
+    #     """Generate central sweep position plots (canonical version).
 
-        This is the tuned plotting implementation used by both live analysis
-        and HDF5 reconstruction. It encapsulates the exact visualization
-        semantics for the "Positions along sweeps" tab.
+    #     This is the tuned plotting implementation used by both live analysis
+    #     and HDF5 reconstruction. It encapsulates the exact visualization
+    #     semantics for the "Positions along sweeps" tab.
 
-        Args:
-            range_h: Horizontal sweep range array.
-            range_v: Vertical sweep range array.
-            blades_h: Horizontal blades dict with 'to', 'ti', 'bi', 'bo' keys.
-            blades_v: Vertical blades dict with 'to', 'ti', 'bi', 'bo' keys.
-            xbpmdist: Scaling distance for physical units conversion.
+    #     Args:
+    #         range_h: Horizontal sweep range array.
+    #         range_v: Vertical sweep range array.
+    #         blades_h: Horizontal blades dict with 'to', 'ti', 'bi', 'bo' keys.
+    #         blades_v: Vertical blades dict with 'to', 'ti', 'bi', 'bo' keys.
+    #         xbpmdist: Scaling distance for physical units conversion.
 
-        Returns:
-            matplotlib.figure.Figure
-        """
-        # Calculate positions from blade data
-        pos_ch_v = None
-        fit_ch_v = None
-        if blades_h is not None and len(range_h) > 1:
-            to_ch = blades_h["to"]
-            ti_ch = blades_h["ti"]
-            bi_ch = blades_h["bi"]
-            bo_ch = blades_h["bo"]
+    #     Returns:
+    #         matplotlib.figure.Figure
+    #     """
+    #     # Calculate positions from blade data
+    #     pos_ch_v = None
+    #     fit_ch_v = None
+    #     if blades_h is not None and len(range_h) > 1:
+    #         to_ch = blades_h["to"]
+    #         ti_ch = blades_h["ti"]
+    #         bi_ch = blades_h["bi"]
+    #         bo_ch = blades_h["bo"]
 
-            pos_to_ti_v = (to_ch + ti_ch)
-            pos_bi_bo_v = (bo_ch + bi_ch)
-            pos_ch_v = ((pos_to_ti_v - pos_bi_bo_v) /
-                        (pos_to_ti_v + pos_bi_bo_v))
-            fit_ch_v = np.polyfit(range_h, pos_ch_v, deg=1)
+    #         pos_to_ti_v = (to_ch + ti_ch)
+    #         pos_bi_bo_v = (bo_ch + bi_ch)
+    #         pos_ch_v = ((pos_to_ti_v - pos_bi_bo_v) /
+    #                     (pos_to_ti_v + pos_bi_bo_v))
+    #         fit_ch_v = np.polyfit(range_h, pos_ch_v, deg=1)
 
-        pos_cv_h = None
-        fit_cv_h = None
-        if blades_v is not None and len(range_v) > 1:
-            to_cv = blades_v["to"]
-            ti_cv = blades_v["ti"]
-            bi_cv = blades_v["bi"]
-            bo_cv = blades_v["bo"]
+    #     pos_cv_h = None
+    #     fit_cv_h = None
+    #     if blades_v is not None and len(range_v) > 1:
+    #         to_cv = blades_v["to"]
+    #         ti_cv = blades_v["ti"]
+    #         bi_cv = blades_v["bi"]
+    #         bo_cv = blades_v["bo"]
 
-            pos_to_bo_h = (to_cv + bo_cv)
-            pos_ti_bi_h = (ti_cv + bi_cv)
-            pos_cv_h = ((pos_to_bo_h - pos_ti_bi_h) /
-                        (pos_to_bo_h + pos_ti_bi_h))
-            fit_cv_h = np.polyfit(range_v, pos_cv_h, deg=1)
+    #         pos_to_bo_h = (to_cv + bo_cv)
+    #         pos_ti_bi_h = (ti_cv + bi_cv)
+    #         pos_cv_h = ((pos_to_bo_h - pos_ti_bi_h) /
+    #                     (pos_to_bo_h + pos_ti_bi_h))
+    #         fit_cv_h = np.polyfit(range_v, pos_cv_h, deg=1)
 
-        # Create figure
-        fig, (axh, axv) = plt.subplots(1, 2, figsize=(12, 5))
+    #     # Create figure
+    #     fig, (axh, axv) = plt.subplots(1, 2, figsize=(12, 5))
 
-        if fit_ch_v is not None:
-            hline = ((fit_ch_v[0, 0] * range_h + fit_ch_v[1, 0])
-                    * xbpmdist)
-            axh.plot(range_h * xbpmdist, pos_ch_v[:, 0] * xbpmdist, 'o-',
-                    label="H sweep")
-            axh.plot(range_h * xbpmdist, hline, '^-', label="H fit")
-            axh.set_xlabel("$x$ [$\\mu$m]")
-            axh.set_ylabel("$y$ [$\\mu$m]")
-            axh.set_title(_Title('sweeps', 'h'))
-            ylim = (np.max(np.abs(hline + pos_ch_v[:, 0]
-                                * xbpmdist)) * 1.1)
-            axh.set_ylim(-ylim, ylim)
-            axh.grid(True)
-            axh.legend()
+    #     if fit_ch_v is not None:
+    #         hline = ((fit_ch_v[0, 0] * range_h + fit_ch_v[1, 0])
+    #                 * xbpmdist)
+    #         axh.plot(range_h * xbpmdist, pos_ch_v[:, 0] * xbpmdist, 'o-',
+    #                 label="H sweep")
+    #         axh.plot(range_h * xbpmdist, hline, '^-', label="H fit")
+    #         axh.set_xlabel("$x$ [$\\mu$m]")
+    #         axh.set_ylabel("$y$ [$\\mu$m]")
+    #         axh.set_title(_Title('sweeps', 'h'))
+    #         ylim = (np.max(np.abs(hline + pos_ch_v[:, 0]
+    #                             * xbpmdist)) * 1.1)
+    #         axh.set_ylim(-ylim, ylim)
+    #         axh.grid(True)
+    #         axh.legend()
 
-        if fit_cv_h is not None:
-            vline = ((fit_cv_h[0, 0] * range_v + fit_cv_h[1, 0])
-                    * xbpmdist)
-            axv.plot(pos_cv_h[:, 0] * xbpmdist,
-                    range_v * xbpmdist,
-                    'o-', label="V sweep")
-            axv.plot(vline, range_v * xbpmdist,
-                    '^-', label="V fit")
-            axv.set_xlabel("$x$ [$\\mu$m]")
-            axv.set_ylabel("$y$ [$\\mu$m]")
-            axv.set_title(_Title('sweeps', 'v'))
-            axv.set_xlim((np.min(range_v) * 0.005 + fit_cv_h[1, 0])
-                        * xbpmdist,
-                        (np.max(range_v) * 0.005 + fit_cv_h[1, 0])
-                        * xbpmdist)
-            axv.grid(True)
-            axv.legend()
+    #     if fit_cv_h is not None:
+    #         vline = ((fit_cv_h[0, 0] * range_v + fit_cv_h[1, 0])
+    #                 * xbpmdist)
+    #         axv.plot(pos_cv_h[:, 0] * xbpmdist,
+    #                 range_v * xbpmdist,
+    #                 'o-', label="V sweep")
+    #         axv.plot(vline, range_v * xbpmdist,
+    #                 '^-', label="V fit")
+    #         axv.set_xlabel("$x$ [$\\mu$m]")
+    #         axv.set_ylabel("$y$ [$\\mu$m]")
+    #         axv.set_title(_Title('sweeps', 'v'))
+    #         axv.set_xlim((np.min(range_v) * 0.005 + fit_cv_h[1, 0])
+    #                     * xbpmdist,
+    #                     (np.max(range_v) * 0.005 + fit_cv_h[1, 0])
+    #                     * xbpmdist)
+    #         axv.grid(True)
+    #         axv.legend()
 
-        fig.tight_layout()
-        return fig
+    #     fig.tight_layout()
+    #     return fig
 
-    @staticmethod
-    def plot_blade_center_from_dicts(blades_h: dict, blades_v: dict,
-                                     range_h: np.ndarray, range_v: np.ndarray,
-                                     beamline: str = ""):
-        """Generate blade currents at center plots (canonical version).
+    # @staticmethod
+    # def plot_blade_center_from_dicts(blades_h: dict, blades_v: dict,
+    #                                  range_h: np.ndarray, range_v: np.ndarray,
+    #                                  beamline: str = ""):
+    #     """Generate blade currents at center plots (canonical version).
 
-        This is the tuned plotting implementation used by both live analysis
-        and HDF5 reconstruction. It encapsulates the exact visualization
-        semantics for the "Blades at sweeps" tab.
+    #     This is the tuned plotting implementation used by both live analysis
+    #     and HDF5 reconstruction. It encapsulates the exact visualization
+    #     semantics for the "Blades at sweeps" tab.
 
-        Args:
-            blades_h: Horizontal blades dict with 'to', 'ti', 'bi', 'bo' keys,
-                    each mapping to (value, weight) pairs.
-            blades_v: Vertical blades dict with 'to', 'ti', 'bi', 'bo' keys.
-            range_h: Horizontal sweep range array.
-            range_v: Vertical sweep range array.
-            beamline: Beamline name for ylabel determination.
+    #     Args:
+    #         blades_h: Horizontal blades dict with 'to', 'ti', 'bi', 'bo' keys,
+    #                 each mapping to (value, weight) pairs.
+    #         blades_v: Vertical blades dict with 'to', 'ti', 'bi', 'bo' keys.
+    #         range_h: Horizontal sweep range array.
+    #         range_v: Vertical sweep range array.
+    #         beamline: Beamline name for ylabel determination.
 
-        Returns:
-            matplotlib.figure.Figure or None if no blade data.
-        """
-        if blades_h is None and blades_v is None:
-            return None
+    #     Returns:
+    #         matplotlib.figure.Figure or None if no blade data.
+    #     """
+    #     if blades_h is None and blades_v is None:
+    #         return None
 
-        fig, (axh, axv) = plt.subplots(1, 2, figsize=(10, 5))
+    #     fig, (axh, axv) = plt.subplots(1, 2, figsize=(10, 5))
 
-        if blades_h is not None:
-            for key, blval in blades_h.items():
-                val = blval[:, 0]
-                wval = blval[:, 1]
-                weight = 1. / wval if not np.isinf(1. / wval).any() else None
-                (acoef, bcoef) = np.polyfit(range_h, val, deg=1, w=weight)
-                k = f"{key.upper()}"
-                axh.errorbar(range_h, val, wval, fmt='o-', label=k,
-                            zorder=1)
-                axh.plot(range_h, range_h * acoef + bcoef,
-                        "^-", label=f"{k} fit", zorder=2)
+    #     if blades_h is not None:
+    #         for key, blval in blades_h.items():
+    #             val = blval[:, 0]
+    #             wval = blval[:, 1]
+    #             weight = 1. / wval if not np.isinf(1. / wval).any() else None
+    #             (acoef, bcoef) = np.polyfit(range_h, val, deg=1, w=weight)
+    #             k = f"{key.upper()}"
+    #             axh.errorbar(range_h, val, wval, fmt='o-', label=k,
+    #                         zorder=1)
+    #             axh.plot(range_h, range_h * acoef + bcoef,
+    #                     "^-", label=f"{k} fit", zorder=2)
 
-        if blades_v is not None:
-            for key, blval in blades_v.items():
-                val = blval[:, 0]
-                wval = blval[:, 1]
-                weight = 1. / wval if not np.isinf(1. / wval).any() else None
-                (acoef, bcoef) = np.polyfit(range_v, val, deg=1, w=weight)
-                k = f"{key.upper()}"
-                axv.errorbar(range_v, val, wval, fmt='o-', label=k,
-                            zorder=1)
-                axv.plot(range_v, range_v * acoef + bcoef,
-                        "^-", label=f"{k} fit", zorder=2)
+    #     if blades_v is not None:
+    #         for key, blval in blades_v.items():
+    #             val = blval[:, 0]
+    #             wval = blval[:, 1]
+    #             weight = 1. / wval if not np.isinf(1. / wval).any() else None
+    #             (acoef, bcoef) = np.polyfit(range_v, val, deg=1, w=weight)
+    #             k = f"{key.upper()}"
+    #             axv.errorbar(range_v, val, wval, fmt='o-', label=k,
+    #                         zorder=1)
+    #             axv.plot(range_v, range_v * acoef + bcoef,
+    #                     "^-", label=f"{k} fit", zorder=2)
 
-        axh.set_title(_Title('blades_at_sweeps', 'h'))
-        axv.set_title(_Title('blades_at_sweeps', 'v'))
-        axh.legend()
-        axv.legend()
-        axh.grid()
-        axv.grid()
-        axh.set_xlabel("$x$ [$\\mu$rad]")
-        axv.set_xlabel("$y$ [$\\mu$rad]")
+    #     axh.set_title(_Title('blades_at_sweeps', 'h'))
+    #     axv.set_title(_Title('blades_at_sweeps', 'v'))
+    #     axh.legend()
+    #     axv.legend()
+    #     axh.grid()
+    #     axv.grid()
+    #     axh.set_xlabel("$x$ [$\\mu$rad]")
+    #     axv.set_xlabel("$y$ [$\\mu$rad]")
 
-        ylabel = ("$I$ [# counts]" if beamline[:3]
-                in ["MGN", "MNC"] else "$I$ [A]")
-        axh.set_ylabel(ylabel)
-        axv.set_ylabel(ylabel)
-        fig.tight_layout()
+    #     ylabel = ("$I$ [# counts]" if beamline[:3]
+    #             in ["MGN", "MNC"] else "$I$ [A]")
+    #     axh.set_ylabel(ylabel)
+    #     axv.set_ylabel(ylabel)
+    #     fig.tight_layout()
 
-        return fig
+    #     return fig
 
 
 class BPMVisualizer:

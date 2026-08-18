@@ -10,10 +10,11 @@ import numpy as np
 from ..core.visualizers import BladeCurrentVisualizer as BCV
 from ..core.visualizers import BladeMapVisualizer as BMV
 from ..core.exporters   import Exporter
-from ..core.parameters  import Prm
-from ..core.app         import XBPMApp
+# from ..core.parameters  import Prm
+# from ..core.app         import XBPMApp
 from ..core.processors  import XBPMProcessor
 # from ..core.visualizers import SweepVisualizer as SWV
+from ..core.data_structure import Prm, BeamlinePrm
 
 class XBPMAnalyzer(QObject):
     """Qt wrapper for XBPMApp with signals for async execution.
@@ -47,7 +48,7 @@ class XBPMAnalyzer(QObject):
         """
         super().__init__(parent)
         # self.app          : Optional[XBPMApp] = None
-        self.prm          : Prm = prm
+        self.prm          = prm
         self.builder      = builder
         self.reader       = reader
         self.rawdata      = rawdata

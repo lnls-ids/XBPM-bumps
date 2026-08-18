@@ -21,13 +21,13 @@ from .data_structure import (
     RMSGridStatistics
     )
 
-_Title = Config.get_plot_title   # shorthand for plot titles
+# _Title = Config.get_plot_title   # shorthand for plot titles
 # from .exporters import Exporter
 
 # Keep math font consistent with visualizers (Computer Modern / cm).
-matplotlib.rcParams['mathtext.fontset'] = 'cm'
-matplotlib.rcParams['mathtext.rm'] = 'serif'
-matplotlib.rcParams['font.family'] = 'serif'
+# matplotlib.rcParams['mathtext.fontset'] = 'cm'
+# matplotlib.rcParams['mathtext.rm'] = 'serif'
+# matplotlib.rcParams['font.family'] = 'serif'
 
 
 class XBPMProcessor:
@@ -78,16 +78,13 @@ class XBPMProcessor:
         self.range_v    = np.unique(self.nom_pos_y)
 
         # Are these really needed?
-        self.blades_h   = None
-        self.blades_v   = None
-        self._initialize_ranges()
-        self.roi_v_size = self.prm_bml.roisize[0]
-        self.roi_h_size = self.prm_bml.roisize[1]
+        self.roisize_v = self.prm_bml.roisize[0]
+        self.roisize_h = self.prm_bml.roisize[1]
 
-    def analyze_central_sweeps(self,
-                               show: bool = False
-                               ) -> tuple[np.array, np.array,
-                                          SweepLine, SweepLine]:
+    def analyze_central_sweeps(
+            self,
+            show: bool = False
+            ) -> tuple[np.array, np.array, SweepLine, SweepLine]:
         """Analyze blade behavior at central sweep positions.
 
         Examines blade measurements along central horizontal and vertical
@@ -106,20 +103,6 @@ class XBPMProcessor:
         # Run through central vertical line if data is not just a point
         self.sweepline_v = (self._central_sweep_v()
                             if len(self.range_v) > 1 else None)
-
-        if show:
-            fig = SWV.plot_from_arrays(
-                self.range_h,
-                self.range_v,
-                self.sweepline_h,
-                self.sweepline_v,
-                xbpm_dist=self.prm_bml.xbpmdist
-            )
-
-            if self.prm_gen.outputfile:
-                outfile = f"xbpm_sweeps_{self.prm_bml.beamline}.png"
-                fig.savefig(outfile, dpi=FIGDPI)
-                print(f" Figure of central sweeps saved to file {outfile}.\n")
 
         return (
             self.range_h,
@@ -208,30 +191,6 @@ class XBPMProcessor:
             fit_pos_err=fit_h_err,
             )
 
-    def show_blades_at_center(self) -> None:
-        """Display blade measurements along central sweeping points."""
-        # Ensure we have sweep data
-        if self.range_h is None or self.range_v is None:
-            self.analyze_central_sweeps(show=False)
-
-        if self.blades_h is None and self.blades_v is None:
-            print("\n WARNING: could not retrieve blades' currents,"
-                  " maybe there is insufficient data."
-                  " Skipping central analysis.")
-            return
-
-        fig = BCV.plot_blade_center_from_dicts(
-            self.blades_h, self.blades_v,
-            self.range_h, self.range_v,
-            beamline=self.prm_bml.beamline
-            )
-
-        if self.prm_gen.outputfile:
-            outfile = f"central_sweep_{self.prm_bml.beamline}.png"
-            fig.savefig(outfile, dpi=FIGDPI)
-            print("\n Figure of blades behaviour at central sweeps"
-                  f" saved to file {outfile}.\n")
-
     def _roi_slice_indices(self, array: np.ndarray) -> tuple:
         """Extract centered ROI slice indices from an array, handling 1D/2D.
 
@@ -246,28 +205,14 @@ class XBPMProcessor:
             up_row).
         """
         n_lin, n_col = array.shape
-        n_roi_h = min(self.roi_h_size, n_col)
-        n_roi_v = min(self.roi_v_size, n_lin)
-
-        # DEBUG
-        # print("\n#####\n##### DEBUG: _roi_slice_indices, array shape = "
-        #       f" {array.shape}, ROI H = {n_roi_h}, ROI V = {n_roi_v}"
-        #       "\n#####\n")
-        # DEBUG
+        n_roi_h = min(self.roisize_h, n_col)
+        n_roi_v = min(self.roisize_v, n_lin)
 
         fr_col  = max(0, int((n_col - n_roi_h) / 2))
         up_col  = min(n_col, fr_col + n_roi_h)
 
         fr_row  = max(0, int((n_lin - n_roi_v) / 2))
         up_row  = min(n_lin, fr_row + n_roi_v)
-
-        # DEBUG
-        # print("#####\n##### DEBUG: _roi_slice_indices, "
-        #       f" col : {fr_col} - {up_col},"
-        #       f" row : {fr_row} - {up_row},"
-        #       "\n#####\n")
-        #     #   f" dim = {dim}"
-        # DEBUG
 
         return (fr_col, up_col, fr_row, up_row)  #, dim
 
@@ -298,7 +243,7 @@ class XBPMProcessor:
                          pos_roi_h: np.ndarray, pos_roi_v: np.ndarray,
                          pos_nom_h: np.ndarray, pos_nom_v: np.ndarray,
                          pos_nom_h_roi: np.ndarray,
-                         pos_nom_v_roi: np.ndarray, nosuppress: bool
+                         pos_nom_v_roi: np.ndarray,
                         ) -> dict:
         """Scale positions, pairwise or cross-blade.
 
@@ -320,25 +265,6 @@ class XBPMProcessor:
         (qx, kx, deltax), (sqx, skx, sdeltax) = scalesx, sigmasx
         (qy, ky, deltay), (sqy, sky, sdeltay) = scalesy, sigmasy
 
-        # Set raw (R) or transformed (T) graph type.
-        transform = "R" if nosuppress else "T"
-
-        # Build title map for visualizer with formatted titles from registry.
-        title_map = {
-            'total'   : _Title('xbpm_positions', 'total',
-                               beamline=self.prm_bml.beamline,
-                               rort=transform,
-                               calc_type=calc_type),
-            'roi'     : _Title('xbpm_positions', 'roi',
-                               beamline=self.prm_bml.beamline,
-                               rort=transform,
-                               calc_type=calc_type),
-            'heatmap' : _Title('xbpm_positions', 'heatmap',
-                               beamline=self.prm_bml.beamline,
-                               rort=transform,
-                               calc_type=calc_type),
-        }
-
         # Scale full positions
         pos_all_h_scaled = qx * pos_all_h**2 + kx * pos_all_h + deltax
         pos_all_v_scaled = qy * pos_all_v**2 + ky * pos_all_v + deltay
@@ -350,16 +276,6 @@ class XBPMProcessor:
         diffy2_roi = (pos_roi_v_scaled - pos_nom_v_roi) ** 2
         stats      = self.calculate_grid_stats(diffx2_roi, diffy2_roi)
         diffroi    = np.sqrt(diffx2_roi + diffy2_roi)
-
-        # Visualize
-        visualizer = PSV(self.prm_gen, titles=title_map)
-        visualizer.show_position_results(
-            pos_nom_h, pos_nom_v,
-            pos_all_h_scaled, pos_all_v_scaled,
-            pos_roi_h_scaled, pos_roi_v_scaled,
-            pos_nom_h_roi, pos_nom_v_roi,
-            diffroi
-        )
 
         return {
             'h_scaled'     : pos_all_h_scaled,
@@ -379,7 +295,6 @@ class XBPMProcessor:
             'dy'           : deltay,
             'sdy'          : sdeltay,
             'stats'        : stats,
-            'visualizer'   : visualizer,
         }
 
     def _compile_results(self, pair_result: dict, cross_result: dict,
@@ -387,21 +302,6 @@ class XBPMProcessor:
                          nosuppress: bool,
                          pos_nom_h: np.ndarray, pos_nom_v: np.ndarray) -> dict:
         """Compile and save final results from pairwise and cross-blade."""
-        pair_visualizer  = pair_result['visualizer']
-        cross_visualizer = cross_result['visualizer']
-
-        # Save figures if requested
-        if self.prm_gen.outputfile:
-            outdir = '.'
-            sup = "raw" if nosuppress else "scaled"
-            bl = self.prm_bml.beamline
-
-            outfile_p = os.path.join(outdir, f"xbpm_pair_pos_{sup}_{bl}.png")
-            pair_visualizer.save_figure(outfile_p)
-
-            outfile_c = os.path.join(outdir, f"xbpm_cross_pos_{sup}_{bl}.png")
-            cross_visualizer.save_figure(outfile_c)
-
         # Build position dictionaries for export.
         # Keys are always derived from the raw scan grid (data.keys() angles ×
         # xbpmdist) so they are regular and sortable regardless of whether the
@@ -428,8 +328,6 @@ class XBPMProcessor:
 
         return {
             'positions'       : [scaled_pos_pair, scaled_pos_cross],
-            'pairwise_figure' : pair_visualizer.fig,
-            'cross_figure'    : cross_visualizer.fig,
             'scales' : {
                 'pair'    : {
                     'qx'  : pair_result['qx'],
@@ -480,9 +378,7 @@ class XBPMProcessor:
         full analysis pipeline.
         """
         # Ensure sweep data is available for suppression matrix estimation.
-        if (self.range_h is None or self.range_v is None or
-            self.blades_h is None or self.blades_v is None):
-            self.analyze_central_sweeps(show=False)
+        self.analyze_central_sweeps(show=False)
 
         # Parse and compute core data
         blades, _ = self.data_parse()
@@ -960,7 +856,7 @@ class BPMProcessor:
 
         self._stack_measurement_results()
 
-        self.plot_bpm_positions()
+        # self.plot_bpm_positions()
 
     def _positions_from_tangents(self) -> dict:
         """Calculate beam positions from tangents at BPMs."""

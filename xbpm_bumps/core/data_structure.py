@@ -95,7 +95,7 @@ class ROISlice:
 @dataclass
 class BeamlinePrm:
     """Typed container for beamline-specific parameters.
-    
+
     beamline     : Beamline name
     bpmdist      : Distance between adjacent BPMs.
     xbpmdist     : Source-XBPM distance
@@ -641,8 +641,8 @@ class CentralSweep:
         h: SweepLine for horizontal direction
         v: SweepLine for vertical direction
     """
-    h : SweepLine
-    v : SweepLine
+    h : SweepLine | None = None
+    v : SweepLine | None = None
 
     @classmethod
     def from_hdf5(cls, swp_grp) -> "CentralSweep":
