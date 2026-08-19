@@ -72,21 +72,29 @@ class ROISlice:
     sz_v : int = ROI_SIZE_V
     sz_h : int = ROI_SIZE_H
 
-    def __post_init__(self) -> None:
-        """Update the ROI slice to the current defaults."""
-        self.sl_v = slice(0, self.sz_v)
-        self.sl_h = slice(0, self.sz_h)
+    # def __post_init__(self) -> None:
+    #     """Update the ROI slice to the current defaults."""
+    #     self.sl_v = slice(0, self.sz_v)
+    #     self.sl_h = slice(0, self.sz_h)
 
     @classmethod
-    def update(cls, arrayshape: tuple, roisize: List[int]) -> "ROISlice":
+    def update(cls,
+               arrayshape: tuple,
+               roisize: List[int]
+               ) -> "ROISlice":
         nv, nh = arrayshape
+
         roi_v  = min(roisize[0], nv)   # lines for arrays
+        fromv  = max(0, int((nv - roi_v) / 2))
+        uptov  = min(nv, fromv + roi_v)
+
         roi_h  = min(roisize[1], nh)   # columns for arrays
         fromh  = max(0, int((nh - roi_h) / 2))
         uptoh  = min(nh, fromh + roi_h)
-        fromv  = max(0, int((nv - roi_v) / 2))
-        uptov  = min(nv, fromv + roi_v)
+
         return cls(
+            sz_v=roi_v,
+            sz_h=roi_h,
             sl_v=slice(fromv, uptov),
             sl_h=slice(fromh, uptoh)
             )
@@ -233,9 +241,10 @@ class Blades:
 @dataclass
 class BladeAvgData:
     """Container for averaged blade current data and associated metadata."""
-    prm    : dict
-    nom    : Positions
-    blades : Blades
+    prm       : dict
+    nom       : Positions
+    nom_shape : tuple
+    blades    : Blades
 
     @classmethod
     def from_hdf5(cls, avg_grp) -> "BladeAvgData":
@@ -244,8 +253,8 @@ class BladeAvgData:
         prm    = {key : val for key, val in avg_grp.attrs.items()}
         nom    = Positions.from_hdf5(avg_grp)
         blades = Blades.from_hdf5(avg_grp)
-
-        return cls(prm=prm, nom=nom, blades=blades)
+        nom_shape = (len(np.unique(nom.y)), len(np.unique(nom.x)))
+        return cls(prm=prm, nom=nom, nom_sh=nom_shape, blades=blades)
 
 
 @dataclass

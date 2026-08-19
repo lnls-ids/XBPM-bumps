@@ -172,36 +172,11 @@ class XBPMProcessor:
             fit_pos_err=fit_h_err,
             )
 
-    def _roi_slice_indices(self, array: np.ndarray) -> tuple:
-        """Extract centered ROI slice indices from an array, handling 1D/2D.
-
-        Analyze 1D and 2D arrays to determine the appropriate slice indices
-        for the region of interest (ROI). The ROI is centered and sized according to the specified horizontal and vertical dimensions, while ensuring that the indices remain within the bounds of the input array.
-
-        Args:
-            array: Input array from which to extract ROI slice.
-
-        Returns:
-            A tuple containing the slice indices (fr_col, up_col, fr_row,
-            up_row).
-        """
-        n_lin, n_col = array.shape
-        n_roi_h = min(self.roisize_h, n_col)
-        n_roi_v = min(self.roisize_v, n_lin)
-
-        fr_col  = max(0, int((n_col - n_roi_h) / 2))
-        up_col  = min(n_col, fr_col + n_roi_h)
-
-        fr_row  = max(0, int((n_lin - n_roi_v) / 2))
-        up_row  = min(n_lin, fr_row + n_roi_v)
-
-        return (fr_col, up_col, fr_row, up_row)  #, dim
-
     def _extract_roi_slice(self, array: np.ndarray,
                            fr_col: int, up_col: int,
                            fr_row: int, up_row: int) -> np.ndarray:
         """Check whether array is 1D along one axis and extract accordingly.
-        
+
         Args:
             array: Input array to extract ROI from.
             fr_col: Starting index for horizontal slice.

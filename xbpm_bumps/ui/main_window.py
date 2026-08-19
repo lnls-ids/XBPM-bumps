@@ -309,6 +309,8 @@ class XBPMMainWindow(QMainWindow):
         self.prm      = self.workdata.prm
         self.analysis = self.workdata.analysis
 
+        
+
         # Update BPM distance.
         self.prm.bpmdist = Config.BPMDISTS.get(self.workbeamline, None)
 
