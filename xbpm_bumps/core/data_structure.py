@@ -72,11 +72,6 @@ class ROISlice:
     sz_v : int = ROI_SIZE_V
     sz_h : int = ROI_SIZE_H
 
-    # def __post_init__(self) -> None:
-    #     """Update the ROI slice to the current defaults."""
-    #     self.sl_v = slice(0, self.sz_v)
-    #     self.sl_h = slice(0, self.sz_h)
-
     @classmethod
     def update(cls,
                arrayshape: tuple,

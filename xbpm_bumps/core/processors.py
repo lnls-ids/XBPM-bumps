@@ -78,8 +78,8 @@ class XBPMProcessor:
         self.range_v    = np.unique(self.nom_pos_y)
 
         # Are these really needed?
-        self.roisize_v = self.prm_bml.roisize[0]
-        self.roisize_h = self.prm_bml.roisize[1]
+        self.roisize_v = self.roi.sz_v
+        self.roisize_h = self.roi.sz_h
 
     def analyze_central_sweeps(self) -> "CentralSweeps":
         """Assemble the central sweep analysis.
@@ -775,11 +775,7 @@ class BPMProcessor:
         self.rawdata = rawdata
         self.sweeps  = rawdata.sweeps_bpm
         self.prm_bml = prm_bml
-
-
-        self.roisize_v = prm_bml.roi.sl_v
-        self.roisize_h = prm_bml.roi.sl_h
-
+        self.roi     = prm_bml.roi
         self._print_bpm_info()
         self.calculate_positions()
 
@@ -966,7 +962,7 @@ class BPMProcessor:
             Tuple (xnom_roi, ynom_roi, xpos_roi, ypos_roi) of ROI arrays.
         """
         rows, cols = self.bana.roi.update(
-            self.nom_x.shape, (self.roisize_v, self.roisize_h)
+            self.nom_x.shape, (self.roi.sz_v, self.roi.sz_h)
             )
         self.xnom_roi = self.nom_x[rows, cols]
         self.ynom_roi = self.nom_y[rows, cols]
