@@ -1,12 +1,12 @@
 """XBPM and BPM data processors."""
 
-import os
+# import os
+# import matplotlib
 import numpy as np
-import matplotlib
 
-from .visualizers import PositionVisualizer as PSV
-from .visualizers import SweepVisualizer as SWV
-from .visualizers import BladeCurrentVisualizer as BCV
+# from .visualizers import PositionVisualizer as PSV
+# from .visualizers import SweepVisualizer as SWV
+# from .visualizers import BladeCurrentVisualizer as BCV
 
 from .config         import Config    
 from .constants      import FIGDPI
@@ -355,17 +355,16 @@ class XBPMProcessor:
             )
 
         # Extract nominal ROI slices.
-        from_upto     = self._roi_slice_indices(pos_nom_h)
-        pos_nom_h_roi = self._extract_roi_slice(pos_nom_h, *from_upto)
-        pos_nom_v_roi = self._extract_roi_slice(pos_nom_v, *from_upto)
+        pos_nom_h_roi = pos_nom_h[self.roi.sl_v, self.roi.sl_h]
+        pos_nom_v_roi = pos_nom_v[self.roi.sl_v, self.roi.sl_h]
 
         # Pairwise calculation (Delta/Sigma).
         pos_pair = self.beam_position_pair(supmat)
         (_, _, pos_h, pos_v) = self.position_dict_parse(pos_pair)
 
         # Extract ROI slices from measured data.
-        pos_roi_pair_h = self._extract_roi_slice(pos_h, *from_upto)
-        pos_roi_pair_v = self._extract_roi_slice(pos_v, *from_upto)
+        pos_roi_pair_v = pos_v[self.roi.sl_v, self.roi.sl_h]
+        pos_roi_pair_h = pos_h[self.roi.sl_v, self.roi.sl_h]
 
         # Process data: fitting, scaling, stats, visualization.
         pairwise_result = self._scale_positions(
@@ -383,16 +382,19 @@ class XBPMProcessor:
         pos_cross_h, pos_cross_v = self.beam_position_cross(blades)
 
         # Extract ROI slices from measured data.
-        pos_roi_cross_h = self._extract_roi_slice(pos_cross_h, *from_upto)
-        pos_roi_cross_v = self._extract_roi_slice(pos_cross_v, *from_upto)
+        pos_roi_cross_h = pos_cross_h[self.roi.sl_v, self.roi.sl_h]
+        pos_roi_cross_v = pos_cross_v[self.roi.sl_v, self.roi.sl_h]
 
         # Process data: fitting, scaling, stats, visualization.
         cross_result = self._scale_positions(
-            'cross', pos_cross_h, pos_cross_v,
-            pos_roi_cross_h, pos_roi_cross_v,
-            pos_nom_h, pos_nom_v,
-            pos_nom_h_roi, pos_nom_v_roi,
-            nosuppress
+            pos_cross_h,
+            pos_cross_v,
+            pos_roi_cross_h,
+            pos_roi_cross_v,
+            pos_nom_h,
+            pos_nom_v,
+            pos_nom_h_roi,
+            pos_nom_v_roi,
             )
 
         # Compile and return results

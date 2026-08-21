@@ -235,7 +235,13 @@ class Blades:
 
 @dataclass
 class BladeAvgData:
-    """Container for averaged blade current data and associated metadata."""
+    """Container for averaged blade current data and associated metadata.
+    
+    prm       : metadata parameters of the averaged data
+    nom       : nominal positions at the XBPM site
+    nom_shape : shape of the nominal positions grid
+    blades    : averaged blade currents and their standard deviations
+    """
     prm       : dict
     nom       : Positions
     nom_shape : tuple
@@ -245,11 +251,16 @@ class BladeAvgData:
     def from_hdf5(cls, avg_grp) -> "BladeAvgData":
         """Create a BladeAvgData instance from an HDF5 group."""
         # Extract metadata attributes.
-        prm    = {key : val for key, val in avg_grp.attrs.items()}
-        nom    = Positions.from_hdf5(avg_grp)
-        blades = Blades.from_hdf5(avg_grp)
+        prm       = {key : val for key, val in avg_grp.attrs.items()}
+        nom       = Positions.from_hdf5(avg_grp)
+        blades    = Blades.from_hdf5(avg_grp)
         nom_shape = (len(np.unique(nom.y)), len(np.unique(nom.x)))
-        return cls(prm=prm, nom=nom, nom_sh=nom_shape, blades=blades)
+        return cls(
+            prm=prm,
+            nom=nom,
+            nom_shape=nom_shape,
+            blades=blades
+            )
 
 
 @dataclass
