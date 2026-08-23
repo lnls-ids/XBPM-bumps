@@ -9,11 +9,6 @@ import h5py
 import numpy as np
 
 from xbpm_bumps.core.config import Config
-from xbpm_bumps.core.processors import XBPMProcessor, calculate_grid_stats
-
-# Import DataReader for canonical _extract_beamlines
-# from xbpm_bumps.core.readers import DataReader
-# from .config import Config
 from .constants import ROI_SIZE_H, ROI_SIZE_V, MAX_RAD_ANGLE
 
 
@@ -107,7 +102,9 @@ class BeamlinePrm:
     roisize      : ROI size (horizontal, vertical)
     usebpmref    : Whether to use BPM or nominal positions as reference
     """
+    sweeps       : int   = 1
     beamline     : str   | None = None
+    description  : str   | None = None
     bpmdist      : float | None = None
     xbpmdist     : float | None = None
     skip         : int   = 0
@@ -115,32 +112,45 @@ class BeamlinePrm:
     sector       : list  | None = None
     usebpmref    : bool = False
     roi          : ROISlice = field(default_factory=ROISlice)
+    updated      : str  | None = None
 
     @classmethod
     def from_hdf5(cls, bln_grp: h5py.Group) -> "BeamlinePrm":
         """Create a BeamlinePrm instance from an HDF5 group."""
         try:
-            attrs = {key: val for key, val in bln_grp.attrs.items()}
+            attrs = {key.lower(): val for key, val in bln_grp.attrs.items()}
+
+            # Rewrite '# sweeps' to 'sweeps'.
+            attrs["sweeps"] = attrs.pop("# sweeps", 1)
 
             beamline = attrs.get("beamline", None)
+            bl_short = beamline[:3]
+
             if "bpmdist" not in attrs:
-                attrs["bpmdist"] = Config.XBPMDISTS.get(
-                    attrs.get(beamline[:3], ""), None
-                )
+                attrs["bpmdist"] = Config.BPMDISTS.get(bl_short, None)
+
             if "sector" not in attrs:
-                attrs["sector"] = Config.SECTOR.get(
-                    attrs.get(beamline[:3], ""), None
-                    )
+                attrs["sector"] = Config.SECTOR.get(bl_short, None)
+
             if "xbpmdist" not in attrs:
-                attrs["xbpmdist"] = Config.XBPMDISTS.get(
-                    attrs.get(beamline, ""), None
-                )
-            attrs["roi"] = ROISlice()
+                attrs["xbpmdist"] = Config.XBPMDISTS.get(beamline, None)
+
+            # Initialize ROI data.
+            rs = int(np.sqrt(attrs["sweeps"]))
+            attrs["roi"] = ROISlice.update(
+                arrayshape=(rs, rs),
+                roisize=[ROI_SIZE_V, ROI_SIZE_H]
+            )
+
+            # Rewrite 'HDF5 updated on' to 'updated'.
+            attrs["updated"] = attrs.pop("hdf5 updated on", None)
+
         except Exception as err:
             raise ValueError(
                 "### ERROR while reading 'BeamlinePrm' from HDF5 group:\n"
                 f" {err}"
             )
+
         return cls(**attrs)
 
 #
@@ -242,10 +252,10 @@ class BladeAvgData:
     nom_shape : shape of the nominal positions grid
     blades    : averaged blade currents and their standard deviations
     """
-    prm       : dict
-    nom       : Positions
-    nom_shape : tuple
-    blades    : Blades
+    prm        : dict
+    pos_nom    : Positions
+    pos_nom_sh : tuple
+    blades     : Blades
 
     @classmethod
     def from_hdf5(cls, avg_grp) -> "BladeAvgData":
@@ -254,11 +264,11 @@ class BladeAvgData:
         prm       = {key : val for key, val in avg_grp.attrs.items()}
         nom       = Positions.from_hdf5(avg_grp)
         blades    = Blades.from_hdf5(avg_grp)
-        nom_shape = (len(np.unique(nom.y)), len(np.unique(nom.x)))
+        pos_nom_sh = (len(np.unique(nom.y)), len(np.unique(nom.x)))
         return cls(
             prm=prm,
-            nom=nom,
-            nom_shape=nom_shape,
+            pos_nom=nom,
+            pos_nom_sh=pos_nom_sh,
             blades=blades
             )
 
@@ -439,82 +449,29 @@ class BeamlineRawData:
 class RMSStatistics:
     """Computed RMS statistics between nominal and measured data."""
     # Horizontal, vertical and total differences at each site.
-    h      : np.ndarray
-    v      : np.ndarray
-    t      : np.ndarray
+    h        : np.ndarray
+    v        : np.ndarray
+    tot      : np.ndarray
 
     # Minimum and maximum values of the differences.
-    min_h  : float
-    max_h  : float
-    min_v  : float
-    max_v  : float
+    min_h    : float
+    max_h    : float
+    min_v    : float
+    max_v    : float
 
     # Mean values of the differences.
-    mean_h : float
-    mean_v : float
-    mean_t : float
+    mean_h   : float
+    mean_v   : float
+    mean_tot : float
 
-    @classmethod
-    def compute(cls,
-                nom_x : np.ndarray,
-                nom_y : np.ndarray,
-                meas_x : np.ndarray,
-                meas_y : np.ndarray
-                ) -> "RMSStatistics":
-        rms = calculate_grid_stats(
-            nom_x, nom_y, meas_x, meas_y
-        )
-        rms = {
-            "h"      : rms['h'],
-            "v"      : rms['v'],
-            "t"      : rms['t'],
-            "min_h"  : rms['min_h'],
-            "max_h"  : rms['max_h'],
-            "min_v"  : rms['min_v'],
-            "max_v"  : rms['max_v'],
-            "mean_h" : rms['mean_h'],
-            "mean_v" : rms['mean_v'],
-            "mean_t" : rms['mean_t'],
-        }
-        return cls(**rms)
 
 @dataclass
 class RMSGridStatistics:
     """Statistics calculated at a given ROI."""
-    all      : RMSStatistics             # Full grid statistics.
-    roi      : RMSStatistics             # ROI statistics.
-    roislice : ROISlice | None = None    # ROI bounds.
+    all      : RMSStatistics   # Full grid statistics.
+    roi      : RMSStatistics   # ROI statistics.
+    roislice : ROISlice        # ROI bounds.
 
-    @classmethod
-    def compute(cls,
-                nom_x    : np.ndarray,
-                nom_y    : np.ndarray,
-                meas_x   : np.ndarray,
-                meas_y   : np.ndarray,
-                roislice : ROISlice
-                ) -> "RMSGridStatistics":
-        """Calculate RMS statistics from position differences in ROI."""
-        rms_all = RMSStatistics.compute(
-            nom_x,  nom_y,
-            meas_x, meas_y
-            )
-
-        # Statistics at ROI.
-        sl_v, sl_h = roislice.sl_v, roislice.sl_h
-        nom_roi_x  = nom_x[sl_v, sl_h]
-        nom_roi_y  = nom_y[sl_v, sl_h]
-        meas_roi_x = meas_x[sl_v, sl_h]
-        meas_roi_y = meas_y[sl_v, sl_h]
-        rms_roi = RMSStatistics.compute(
-            nom_roi_x,  nom_roi_y,
-            meas_roi_x, meas_roi_y
-            )
-
-        return cls(
-            all=rms_all,
-            roi=rms_roi,
-            roislice=roislice
-        )
 
 
 @dataclass
@@ -574,45 +531,50 @@ class BladeMap:
     """Container for blade current data and associated metadata.
 
     Attributes:
-        blades: Blades (measured currents)
-        coords: Horizontal and vertical positions which define the grid of
-                measurements.
+        prm    : Metadata parameters of the blade map.
+        coords : Horizontal and vertical positions which define the grid of
+            measurements.
+        blades : Blades (measured currents)
     """
     prm    : dict
+    pos : Positions
     blades : Blades
-    coords : Positions
 
     @classmethod
     def from_hdf5(cls, h5group) -> "BladeMap":
         """Create a BladeMap instance from an HDF5 group."""
         prm    = {key: val for key, val in h5group.attrs.items()}
         blades = Blades.from_hdf5(h5group)
-        coords = Positions.from_hdf5(h5group)
-
-        return cls(prm=prm, blades=blades, coords=coords)
+        pos = Positions.from_hdf5(h5group)
+        return cls(prm=prm, blades=blades, pos=pos)
 
 
 @dataclass
 class CentralSweepLine:
     """Container for central sweep data.
     
-    A sweep is performed along a line (horizontal or vertical) through the center of the blade map. It is supposed that there is no variation in the other direction, but distortions of measurements create an undesired slope, to be evaluated. The sweep data is then used to analyze the behavior of the blades along the sweep line, so the variation in the fixed coordinate is captured.
+    A sweep is performed along a line (horizontal or vertical) through the
+    center of the blade map. It is supposed that there is no variation in
+    the other direction, but distortions of measurements create an undesired
+    slope, to be evaluated. The sweep data is then used to analyze the
+    behavior of the blades along the sweep line, so the variation in the
+    fixed coordinate is captured.
 
     blades       : values of the blades along the central sweep
     index        : variable coordinate values along the central sweep
                 (x for horizontal sweep, y for vertical sweep)
-    fixed        : fixed coordinate values along the central sweep
+    pos_fixed    : fixed coordinate values along the central sweep
                 (h: x ~ 0 for vertical sweep, v: y ~ 0 for horizontal sweep)
-    calc_fix     : calculated values for the fixed coordinate
-    calc_fix_err : std dev of calculated fixed coordinate
-    fit_fix : values of fitted affine line to fixed coordinate
+    pos_calc     : calculated values for the fixed coordinate
+    pos_fit      : values of fitted affine line to fixed coordinate
+    pos_fit_err  : std dev of calculated fixed coordinate
     """
     blades      : Blades
-    index       : np.ndarray
-    fixed       : np.ndarray
-    calc_pos    : np.ndarray
-    fit_pos     : np.ndarray
-    fit_pos_err : np.ndarray
+    pos_index   : np.ndarray
+    pos_fixed   : np.ndarray
+    pos_calc    : np.ndarray
+    pos_fit     : np.ndarray
+    pos_fit_err : np.ndarray
 
     @classmethod
     def from_hdf5(cls,
@@ -640,11 +602,11 @@ class CentralSweepLine:
         # Assemble the SweepLine instance.
         return cls(
             blades=Blades.from_hdf5(sln_grp),
-            index=sln_grp[f"{ind}_index"][:],
-            fixed=sln_grp[f"{fix}_fix"][:],
-            calc_pos=sln_grp[f"{fix}_calc"][:],
-            fit_pos=sln_grp[f"{fix}_fit"][:],
-            fit_pos_err=sln_grp[f"s_{fix}_fit"][:],
+            pos_index=sln_grp[f"{ind}_index"][:],
+            pos_fixed=sln_grp[f"{fix}_fix"][:],
+            pos_calc=sln_grp[f"{fix}_calc"][:],
+            pos_fit=sln_grp[f"{fix}_fit"][:],
+            pos_fit_err=sln_grp[f"s_{fix}_fit"][:],
         )
 
 
@@ -791,10 +753,10 @@ class AnalyzedRawPositions:
     x: horizontal positions
     y: vertical positions
     """
-    nom : Positions
-    bpm : Positions
-    pws : Positions
-    crs : Positions
+    pos_nom : Positions
+    pos_bpm : Positions
+    pos_pws : Positions
+    pos_crs : Positions
 
     @classmethod
     def from_hdf5(cls, h5group) -> "AnalyzedRawPositions":
@@ -823,10 +785,10 @@ class AnalyzedRawPositions:
         crs = Positions(x=xc, y=yc)
 
         return cls(
-            nom=nom,
-            bpm=bpm,
-            pws=pws,
-            crs=crs,
+            pos_nom=nom,
+            pos_bpm=bpm,
+            pos_pws=pws,
+            pos_crs=crs,
             )
 
 
@@ -839,8 +801,8 @@ class TransformedPositions:
     x: horizontal positions
     y: vertical positions
     """
-    pws : Positions
-    crs : Positions
+    pos_pws : Positions
+    pos_crs : Positions
 
     @classmethod
     def from_hdf5(cls, h5group) -> "TransformedPositions":
@@ -857,7 +819,7 @@ class TransformedPositions:
         yc  = gr["y_trn"][:]
         crs = Positions(x=xc, y=yc)
 
-        return cls(pws=pws, crs=crs)
+        return cls(pos_pws=pws, pos_crs=crs)
 
 
 @dataclass
@@ -867,8 +829,8 @@ class AnalyzedPositions:
     raw : AnalyzedRawPositions
     trn : TransformedPositions
     """
-    raw : AnalyzedRawPositions
-    trn : TransformedPositions | None = None
+    pos_raw   : AnalyzedRawPositions
+    pos_trnsf : TransformedPositions | None = None
 
     @classmethod
     def from_hdf5(cls, pos_grp) -> "AnalyzedPositions":
@@ -881,7 +843,7 @@ class AnalyzedPositions:
         else:
             trn = None
 
-        return cls(raw=raw, trn=trn)
+        return cls(pos_raw=raw, pos_trnsf=trn)
 
 
 @dataclass

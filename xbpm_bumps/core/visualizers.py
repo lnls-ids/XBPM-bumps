@@ -853,9 +853,9 @@ class SweepVisualizer:
         fig, (axh, axv) = plt.subplots(nrows=1, ncols=2, figsize=figsize)
 
         if sweepline_h is not None:
-            nom_pos_h   = xbpm_dist * sweepline_h.index
-            calc_pos_v  = xbpm_dist * sweepline_h.calc_pos
-            fit_pos_v   = xbpm_dist * sweepline_h.fit_pos
+            nom_pos_h   = xbpm_dist * sweepline_h.pos_index
+            calc_pos_v  = xbpm_dist * sweepline_h.pos_calc
+            fit_pos_v   = xbpm_dist * sweepline_h.pos_fit
             # fit_pos_err = xbpm_dist * sweepline_h.fit_pos_err
 
             axh.plot(nom_pos_h, calc_pos_v, 'o-', label="H calc", zorder=2)
@@ -870,9 +870,9 @@ class SweepVisualizer:
 
 
         if sweepline_v is not None:
-            nom_pos_v   = xbpm_dist * sweepline_v.index
-            calc_pos_h  = xbpm_dist * sweepline_v.calc_pos
-            fit_pos_h   = xbpm_dist * sweepline_v.fit_pos
+            nom_pos_v   = xbpm_dist * sweepline_v.pos_index
+            calc_pos_h  = xbpm_dist * sweepline_v.pos_calc
+            fit_pos_h   = xbpm_dist * sweepline_v.pos_fit
             # fit_pos_err = xbpm_dist * sweepline_v.fit_pos_err
 
             axv.plot(nom_pos_v, calc_pos_h, 'o-', label="V calc", zorder=2)
@@ -965,7 +965,7 @@ class BladeCurrentVisualizer:
         y: np.ndarray,
         yerr: np.ndarray,
         marker: str,
-        blade_name: str) -> Optional[plt.Line2D]:
+        blade_name: str) -> Optional:
         if yerr is not None:
             container = ax.errorbar(
                 rng, y, yerr=yerr, fmt=marker, label=blade_name, zorder=2

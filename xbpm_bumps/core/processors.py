@@ -18,7 +18,9 @@ from .data_structure import (
     CentralSweeps,
     CentralSweepLine,
     Blades,
-    RMSGridStatistics
+    RMSGridStatistics,
+    RMSStatistics,
+    ROISlice,
     )
 
 # _Title = Config.get_plot_title   # shorthand for plot titles
@@ -70,16 +72,12 @@ class XBPMProcessor:
         self.roi        = self.prm_bml.roi
 
         # Nominal positions.
-        self.nom_pos_x  = self.blade_avg.nom.x
-        self.nom_pos_y  = self.blade_avg.nom.y
+        self.pos_nom_x  = self.blade_avg.pos_nom.x
+        self.pos_nom_y  = self.blade_avg.pos_nom.y
 
         # Calculate ranges.
-        self.range_h    = np.unique(self.nom_pos_x)
-        self.range_v    = np.unique(self.nom_pos_y)
-
-        # Are these really needed?
-        self.roisize_v = self.roi.sz_v
-        self.roisize_h = self.roi.sz_h
+        self.range_h    = np.unique(self.pos_nom_x)
+        self.range_v    = np.unique(self.pos_nom_y)
 
     def analyze_central_sweeps(self) -> "CentralSweeps":
         """Assemble the central sweep analysis.
@@ -95,8 +93,8 @@ class XBPMProcessor:
     def central_sweep_h(self) -> "CentralSweepLine":
         """Analyze blade behavior along the central horizontal line."""
         # Select blades at y ~ 0 (central horizontal line).
-        pos_nom_x = self.blade_avg.nom.x
-        pos_nom_y = self.blade_avg.nom.y
+        pos_nom_x = self.blade_avg.pos_nom.x
+        pos_nom_y = self.blade_avg.pos_nom.y
         mask  = np.isclose(pos_nom_y, 0)
         idx   = np.argsort(pos_nom_x[mask])
         blds  = self.blade_avg.blades
@@ -114,10 +112,10 @@ class XBPMProcessor:
         # along h direction (fixed nominal y at 0), expected to be zero.
         s_top = to + ti
         s_bot = bo + bi
-        calc_pos_v = (s_top - s_bot) / (s_top + s_bot)
+        pos_calc_v = (s_top - s_bot) / (s_top + s_bot)
 
         # Fit a linear model to the position data and calculate uncertainties.
-        fit, cov   = np.polyfit(self.range_h, calc_pos_v, deg=1, cov=True)
+        fit, cov   = np.polyfit(self.range_h, pos_calc_v, deg=1, cov=True)
         fit_pos_v  = np.polyval(fit, self.range_h)
         sa, sb     = np.sqrt(np.diag(cov))
         fit_v_err  = np.sqrt((self.range_h * sa)**2 + sb**2)
@@ -126,18 +124,18 @@ class XBPMProcessor:
         blades = Blades(to, ti, bi, bo, sto, sti, sbi, sbo)
         return CentralSweepLine(
             blades=blades,
-            index=self.range_h,
-            fixed=pos_nom_y[mask][idx],
-            calc_pos=calc_pos_v,
-            fit_pos=fit_pos_v,
-            fit_pos_err=fit_v_err
+            pos_index=self.range_h,
+            pos_fixed=pos_nom_y[mask][idx],
+            pos_calc=pos_calc_v,
+            pos_fit=fit_pos_v,
+            pos_fit_err=fit_v_err
             )
 
     def central_sweep_v(self) -> "CentralSweepLine":
         """Analyze blade behavior along the central vertical line."""
         # Select blades at x ~ 0 (central vertical line).
-        pos_nom_x = self.blade_avg.nom.x
-        pos_nom_y = self.blade_avg.nom.y
+        pos_nom_x = self.blade_avg.pos_nom.x
+        pos_nom_y = self.blade_avg.pos_nom.y
         mask = np.isclose(pos_nom_x, 0)
         idx  = np.argsort(pos_nom_y[mask])
         blds = self.blade_avg.blades
@@ -153,11 +151,11 @@ class XBPMProcessor:
         # Calculate positions using pairwise Δ/Σ formula.
         s_left     = to + bo
         s_right    = ti + bi
-        calc_pos_h = (s_left - s_right) / (s_left + s_right)
+        pos_calc_h = (s_left - s_right) / (s_left + s_right)
 
         # Fit a linear model to the position data and calculate uncertainties.
-        fit, cov   = np.polyfit(self.range_v, calc_pos_h, deg=1, cov=True)
-        fit_pos_h  = np.polyval(fit, self.range_v)
+        fit, cov   = np.polyfit(self.range_v, pos_calc_h, deg=1, cov=True)
+        pos_fit_h  = np.polyval(fit, self.range_v)
         sa, sb     = np.sqrt(np.diag(cov))
         fit_h_err  = np.sqrt((self.range_v * sa)**2 + sb**2)
 
@@ -165,34 +163,153 @@ class XBPMProcessor:
         blades = Blades(to, ti, bi, bo, sto, sti, sbi, sbo)
         return CentralSweepLine(
             blades=blades,
-            index=self.range_v,
-            fixed=pos_nom_x[mask][idx],
-            calc_pos=calc_pos_h,
-            fit_pos=fit_pos_h,
-            fit_pos_err=fit_h_err,
+            pos_index=self.range_v,
+            pos_fixed=pos_nom_x[mask][idx],
+            pos_calc=pos_calc_h,
+            pos_fit=pos_fit_h,
+            pos_fit_err=fit_h_err,
             )
 
-    def _extract_roi_slice(self, array: np.ndarray,
-                           fr_col: int, up_col: int,
-                           fr_row: int, up_row: int) -> np.ndarray:
-        """Check whether array is 1D along one axis and extract accordingly.
+#
+# Position calculation tabs.
+#
+
+    def xbpm_position_calculation(self,
+                                  suppress: bool = False,
+                                  showmatrix: bool = True
+                                  ) -> dict:
+        """Orchestrate position calculation for pairwise and cross-blade.
+
+        Delegates to helpers for reduced complexity while maintaining
+        full analysis pipeline.
+        """
+        # Ensure sweep data is available for suppression matrix estimation.
+        self.analyze_central_sweeps(show=False)
+
+        # Parse and compute core data
+        blades, _ = self.data_parse()
+        supmat, stddevmat = self.suppression_matrix(
+            showmatrix=showmatrix,
+            suppress=suppress
+            )
+
+        # Extract nominal ROI slices.
+        pos_nom_h_roi = self.pos_nom_x[self.roi.sl_v, self.roi.sl_h]
+        pos_nom_v_roi = self.pos_nom_y[self.roi.sl_v, self.roi.sl_h]
+
+        # Pairwise calculation (Delta/Sigma).
+        pos_pair = self.beam_position_pair(supmat)
+        (_, _, pos_h, pos_v) = self.position_dict_parse(pos_pair)
+
+        # Extract ROI slices from measured data.
+        pos_roi_pair_v = pos_v[self.roi.sl_v, self.roi.sl_h]
+        pos_roi_pair_h = pos_h[self.roi.sl_v, self.roi.sl_h]
+
+        # Process data: fitting, scaling, stats, visualization.
+        pairwise_result = self._scale_positions(
+                pos_h,
+                pos_v,
+                pos_roi_pair_h,
+                pos_roi_pair_v,
+                self.pos_nom_x,
+                self.pos_nom_y,
+                pos_nom_h_roi,
+                pos_nom_v_roi
+            )
+
+        # Cross-blade calculation (partial Delta/Sigma).
+        pos_cross_h, pos_cross_v = self.beam_position_cross(blades)
+
+        # Extract ROI slices from measured data.
+        pos_roi_cross_h = pos_cross_h[self.roi.sl_v, self.roi.sl_h]
+        pos_roi_cross_v = pos_cross_v[self.roi.sl_v, self.roi.sl_h]
+
+        # Process data: fitting, scaling, stats, visualization.
+        cross_result = self._scale_positions(
+            pos_cross_h,
+            pos_cross_v,
+            pos_roi_cross_h,
+            pos_roi_cross_v,
+            self.pos_nom_x,
+            self.pos_nom_y,
+            pos_nom_h_roi,
+            pos_nom_v_roi,
+            )
+
+        # Compile and return results
+        return self._compile_results(
+            pairwise_result,
+            cross_result,
+            supmat,
+            stddevmat,
+            suppress,
+            self.pos_nom_x,
+            self.pos_nom_y
+            )
+
+    def suppression_matrix(self,
+                           showmatrix: bool = False,
+                           suppress: bool = False
+                           ) -> tuple:
+        """Calculate the suppression matrix from blade behavior.
 
         Args:
-            array: Input array to extract ROI from.
-            fr_col: Starting index for horizontal slice.
-            up_col: Ending index for horizontal slice.
-            fr_row: Starting index for vertical slice.
-            up_row: Ending index for vertical slice.
+            showmatrix: If True, prints the suppression matrix.
+            suppress: If True, calculates from fitted slopes.
+                     If False, returns the standard 1/-1 matrix.
 
         Returns:
-            Extracted ROI slice from the input array.
+            Tuple of (suppression matrix, standard deviation matrix)
         """
-        if array.shape[0] == 1:
-            return array[0:1, fr_col:up_col]
-        elif array.shape[1] == 1:
-            return array[fr_row:up_row, 0:1]
+        if not suppress:
+            # Return standard matrix for raw calculations
+            return Config.standard_suppression_matrix()
+
+        # Calculate from blade slopes for scaled calculations
+        pch, covs_h = self.central_line_fit(self.blades_h,
+                                            self.range_h, 'h')
+        pcv, covs_v = self.central_line_fit(self.blades_v,
+                                            self.range_v, 'v')
+
+        if len(self.range_h) > 1:
+            sdevh = np.sqrt(covs_h) * pch[0, 0] / (pch[:, 0]**2)
+            pch = pch[0] / np.abs(pch)
         else:
-            return array[fr_row:up_row, fr_col:up_col]
+            pch = np.ones(8).reshape(4, 2)
+            sdevh = np.zeros(4)
+
+        if len(self.range_v) > 1:
+            sdevv = np.sqrt(covs_v) * pcv[0, 0] / (pcv[:, 0]**2)
+            pcv = pcv[0] / np.abs(pcv)
+        else:
+            pcv = np.ones(8).reshape(4, 2)
+            sdevv = np.zeros(4)
+
+        supmat = np.array([
+            [pcv[0, 0], -pcv[1, 0], -pcv[2, 0],  pcv[3, 0]],
+            [pcv[0, 0],  pcv[1, 0],  pcv[2, 0],  pcv[3, 0]],
+            [pch[0, 0],  pch[1, 0], -pch[2, 0], -pch[3, 0]],
+            [pch[0, 0],  pch[1, 0],  pch[2, 0],  pch[3, 0]],
+        ])
+
+        stddevmat = np.array([
+            [sdevv[0], sdevv[1], sdevv[2], sdevv[3]],
+            [sdevv[0], sdevv[1], sdevv[2], sdevv[3]],
+            [sdevh[0], sdevh[1], sdevh[2], sdevh[3]],
+            [sdevh[0], sdevh[1], sdevh[2], sdevh[3]],
+        ])
+
+        if showmatrix:
+            print(f'\nUndulator phase or gap: {self.prm_gen.phaseorgap}')
+            print("\nSuppression matrix:")
+            for ii, lin in enumerate(supmat):
+                for jj, col in enumerate(lin):
+                    print(f" {col:12.6f} (±{stddevmat[ii, jj]:10.6f})", end='')
+                print()
+            print()
+
+        # Exporter(self.prm).write_supmat(supmat)
+        return supmat, stddevmat
 
     def _scale_positions(self,
                          pos_all_h: np.ndarray, pos_all_v: np.ndarray,
@@ -229,14 +346,14 @@ class XBPMProcessor:
         pos_roi_v_scaled = qy * pos_roi_v**2 + ky * pos_roi_v + deltay
 
         # Compute statistics
-        rms_all = self.calculate_grid_stats(
+        rms_all = calculate_grid_stats(
             pos_all_h,
             pos_all_v,
             pos_all_h_scaled,
             pos_all_v_scaled,
         )
 
-        rms_roi = self.calculate_grid_stats(
+        rms_roi = calculate_grid_stats(
             pos_roi_h,
             pos_roi_v,
             pos_roi_h_scaled,
@@ -334,166 +451,56 @@ class XBPMProcessor:
             },
         }
 
-    def xbpm_position_calculation(self,
-                                  pos_nom_h: np.ndarray,
-                                  pos_nom_v: np.ndarray,
-                                  nosuppress: bool = False,
-                                  showmatrix: bool = True) -> dict:
-        """Orchestrate position calculation for pairwise and cross-blade.
-
-        Delegates to helpers for reduced complexity while maintaining
-        full analysis pipeline.
-        """
-        # Ensure sweep data is available for suppression matrix estimation.
-        self.analyze_central_sweeps(show=False)
-
-        # Parse and compute core data
-        blades, _ = self.data_parse()
-        supmat, stddevmat = self.suppression_matrix(
-            showmatrix=showmatrix,
-            nosuppress=nosuppress
-            )
-
-        # Extract nominal ROI slices.
-        pos_nom_h_roi = pos_nom_h[self.roi.sl_v, self.roi.sl_h]
-        pos_nom_v_roi = pos_nom_v[self.roi.sl_v, self.roi.sl_h]
-
-        # Pairwise calculation (Delta/Sigma).
-        pos_pair = self.beam_position_pair(supmat)
-        (_, _, pos_h, pos_v) = self.position_dict_parse(pos_pair)
-
-        # Extract ROI slices from measured data.
-        pos_roi_pair_v = pos_v[self.roi.sl_v, self.roi.sl_h]
-        pos_roi_pair_h = pos_h[self.roi.sl_v, self.roi.sl_h]
-
-        # Process data: fitting, scaling, stats, visualization.
-        pairwise_result = self._scale_positions(
-                pos_h,
-                pos_v,
-                pos_roi_pair_h,
-                pos_roi_pair_v,
-                pos_nom_h,
-                pos_nom_v,
-                pos_nom_h_roi,
-                pos_nom_v_roi
-            )
-
-        # Cross-blade calculation (partial Delta/Sigma).
-        pos_cross_h, pos_cross_v = self.beam_position_cross(blades)
-
-        # Extract ROI slices from measured data.
-        pos_roi_cross_h = pos_cross_h[self.roi.sl_v, self.roi.sl_h]
-        pos_roi_cross_v = pos_cross_v[self.roi.sl_v, self.roi.sl_h]
-
-        # Process data: fitting, scaling, stats, visualization.
-        cross_result = self._scale_positions(
-            pos_cross_h,
-            pos_cross_v,
-            pos_roi_cross_h,
-            pos_roi_cross_v,
-            pos_nom_h,
-            pos_nom_v,
-            pos_nom_h_roi,
-            pos_nom_v_roi,
-            )
-
-        # Compile and return results
-        return self._compile_results(pairwise_result,
-                                     cross_result, supmat,
-                                     stddevmat, nosuppress,
-                                     pos_nom_h, pos_nom_v)
-
-    def suppression_matrix(self, showmatrix: bool = False,
-                           nosuppress: bool = False) -> tuple:
-        """Calculate the suppression matrix from blade behavior.
-
-        Args:
-            showmatrix: If True, prints the suppression matrix.
-            nosuppress: If True, returns the standard 1/-1 matrix.
-                        If False, calculates from fitted slopes.
-
-        Returns:
-            Tuple of (suppression matrix, standard deviation matrix)
-        """
-        if nosuppress:
-            # Return standard matrix for raw calculations
-            return Config.standard_suppression_matrix()
-
-        # Calculate from blade slopes for scaled calculations
-        pch, covs_h = self.central_line_fit(self.blades_h,
-                                            self.range_h, 'h')
-        pcv, covs_v = self.central_line_fit(self.blades_v,
-                                            self.range_v, 'v')
-
-        if len(self.range_h) > 1:
-            sdevh = np.sqrt(covs_h) * pch[0, 0] / (pch[:, 0]**2)
-            pch = pch[0] / np.abs(pch)
-        else:
-            pch = np.ones(8).reshape(4, 2)
-            sdevh = np.zeros(4)
-
-        if len(self.range_v) > 1:
-            sdevv = np.sqrt(covs_v) * pcv[0, 0] / (pcv[:, 0]**2)
-            pcv = pcv[0] / np.abs(pcv)
-        else:
-            pcv = np.ones(8).reshape(4, 2)
-            sdevv = np.zeros(4)
-
-        supmat = np.array([
-            [pcv[0, 0], -pcv[1, 0], -pcv[2, 0],  pcv[3, 0]],
-            [pcv[0, 0],  pcv[1, 0],  pcv[2, 0],  pcv[3, 0]],
-            [pch[0, 0],  pch[1, 0], -pch[2, 0], -pch[3, 0]],
-            [pch[0, 0],  pch[1, 0],  pch[2, 0],  pch[3, 0]],
-        ])
-
-        stddevmat = np.array([
-            [sdevv[0], sdevv[1], sdevv[2], sdevv[3]],
-            [sdevv[0], sdevv[1], sdevv[2], sdevv[3]],
-            [sdevh[0], sdevh[1], sdevh[2], sdevh[3]],
-            [sdevh[0], sdevh[1], sdevh[2], sdevh[3]],
-        ])
-
-        if showmatrix:
-            print(f'\nUndulator phase or gap: {self.prm_gen.phaseorgap}')
-            print("\nSuppression matrix:")
-            for ii, lin in enumerate(supmat):
-                for jj, col in enumerate(lin):
-                    print(f" {col:12.6f} (±{stddevmat[ii, jj]:10.6f})", end='')
-                print()
-            print()
-
-        # Exporter(self.prm).write_supmat(supmat)
-        return supmat, stddevmat
-
-    def central_line_fit(self, blades: dict, range_vals: np.ndarray,
-                         direction: str) -> tuple:
+    def central_line_fit(self,
+                         bld_avg: BladeAvgData,
+                         direction: str
+                         ) -> tuple:
         """Linear fittings to each blade's data through central line.
         
         Args:
-            blades: Dictionary of blade measurements along a central line.
-            range_vals: Array of sweep positions (angles or distances).
+            bld_avg: BladeAvgData instance containing blade measurements
+                along a central line.
             direction: 'h' for horizontal, 'v' for vertical.
 
         Returns:
             Tuple of (fit coefficients, std dev values) for each blade.
         """
-        if blades is None:
-            dr = 'horizontal' if direction == 'h' else 'vertical'
-            print(f"\n WARNING: (central_line_fit) {dr} blades' values"
-                  " not defined. Seetting fitting values to [1, 0].")
-            pc = np.array([[1, 0] for _ in range(4)])
-            covs = np.zeros(4)
-            return pc, covs
+        # Extract ROI size and slices.
+        nx, ny = (len(self.range_h), len(self.range_v))
+        if direction == 'h':
+            roih, roiv = self.roi.sl_h, 0
+            range_vals = self.range_h[roiv]
+        else:
+            roih, roiv = 0, self.roi.sl_v
+            range_vals = self.range_v[roiv]
+
+        # Define blades values according to ROI for slope calculation.
+        blades = bld_avg.blades
+        to = blades.to.reshape((ny, nx))[roiv, roih]
+        ti = blades.ti.reshape((ny, nx))[roiv, roih]
+        bi = blades.bi.reshape((ny, nx))[roiv, roih]
+        bo = blades.bo.reshape((ny, nx))[roiv, roih]
+
+        sto = blades.sto.reshape((ny, nx))[roiv, roih]
+        sti = blades.sti.reshape((ny, nx))[roiv, roih]
+        sbi = blades.sbi.reshape((ny, nx))[roiv, roih]
+        sbo = blades.sbo.reshape((ny, nx))[roiv, roih]
 
         pc = list()
         covs = list()
-        for blade in blades.values():
-            weight = 1. / blade[:, 1]
+        for blade, err in [
+            (to, sto), (ti, sti), (bi, sbi), (bo, sbo)
+            ]:
+            weight = 1. / err[:]
 
             if np.isinf(weight).any():
                 weight = None
 
-            coefs, cov = np.polyfit(range_vals, blade[:, 0], deg=1, w=weight, cov=True)
+            coefs, cov = np.polyfit(range_vals,
+                                    blade[:, 0],
+                                    deg=1,
+                                    w=weight,
+                                    cov=True)
             pc.append(coefs)
             covs.append(cov[0, 0])
         pc = np.array(pc)
@@ -638,83 +645,6 @@ class XBPMProcessor:
                         f" coefficients:\n{err}\n"
                         " Setting to default values.")
         return (coeffs, sigmas)
-
-    @staticmethod
-    def calculate_grid_stats(
-        nom_x   : np.ndarray,
-        nom_y   : np.ndarray,
-        meas_x  : np.ndarray,
-        meas_y  : np.ndarray,
-        ) -> "RMSGridStatistics":
-        """Calculate RMS statistics from squared position differences in ROI.
-
-        Args:
-            nom_x  : nominal values in x direction
-            nom_y  : nominal values in y direction
-            meas_x : measured values in x direction
-            meas_y : measured values in y direction
-
-        Returns:
-            dict: Statistics with rms_h, rms_v, rms_total,
-                  rms_max_h, rms_min_h, rms_max_v, rms_min_v.
-        """
-        # Squared differences.
-        diff_x2 = (meas_x - nom_x) ** 2
-        diff_y2 = (meas_y - nom_y) ** 2
-
-        # Check for valid points, since the sweeping might be interrupted.
-        valid  = np.isfinite(diff_x2) & np.isfinite(diff_y2)
-        nsites = int(np.count_nonzero(valid))
-        if nsites == 0:
-            print("\n WARNING: no valid BPM points found for RMS estimation.")
-            rms_stats = {
-                key : np.nan
-                for key in [
-                    'h', 'v', 't',
-                    'min_h', 'max_h', 'min_v', 'max_v',
-                    'mean_h', 'mean_v', 'mean_t',
-                    ]}
-            return rms_stats
-
-        # Valid points only.
-        vld_diff_x2 = diff_x2[valid]
-        vld_diff_y2 = diff_y2[valid]
-
-        # Absolute values of differences.
-        rms_h = np.sqrt(vld_diff_x2)
-        rms_v = np.sqrt(vld_diff_y2)
-        rms_t = np.sqrt(vld_diff_x2 + vld_diff_y2)
-
-        # RMS minimum and maximum values.
-        rms_max_h = np.max(rms_h)
-        rms_min_h = np.min(rms_h)
-        rms_max_v = np.max(rms_v)
-        rms_min_v = np.min(rms_v)
-
-        # RMS global estimates.
-        rms_mean_h = np.sqrt(np.mean(vld_diff_x2))
-        rms_mean_v = np.sqrt(np.mean(vld_diff_y2))
-        rms_mean_t = np.sqrt(np.mean(vld_diff_x2 + vld_diff_y2))
-
-        nsites_total = int(diff_x2.size)
-        if nsites < nsites_total:
-            print("\n WARNING: sweeping looks incomplete, no ROI was defined"
-              f" ({nsites} valid sites, out of {nsites_total}"
-                  " in total). Skipping ROI analysis.")
-
-        rms = {
-            'h'      : rms_h,
-            'v'      : rms_v,
-            't'      : rms_t,
-            'min_h'  : rms_min_h,
-            'max_h'  : rms_max_h,
-            'min_v'  : rms_min_v,
-            'max_v'  : rms_max_v,
-            'mean_h' : rms_mean_h,
-            'mean_v' : rms_mean_v,
-            'mean_t' : rms_mean_t,
-        }
-        return rms
 
     def data_parse(self) -> tuple:
         """Extract each blade's data from whole data dict into arrays."""
@@ -986,10 +916,10 @@ class BPMProcessor:
 
 
 def calculate_grid_stats(
-    nom_x   : np.ndarray,
-    nom_y   : np.ndarray,
-    meas_x  : np.ndarray,
-    meas_y  : np.ndarray,
+        nom_x   : np.ndarray,
+        nom_y   : np.ndarray,
+        meas_x  : np.ndarray,
+        meas_y  : np.ndarray,
     ) -> "RMSGridStatistics":
     """Calculate RMS statistics from squared position differences in ROI.
 
@@ -1015,31 +945,32 @@ def calculate_grid_stats(
         rms_stats = {
             key : np.nan
             for key in [
-                'h', 'v', 't',
-                'min_h', 'max_h', 'min_v', 'max_v',
-                'mean_h', 'mean_v', 'mean_t',
+                'h', 'v', 'tot',
+                'min_h', 'max_h',
+                'min_v', 'max_v',
+                'mean_h', 'mean_v', 'mean_tot',
                 ]}
         return rms_stats
 
     # Valid points only.
-    vld_diff_x2 = diff_x2[valid]
-    vld_diff_y2 = diff_y2[valid]
+    vld_diff_x2  = diff_x2[valid]
+    vld_diff_y2  = diff_y2[valid]
 
     # Absolute values of differences.
-    rms_h = np.sqrt(vld_diff_x2)
-    rms_v = np.sqrt(vld_diff_y2)
-    rms_t = np.sqrt(vld_diff_x2 + vld_diff_y2)
+    rms_h        = np.sqrt(vld_diff_x2)
+    rms_v        = np.sqrt(vld_diff_y2)
+    rms_tot      = np.sqrt(vld_diff_x2 + vld_diff_y2)
 
     # RMS minimum and maximum values.
-    rms_max_h = np.max(rms_h)
-    rms_min_h = np.min(rms_h)
-    rms_max_v = np.max(rms_v)
-    rms_min_v = np.min(rms_v)
+    rms_max_h    = np.max(rms_h)
+    rms_min_h    = np.min(rms_h)
+    rms_max_v    = np.max(rms_v)
+    rms_min_v    = np.min(rms_v)
 
     # RMS global estimates.
-    rms_mean_h = np.sqrt(np.mean(vld_diff_x2))
-    rms_mean_v = np.sqrt(np.mean(vld_diff_y2))
-    rms_mean_t = np.sqrt(np.mean(vld_diff_x2 + vld_diff_y2))
+    rms_mean_h   = np.sqrt(np.mean(vld_diff_x2))
+    rms_mean_v   = np.sqrt(np.mean(vld_diff_y2))
+    rms_mean_tot = np.sqrt(np.mean(vld_diff_x2 + vld_diff_y2))
 
     nsites_total = int(diff_x2.size)
     if nsites < nsites_total:
@@ -1048,15 +979,48 @@ def calculate_grid_stats(
                 " in total). Skipping ROI analysis.")
 
     rms = {
-        'h'      : rms_h,
-        'v'      : rms_v,
-        't'      : rms_t,
-        'min_h'  : rms_min_h,
-        'max_h'  : rms_max_h,
-        'min_v'  : rms_min_v,
-        'max_v'  : rms_max_v,
-        'mean_h' : rms_mean_h,
-        'mean_v' : rms_mean_v,
-        'mean_t' : rms_mean_t,
+        'h'        : rms_h,
+        'v'        : rms_v,
+        'tot'      : rms_tot,
+        'min_h'    : rms_min_h,
+        'max_h'    : rms_max_h,
+        'min_v'    : rms_min_v,
+        'max_v'    : rms_max_v,
+        'mean_h'   : rms_mean_h,
+        'mean_v'   : rms_mean_v,
+        'mean_tot' : rms_mean_tot,
     }
-    return rms
+    return RMSStatistics(**rms)
+
+
+def grid_statistics(nom_x: np.ndarray,
+                    nom_y: np.ndarray,
+                    meas_x: np.ndarray,
+                    meas_y: np.ndarray,
+                    roislice: ROISlice,
+                    ) -> RMSGridStatistics:
+    """Calculate grid statistics from measured and nominal positions.
+
+    Args:
+        nom_x  : Nominal x positions (2D array).
+        nom_y  : Nominal y positions (2D array).
+        meas_x : Measured x positions (2D array).
+        meas_y : Measured y positions (2D array).
+    """
+    # Statistics for the full grid.
+    rms_all = calculate_grid_stats(nom_x, nom_y, meas_x, meas_y)
+
+    # Statistics at ROI.
+    sl_v, sl_h = roislice.sl_v, roislice.sl_h
+    rms_roi = calculate_grid_stats(
+        nom_x[sl_v, sl_h],
+        nom_y[sl_v, sl_h],
+        meas_x[sl_v, sl_h],
+        meas_y[sl_v, sl_h]
+        )
+
+    return RMSGridStatistics(
+        all=rms_all,
+        roi=rms_roi,
+        roislice=roislice
+    )

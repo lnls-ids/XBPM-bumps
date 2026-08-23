@@ -1,6 +1,6 @@
 """Core business logic for XBPM analysis."""
 
-from .config import Config
+# from .config import Config
 # from .parameters import Prm, ParameterBuilder
 from .reader_hdf5 import HDF5DataReader as DataReader
 from .processors import XBPMProcessor, BPMProcessor

@@ -290,7 +290,7 @@ class XBPMAnalyzer(QObject):
             by XBPM distance.
         """
         supmat, _ = self.processor.suppression_matrix(
-                showmatrix=False, nosuppress=True
+                showmatrix=False, suppress=True
             )
         pair = self.processor.beam_position_pair(supmat)
         pos_nom_h, pos_nom_v, _, _ = (
@@ -435,7 +435,7 @@ class XBPMAnalyzer(QObject):
         result_data = self.processor.xbpm_position_calculation(
             pos_nom_h,
             pos_nom_v,
-            nosuppress=True,
+            suppress=True,
             showmatrix=True,
         )
         # Handle both dict and list returns for backward compatibility
