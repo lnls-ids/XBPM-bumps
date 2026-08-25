@@ -164,15 +164,17 @@ class Positions:
     y : np.ndarray
 
     @classmethod
-    def from_hdf5(cls, data) -> "Positions":
+    def from_hdf5(cls,
+                  h5data: h5py.Group | np.ndarray | h5py.Dataset
+                  ) -> "Positions":
         """Create a Positions instance from x and y arrays."""
-        if   isinstance(data, h5py.Group):
-            entries = data.keys()
-        elif isinstance(data, np.ndarray):
-            entries = data.dtype.names
-        elif isinstance(data, h5py.Dataset):
-            data = data[()]   # Load the dataset into memory
-            entries = data.dtype.names
+        if   isinstance(h5data, h5py.Group):
+            entries = h5data.keys()
+        elif isinstance(h5data, np.ndarray):
+            entries = h5data.dtype.names
+        elif isinstance(h5data, h5py.Dataset):
+            h5data = h5data[()]   # Load the dataset into memory
+            entries = h5data.dtype.names
         else:
             raise TypeError(
                 "Data must be an h5py.Group or a structured numpy array."
@@ -192,7 +194,7 @@ class Positions:
             )
 
         try:
-            return cls(x=data[x_key][:], y=data[y_key][:])
+            return cls(x=h5data[x_key][:], y=h5data[y_key][:])
         except (KeyError, ValueError) as err:
             raise KeyError(f"Neither pair of fields found:\n {err}")
 
@@ -213,11 +215,16 @@ class Blades:
     sti : np.ndarray
     sbi : np.ndarray
     sbo : np.ndarray
+    y   : np.ndarray
+    x   : np.ndarray
 
     @classmethod
-    def from_hdf5(cls, data) -> "Blades":
+    def from_hdf5(cls,
+                  avg_grp: h5py.Group,
+                  pos_nom: Positions
+                  ) -> "Blades":
         """Create a Blades instance from an HDF5 group."""
-        datanames = data.dtype.names
+        datanames = avg_grp.dtype.names
 
         # Check for required datasets in the HDF5 group.
         blades = ['to_mean', 'ti_mean', 'bi_mean', 'bo_mean',
@@ -228,16 +235,44 @@ class Blades:
                     " WARNING: while reading Average Blade Currents from HDF5"
                     f" file:\n Missing '{blade}' dataset in HDF5 group.")
 
-        return cls(
-            to  = data["to_mean"][:],
-            ti  = data["ti_mean"][:],
-            bi  = data["bi_mean"][:],
-            bo  = data["bo_mean"][:],
-            sto = data["to_err"][:],
-            sti = data["ti_err"][:],
-            sbi = data["bi_err"][:],
-            sbo = data["bo_err"][:],
+        blds = cls._sort_by_grid(avg_grp, pos_nom)
+        return cls(**blds)
+
+    @classmethod
+    def _sort_by_grid(cls,
+                      bldata: h5py.Group,
+                      pos_nom: Positions
+                      ) -> dict:
+        """Sort the blade data by grid coordinates."""
+        import xarray as xr
+
+        # Create a Dataset with point-wise data
+        ds = xr.Dataset(
+            {
+                'to'  : ('points', bldata["to_mean"][:]),
+                'ti'  : ('points', bldata["ti_mean"][:]),
+                'bi'  : ('points', bldata["bi_mean"][:]),
+                'bo'  : ('points', bldata["bo_mean"][:]),
+                'sto' : ('points', bldata["to_err"][:]),
+                'sti' : ('points', bldata["ti_err"][:]),
+                'sbi' : ('points', bldata["bi_err"][:]),
+                'sbo' : ('points', bldata["bo_err"][:]),
+            },
+            coords={
+                'x': ('points', pos_nom.x),
+                'y': ('points', pos_nom.y),
+            }
         )
+
+        # Convert to a 2D grid by setting a MultiIndex and unstacking
+        # This requires that every (y,x) combination appears exactly once,
+        # otherwise you'll get NaN for missing combinations.
+        ds = ds.set_index(points=['y', 'x']).unstack('points')
+        keys = [
+            'to', 'ti', 'bi', 'bo', 'sto', 'sti', 'sbi', 'sbo',
+            'x', 'y'
+            ]
+        return {key: ds[key].values for key in keys}
 
 #
 # Raw data structures.
@@ -261,13 +296,13 @@ class BladeAvgData:
     def from_hdf5(cls, avg_grp) -> "BladeAvgData":
         """Create a BladeAvgData instance from an HDF5 group."""
         # Extract metadata attributes.
-        prm       = {key : val for key, val in avg_grp.attrs.items()}
-        nom       = Positions.from_hdf5(avg_grp)
-        blades    = Blades.from_hdf5(avg_grp)
-        pos_nom_sh = (len(np.unique(nom.y)), len(np.unique(nom.x)))
+        prm        = {key : val for key, val in avg_grp.attrs.items()}
+        pos_nom    = Positions.from_hdf5(avg_grp)
+        blades     = Blades.from_hdf5(avg_grp, pos_nom=pos_nom)
+        pos_nom_sh = (len(np.unique(pos_nom.y)), len(np.unique(pos_nom.x)))
         return cls(
             prm=prm,
-            pos_nom=nom,
+            pos_nom=pos_nom,
             pos_nom_sh=pos_nom_sh,
             blades=blades
             )
@@ -473,7 +508,6 @@ class RMSGridStatistics:
     roislice : ROISlice        # ROI bounds.
 
 
-
 @dataclass
 class BPMAnalysis:
     """Container for BPM positions and associated metadata.
@@ -537,7 +571,7 @@ class BladeMap:
         blades : Blades (measured currents)
     """
     prm    : dict
-    pos : Positions
+    pos    : Positions
     blades : Blades
 
     @classmethod
@@ -912,7 +946,7 @@ class BeamlineData:
     """
     prm      : BeamlinePrm
     raw_data : BeamlineRawData
-    analysis : DataAnalysis  = field(default=None)
+    analysis : DataAnalysis     = field(default=None)
 
     @classmethod
     def from_hdf5(cls, bd_grp: h5py.Group,) -> "BeamlineData":
