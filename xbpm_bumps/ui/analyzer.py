@@ -1,12 +1,12 @@
 """Qt-friendly wrapper for XBPM analysis core."""
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 import sys
 from io import StringIO
 import traceback
 import numpy as np
-
+from ..core.data_structure import Prm, BladeAvgData
 from ..core.visualizers import BladeCurrentVisualizer as BCV
 from ..core.visualizers import BladeMapVisualizer as BMV
 from ..core.exporters   import Exporter
@@ -14,7 +14,6 @@ from ..core.exporters   import Exporter
 # from ..core.app         import XBPMApp
 from ..core.processors  import XBPMProcessor as XBPMP
 # from ..core.visualizers import SweepVisualizer as SWV
-from ..core.data_structure import Prm, BeamlinePrm
 
 class XBPMAnalyzer(QObject):
     """Qt wrapper for XBPMApp with signals for async execution.
@@ -35,7 +34,7 @@ class XBPMAnalyzer(QObject):
     def __init__(self, prm: Prm,
                  builder: Any,
                  reader: Any,
-                 rawdata: Any,
+                 rawdata: BladeAvgData,
                  parent=None):
         """Initialize the analyzer.
 
@@ -54,7 +53,7 @@ class XBPMAnalyzer(QObject):
         self.rawdata      = rawdata
         self._should_stop = False
 
-        self.processor = XBPMP(self.rawdata, self.prm)
+        self.processor = XBPMP(self.rawdata, self.prm, self.prm.beamline)
         # self._preselected_beamline: Optional[str] = None
 
     @pyqtSlot(dict)
@@ -107,7 +106,7 @@ class XBPMAnalyzer(QObject):
         """Initialize processor/exporter and run analysis steps."""
         # Initialize processor and exporter
         self.analysisProgress.emit("Initializing processor...")
-        self.processor = XBPMP(self.rawdata, self.prm)
+        self.processor = XBPMP(self.rawdata, self.prm, self.prm.beamline)
         self.exporter = Exporter(self.prm)
 
         # Run analysis steps
@@ -432,12 +431,8 @@ class XBPMAnalyzer(QObject):
         """Calculate raw XBPM positions."""
         self.analysisProgress.emit("\n# Calculating raw XBPM positions...")
         pos_nom_h, pos_nom_v = self._resolve_reference_positions(results)
-        result_data = self.processor.xbpm_position_calculation(
-            pos_nom_h,
-            pos_nom_v,
-            suppress=True,
-            showmatrix=True,
-        )
+        result_data = self.processor.xbpm_position_calculation(suppress=False)
+
         # Handle both dict and list returns for backward compatibility
         if isinstance(result_data, dict):
             # New format: positions is [pairwise_dict, cross_dict]
@@ -492,9 +487,7 @@ class XBPMAnalyzer(QObject):
         """Calculate scaled XBPM positions."""
         self.analysisProgress.emit("\n# Calculating scaled XBPM positions...")
         pos_nom_h, pos_nom_v = self._resolve_reference_positions(results)
-        result_data = self.app.processor.xbpm_position_calculation(
-            pos_nom_h, pos_nom_v, nosuppress=False, showmatrix=True,
-            )
+        result_data = self.processor.xbpm_position_calculation(suppress=True)
 
         # Handle both dict and list returns for backward compatibility
         if isinstance(result_data, dict):
@@ -555,15 +548,17 @@ class XBPMAnalyzer(QObject):
         Delegates to the canonical visualizer implementation.
         """
         # Ensure we have sweep data
-        if (self.app.processor.range_h is None or
-            self.app.processor.range_v is None):
-            self.app.processor.analyze_central_sweeps(show=False)
+        if (self.processor.range_h is None or
+            self.processor.range_v is None):
+            self.processor.analyze_central_sweeps(show=False)
 
-        blades_h = self.app.processor.blades_h
-        blades_v = self.app.processor.blades_v
-        range_h = self.app.processor.range_h
-        range_v = self.app.processor.range_v
+        blades_h = self.processor.blades
+        blades_v = self.processor.blades
+        range_h  = self.processor.range_h
+        range_v  = self.processor.range_v
 
-        return BCV.plot_blade_center_from_dicts(blades_h, blades_v,
-                                                range_h, range_v,
-                                                self.app.prm.beamline)
+        return BCV.plot_blade_center_from_dicts(
+            blades_h, blades_v,
+            range_h, range_v,
+            self.prm.beamline
+            )

@@ -11,9 +11,9 @@ import numpy as np
 from .config         import Config    
 from .constants      import FIGDPI
 from .data_structure import (
+    BeamlineData,
     BeamlinePrm,
     BeamlineRawData,
-    BladeAvgData,
     Prm,
     CentralSweeps,
     CentralSweepLine,
@@ -48,7 +48,7 @@ class XBPMProcessor:
     """
 
     def __init__(self,
-                 blade_avg: BladeAvgData,
+                 beamlinedata: BeamlineData,
                  prm_bml: BeamlinePrm,
                  prm_gen: Prm
                  ) -> None:
@@ -60,10 +60,14 @@ class XBPMProcessor:
             prm_bml   : Beamline parameters dataclass instance.
         """
         # Get blade data structures.
-        self.blade_avg  = blade_avg
-        self.blades     = blade_avg.blades
-        self.prm_avg    = blade_avg.prm
+        self.blade_avg  = beamlinedata.raw_data.blade_avg
+        self.blades     = self.blade_avg.blades
+        self.prm_avg    = self.blade_avg.prm
         self.prm_gen    = prm_gen
+
+        # Analysis data.
+        self.analysis = beamlinedata.analysis
+        self.supmat   = self.analysis.supmat
 
         # Beamline parameters.
         self.prm_bml    = prm_bml
@@ -91,7 +95,7 @@ class XBPMProcessor:
         return CentralSweeps(h=h, v=v)
 
     def central_sweep_h(self) -> "CentralSweepLine":
-        """Analyze blade behavior along the central horizontal line."""
+        """Analyze position calculation along the central horizontal line."""
         # Select blades at y ~ 0 (central horizontal line).
         pos_nom_x = self.blade_avg.pos_nom.x
         pos_nom_y = self.blade_avg.pos_nom.y
@@ -106,6 +110,8 @@ class XBPMProcessor:
         sti   = blds.sti[mask][idx]
         sbi   = blds.sbi[mask][idx]
         sbo   = blds.sbo[mask][idx]
+        nom_x = pos_nom_x[mask][idx]
+        nom_y = pos_nom_y[mask][idx]
 
         # Calculate positions using pairwise Δ/Σ formula.
         # calc_pos_v is the calculated set of positions at central line
@@ -121,7 +127,7 @@ class XBPMProcessor:
         fit_v_err  = np.sqrt((self.range_h * sa)**2 + sb**2)
 
         # Build the SweepLine data structure for horizontal sweep.
-        blades = Blades(to, ti, bi, bo, sto, sti, sbi, sbo)
+        blades = Blades(to, ti, bi, bo, sto, sti, sbi, sbo, nom_x, nom_y)
         return CentralSweepLine(
             blades=blades,
             pos_index=self.range_h,
@@ -132,21 +138,23 @@ class XBPMProcessor:
             )
 
     def central_sweep_v(self) -> "CentralSweepLine":
-        """Analyze blade behavior along the central vertical line."""
+        """Analyze position calculation along the central vertical line."""
         # Select blades at x ~ 0 (central vertical line).
         pos_nom_x = self.blade_avg.pos_nom.x
         pos_nom_y = self.blade_avg.pos_nom.y
-        mask = np.isclose(pos_nom_x, 0)
-        idx  = np.argsort(pos_nom_y[mask])
-        blds = self.blade_avg.blades
-        to   = blds.to[mask][idx]
-        ti   = blds.ti[mask][idx]
-        bi   = blds.bi[mask][idx]
-        bo   = blds.bo[mask][idx]
-        sto  = blds.sto[mask][idx]
-        sti  = blds.sti[mask][idx]
-        sbi  = blds.sbi[mask][idx]
-        sbo  = blds.sbo[mask][idx]
+        mask  = np.isclose(pos_nom_x, 0)
+        idx   = np.argsort(pos_nom_y[mask])
+        blds  = self.blade_avg.blades
+        to    = blds.to[mask][idx]
+        ti    = blds.ti[mask][idx]
+        bi    = blds.bi[mask][idx]
+        bo    = blds.bo[mask][idx]
+        sto   = blds.sto[mask][idx]
+        sti   = blds.sti[mask][idx]
+        sbi   = blds.sbi[mask][idx]
+        sbo   = blds.sbo[mask][idx]
+        nom_x = pos_nom_x[mask][idx]
+        nom_y = pos_nom_y[mask][idx]
 
         # Calculate positions using pairwise Δ/Σ formula.
         s_left     = to + bo
@@ -160,7 +168,7 @@ class XBPMProcessor:
         fit_h_err  = np.sqrt((self.range_v * sa)**2 + sb**2)
 
         # Build the SweepLine data structure for vertical sweep.
-        blades = Blades(to, ti, bi, bo, sto, sti, sbi, sbo)
+        blades = Blades(to, ti, bi, bo, sto, sti, sbi, sbo, nom_x, nom_y)
         return CentralSweepLine(
             blades=blades,
             pos_index=self.range_v,
@@ -174,32 +182,28 @@ class XBPMProcessor:
 # Position calculation tabs.
 #
 
-    def xbpm_position_calculation(self,
-                                  suppress: bool = False,
-                                  showmatrix: bool = True
-                                  ) -> dict:
+    def xbpm_position_calculation(self, suppress: bool = False) -> dict:
         """Orchestrate position calculation for pairwise and cross-blade.
 
         Delegates to helpers for reduced complexity while maintaining
         full analysis pipeline.
         """
-        # Ensure sweep data is available for suppression matrix estimation.
-        self.analyze_central_sweeps(show=False)
-
-        # Parse and compute core data
-        blades, _ = self.data_parse()
-        supmat, stddevmat = self.suppression_matrix(
-            showmatrix=showmatrix,
-            suppress=suppress
-            )
+        # Ensure central sweep data is available.
+        # This call should be transferred to the orchestrator.
+        self.pos_central_sweeps = self.analyze_central_sweeps()
 
         # Extract nominal ROI slices.
         pos_nom_h_roi = self.pos_nom_x[self.roi.sl_v, self.roi.sl_h]
         pos_nom_v_roi = self.pos_nom_y[self.roi.sl_v, self.roi.sl_h]
 
+        # Compute suppression matrix at the ROI.
+        self.suppression_matrix()
+
         # Pairwise calculation (Delta/Sigma).
+        supmat = self.supmat.calculated if suppress else self.supmat.standard
         pos_pair = self.beam_position_pair(supmat)
-        (_, _, pos_h, pos_v) = self.position_dict_parse(pos_pair)
+        pos_h, pos_v = pos_pair[:, 0], pos_pair[:, 1]
+        # (_, _, pos_h, pos_v) = self.position_dict_parse(pos_pair)
 
         # Extract ROI slices from measured data.
         pos_roi_pair_v = pos_v[self.roi.sl_v, self.roi.sl_h]
@@ -211,14 +215,12 @@ class XBPMProcessor:
                 pos_v,
                 pos_roi_pair_h,
                 pos_roi_pair_v,
-                self.pos_nom_x,
-                self.pos_nom_y,
                 pos_nom_h_roi,
                 pos_nom_v_roi
             )
 
         # Cross-blade calculation (partial Delta/Sigma).
-        pos_cross_h, pos_cross_v = self.beam_position_cross(blades)
+        pos_cross_h, pos_cross_v = self.beam_position_cross(self.blades)
 
         # Extract ROI slices from measured data.
         pos_roi_cross_h = pos_cross_h[self.roi.sl_v, self.roi.sl_h]
@@ -230,8 +232,6 @@ class XBPMProcessor:
             pos_cross_v,
             pos_roi_cross_h,
             pos_roi_cross_v,
-            self.pos_nom_x,
-            self.pos_nom_y,
             pos_nom_h_roi,
             pos_nom_v_roi,
             )
@@ -240,81 +240,63 @@ class XBPMProcessor:
         return self._compile_results(
             pairwise_result,
             cross_result,
-            supmat,
-            stddevmat,
+            self.supmat,
             suppress,
             self.pos_nom_x,
             self.pos_nom_y
             )
 
-    def suppression_matrix(self,
-                           showmatrix: bool = False,
-                           suppress: bool = False
-                           ) -> tuple:
+    def suppression_matrix(self) -> None:
         """Calculate the suppression matrix from blade behavior.
 
         Args:
-            showmatrix: If True, prints the suppression matrix.
             suppress: If True, calculates from fitted slopes.
                      If False, returns the standard 1/-1 matrix.
 
         Returns:
             Tuple of (suppression matrix, standard deviation matrix)
         """
-        if not suppress:
-            # Return standard matrix for raw calculations
-            return Config.standard_suppression_matrix()
-
-        # Calculate from blade slopes for scaled calculations
-        pch, covs_h = self.central_line_fit(self.blades_h,
-                                            self.range_h, 'h')
-        pcv, covs_v = self.central_line_fit(self.blades_v,
-                                            self.range_v, 'v')
+        # Calculate blade slopes for scaled calculations.
+        # Blade sweep in horizontal direction.
+        pc_h, covs_h = self.blade_central_line_fit(
+            self.roi.sl_h, 0, self.range_h[self.roi.sl_h]
+            )
+        # Blade sweep in vertical direction.
+        pc_v, covs_v = self.blade_central_line_fit(
+            0, self.roi.sl_v, self.range_v[self.roi.sl_v]
+            )
 
         if len(self.range_h) > 1:
-            sdevh = np.sqrt(covs_h) * pch[0, 0] / (pch[:, 0]**2)
-            pch = pch[0] / np.abs(pch)
+            sdv_h = np.sqrt(covs_h) * pc_h[0, 0] / (pc_h[:, 0]**2)
+            pc_h  = pc_h[0] / np.abs(pc_h)
         else:
-            pch = np.ones(8).reshape(4, 2)
-            sdevh = np.zeros(4)
+            pc_h  = np.ones(8).reshape(4, 2)
+            sdv_h = np.zeros(4)
 
         if len(self.range_v) > 1:
-            sdevv = np.sqrt(covs_v) * pcv[0, 0] / (pcv[:, 0]**2)
-            pcv = pcv[0] / np.abs(pcv)
+            sdv_v = np.sqrt(covs_v) * pc_v[0, 0] / (pc_v[:, 0]**2)
+            pc_v  = pc_v[0] / np.abs(pc_v)
         else:
-            pcv = np.ones(8).reshape(4, 2)
-            sdevv = np.zeros(4)
+            pc_v  = np.ones(8).reshape(4, 2)
+            sdv_v = np.zeros(4)
 
-        supmat = np.array([
-            [pcv[0, 0], -pcv[1, 0], -pcv[2, 0],  pcv[3, 0]],
-            [pcv[0, 0],  pcv[1, 0],  pcv[2, 0],  pcv[3, 0]],
-            [pch[0, 0],  pch[1, 0], -pch[2, 0], -pch[3, 0]],
-            [pch[0, 0],  pch[1, 0],  pch[2, 0],  pch[3, 0]],
+        self.supmat.calculated = np.array([
+            [pc_v[0, 0], -pc_v[1, 0], -pc_v[2, 0],  pc_v[3, 0]],
+            [pc_v[0, 0],  pc_v[1, 0],  pc_v[2, 0],  pc_v[3, 0]],
+            [pc_h[0, 0],  pc_h[1, 0], -pc_h[2, 0], -pc_h[3, 0]],
+            [pc_h[0, 0],  pc_h[1, 0],  pc_h[2, 0],  pc_h[3, 0]],
         ])
 
-        stddevmat = np.array([
-            [sdevv[0], sdevv[1], sdevv[2], sdevv[3]],
-            [sdevv[0], sdevv[1], sdevv[2], sdevv[3]],
-            [sdevh[0], sdevh[1], sdevh[2], sdevh[3]],
-            [sdevh[0], sdevh[1], sdevh[2], sdevh[3]],
+        self.supmat.stddev = np.array([
+            [sdv_v[0], sdv_v[1], sdv_v[2], sdv_v[3]],
+            [sdv_v[0], sdv_v[1], sdv_v[2], sdv_v[3]],
+            [sdv_h[0], sdv_h[1], sdv_h[2], sdv_h[3]],
+            [sdv_h[0], sdv_h[1], sdv_h[2], sdv_h[3]],
         ])
-
-        if showmatrix:
-            print(f'\nUndulator phase or gap: {self.prm_gen.phaseorgap}')
-            print("\nSuppression matrix:")
-            for ii, lin in enumerate(supmat):
-                for jj, col in enumerate(lin):
-                    print(f" {col:12.6f} (±{stddevmat[ii, jj]:10.6f})", end='')
-                print()
-            print()
-
-        # Exporter(self.prm).write_supmat(supmat)
-        return supmat, stddevmat
 
     def _scale_positions(self,
                          pos_all_h: np.ndarray, pos_all_v: np.ndarray,
                          pos_roi_h: np.ndarray, pos_roi_v: np.ndarray,
-                         pos_nom_h: np.ndarray, pos_nom_v: np.ndarray,
                          pos_nom_h_roi: np.ndarray,
                          pos_nom_v_roi: np.ndarray,
                         ) -> dict:
@@ -323,7 +305,6 @@ class XBPMProcessor:
         Args:
             calc_type       : 'pairwise' (Δ/Σ) or 'cross' (partial Δ/Σ).
             pos_all_h/v     : Full position array (measured)
-            pos_nom_h/v     : Nominal position array (reference)
             pos_nom_h/v_roi : ROI slice of nominal positions
             nosuppress      : If True, label results as raw mode.
 
@@ -451,40 +432,31 @@ class XBPMProcessor:
             },
         }
 
-    def central_line_fit(self,
-                         bld_avg: BladeAvgData,
-                         direction: str
-                         ) -> tuple:
+    def blade_central_line_fit(self,
+                               roi_h: slice,
+                               roi_v: slice,
+                               range_vals: np.ndarray
+                               ) -> tuple:
         """Linear fittings to each blade's data through central line.
         
         Args:
-            bld_avg: BladeAvgData instance containing blade measurements
-                along a central line.
-            direction: 'h' for horizontal, 'v' for vertical.
+            roi_h: slice for horizontal ROI.
+            roi_v: slice for vertical ROI.
+            range_vals: range values corresponding to the ROI.
 
         Returns:
             Tuple of (fit coefficients, std dev values) for each blade.
         """
-        # Extract ROI size and slices.
-        nx, ny = (len(self.range_h), len(self.range_v))
-        if direction == 'h':
-            roih, roiv = self.roi.sl_h, 0
-            range_vals = self.range_h[roiv]
-        else:
-            roih, roiv = 0, self.roi.sl_v
-            range_vals = self.range_v[roiv]
-
         # Define blades values according to ROI for slope calculation.
-        blades = bld_avg.blades
-        to = blades.to.reshape((ny, nx))[roiv, roih]
-        ti = blades.ti.reshape((ny, nx))[roiv, roih]
-        bi = blades.bi.reshape((ny, nx))[roiv, roih]
-        bo = blades.bo.reshape((ny, nx))[roiv, roih]
+        to = self.blades.to[roi_v, roi_h]
+        ti = self.blades.ti[roi_v, roi_h]
+        bi = self.blades.bi[roi_v, roi_h]
+        bo = self.blades.bo[roi_v, roi_h]
 
-        sto = blades.sto.reshape((ny, nx))[roiv, roih]
-        sti = blades.sti.reshape((ny, nx))[roiv, roih]
-        sbi = blades.sbi.reshape((ny, nx))[roiv, roih]
-        sbo = blades.sbo.reshape((ny, nx))[roiv, roih]
+        sto = self.blades.sto[roi_v, roi_h]
+        sti = self.blades.sti[roi_v, roi_h]
+        sbi = self.blades.sbi[roi_v, roi_h]
+        sbo = self.blades.sbo[roi_v, roi_h]
 
         pc = list()
         covs = list()
@@ -517,42 +489,42 @@ class XBPMProcessor:
             positions[pos] = np.array([dsps[0] / dsps[1], dsps[2] / dsps[3]])
         return positions
 
-    def position_dict_parse(self, data: dict) -> tuple:
-        """Parse XBPM position dict into structured arrays."""
-        gridlist = np.array(list(data.keys()))
-
-        grid_lin = np.unique(gridlist[:, 1])
-        grid_col = np.unique(gridlist[:, 0])
-
-        gsh_lin = len(grid_lin)
-        gsh_col = len(grid_col)
-
-        xbpm_nom_h  = np.zeros((gsh_lin, gsh_col))
-        xbpm_nom_v  = np.zeros((gsh_lin, gsh_col))
-        xbpm_meas_h = np.zeros((gsh_lin, gsh_col))
-        xbpm_meas_v = np.zeros((gsh_lin, gsh_col))
-
-        for ii, y in enumerate(grid_lin):
-            for jj, x in enumerate(grid_col):
-                # key = (x, y) = (col, lin)
-                key = (x, y)
-                if key not in data.keys():
-                    print(f"\n WARNING: position {key} not found in data,"
-                        " Skipping.")
-                    continue
-
-                try:
-                    xbpm_nom_h[ii, jj]  = x
-                    xbpm_nom_v[ii, jj]  = y
-                    xbpm_meas_h[ii, jj] = data[key][0]
-                    xbpm_meas_v[ii, jj] = data[key][1]
-                except Exception as err:
-                    print(f"\n WARNING: failed when parsing positions"
-                          f" dictionary:\n{err}\n"
-                          f" lin, col = {y}, {x}, key = {key}")
-                    continue
-
-        return (xbpm_nom_h, xbpm_nom_v, xbpm_meas_h, xbpm_meas_v)
+    # def position_dict_parse(self, data: dict) -> tuple:
+    #     """Parse XBPM position dict into structured arrays."""
+    #     gridlist = np.array(list(data.keys()))
+    #
+    #     grid_lin = np.unique(gridlist[:, 1])
+    #     grid_col = np.unique(gridlist[:, 0])
+    #
+    #     gsh_lin = len(grid_lin)
+    #     gsh_col = len(grid_col)
+    #
+    #     xbpm_nom_h  = np.zeros((gsh_lin, gsh_col))
+    #     xbpm_nom_v  = np.zeros((gsh_lin, gsh_col))
+    #     xbpm_meas_h = np.zeros((gsh_lin, gsh_col))
+    #     xbpm_meas_v = np.zeros((gsh_lin, gsh_col))
+    #
+    #     for ii, y in enumerate(grid_lin):
+    #         for jj, x in enumerate(grid_col):
+    #             # key = (x, y) = (col, lin)
+    #             key = (x, y)
+    #             if key not in data.keys():
+    #                 print(f"\n WARNING: position {key} not found in data,"
+    #                     " Skipping.")
+    #                 continue
+    #
+    #             try:
+    #                 xbpm_nom_h[ii, jj]  = x
+    #                 xbpm_nom_v[ii, jj]  = y
+    #                 xbpm_meas_h[ii, jj] = data[key][0]
+    #                 xbpm_meas_v[ii, jj] = data[key][1]
+    #             except Exception as err:
+    #                 print(f"\n WARNING: failed when parsing positions"
+    #                       f" dictionary:\n{err}\n"
+    #                       f" lin, col = {y}, {x}, key = {key}")
+    #                 continue
+    #
+    #     return (xbpm_nom_h, xbpm_nom_v, xbpm_meas_h, xbpm_meas_v)
 
     @staticmethod
     def beam_position_cross(blades) -> list:
@@ -646,50 +618,50 @@ class XBPMProcessor:
                         " Setting to default values.")
         return (coeffs, sigmas)
 
-    def data_parse(self) -> tuple:
-        """Extract each blade's data from whole data dict into arrays."""
-        dk = np.array(list(self.blade_avg.keys()))
+    # def data_parse(self) -> tuple:
+    #     """Extract each blade's data from whole data dict into arrays."""
+    #     dk = np.array(list(self.blade_avg.keys()))
 
-        try:
-            nh = np.unique(dk[:, 0])
-            nv = np.unique(dk[:, 1])
-        except:  # noqa: E722
-            # Some data are 1-D only
-            nh = np.zeros(len(dk))
-            nv = np.unique(dk)
+    #     try:
+    #         nh = np.unique(dk[:, 0])
+    #         nv = np.unique(dk[:, 1])
+    #     except:  # noqa: E722
+    #         # Some data are 1-D only
+    #         nh = np.zeros(len(dk))
+    #         nv = np.unique(dk)
 
-        ngrid = (nv.shape[0], nh.shape[0])
-        to,  ti  = np.zeros(ngrid), np.zeros(ngrid)
-        bo,  bi  = np.zeros(ngrid), np.zeros(ngrid)
-        sto, sti = np.zeros(ngrid), np.zeros(ngrid)
-        sbo, sbi = np.zeros(ngrid), np.zeros(ngrid)
+    #     ngrid = (nv.shape[0], nh.shape[0])
+    #     to,  ti  = np.zeros(ngrid), np.zeros(ngrid)
+    #     bo,  bi  = np.zeros(ngrid), np.zeros(ngrid)
+    #     sto, sti = np.zeros(ngrid), np.zeros(ngrid)
+    #     sbo, sbi = np.zeros(ngrid), np.zeros(ngrid)
 
-        for ii, nl in enumerate(nv):
-            for jj, nc in enumerate(nh):
-                key = (nc, nl)
-                ilin = ngrid[0] - ii - 1
-                icol = jj
+    #     for ii, nl in enumerate(nv):
+    #         for jj, nc in enumerate(nh):
+    #             key = (nc, nl)
+    #             ilin = ngrid[0] - ii - 1
+    #             icol = jj
 
-                if key not in self.blade_avg.keys():
-                    break
+    #             if key not in self.blade_avg.keys():
+    #                 break
 
-                try:
-                    to[ilin, icol]  = self.blade_avg[key][0, 0]
-                    ti[ilin, icol]  = self.blade_avg[key][1, 0]
-                    bi[ilin, icol]  = self.blade_avg[key][2, 0]
-                    bo[ilin, icol]  = self.blade_avg[key][3, 0]
+    #             try:
+    #                 to[ilin, icol]  = self.blade_avg[key][0, 0]
+    #                 ti[ilin, icol]  = self.blade_avg[key][1, 0]
+    #                 bi[ilin, icol]  = self.blade_avg[key][2, 0]
+    #                 bo[ilin, icol]  = self.blade_avg[key][3, 0]
 
-                    sto[ilin, icol] = self.blade_avg[key][0, 1]
-                    sti[ilin, icol] = self.blade_avg[key][1, 1]
-                    sbi[ilin, icol] = self.blade_avg[key][2, 1]
-                    sbo[ilin, icol] = self.blade_avg[key][3, 1]
-                except Exception as err:
-                    print(f"\n WARNING, when trying to parse blade data: {err}"
-                          f"\n nominal position: {err},"
-                          f" array index: {ilin}, {icol}"
-                          "\n Maybe data grid is incomplete?")
+    #                 sto[ilin, icol] = self.blade_avg[key][0, 1]
+    #                 sti[ilin, icol] = self.blade_avg[key][1, 1]
+    #                 sbi[ilin, icol] = self.blade_avg[key][2, 1]
+    #                 sbo[ilin, icol] = self.blade_avg[key][3, 1]
+    #             except Exception as err:
+    #                 print(f"\n WARNING, when trying to parse blade data: {err}"
+    #                       f"\n nominal position: {err},"
+    #                       f" array index: {ilin}, {icol}"
+    #                       "\n Maybe data grid is incomplete?")
 
-        return [to, ti, bi, bo], [sto, sti, sbi, sbo]
+    #     return [to, ti, bi, bo], [sto, sti, sbi, sbo]
 
 
 class BPMProcessor:

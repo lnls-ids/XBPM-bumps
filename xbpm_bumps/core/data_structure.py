@@ -269,7 +269,8 @@ class Blades:
         # otherwise you'll get NaN for missing combinations.
         ds = ds.set_index(points=['y', 'x']).unstack('points')
         keys = [
-            'to', 'ti', 'bi', 'bo', 'sto', 'sti', 'sbi', 'sbo',
+            'to', 'ti', 'bi', 'bo',
+            'sto', 'sti', 'sbi', 'sbo',
             'x', 'y'
             ]
         return {key: ds[key].values for key in keys}
@@ -748,10 +749,15 @@ class SupressionMatrix:
     
     matrix: 4x4 numpy array representing the suppression matrix
     """
-    standard   : np.ndarray
-    calculated : np.ndarray
+    standard   : np.ndarray | None = None 
+    calculated : np.ndarray | None = None
     stddev     : np.ndarray | None = None
     optimized  : np.ndarray | None = None
+
+    def __post_init__(self) -> None:
+        # If both are None, use the standard values
+        if self.standard is None and self.stddev is None:
+            self.standard, self.stddev = Config.standard_suppression_matrix()
 
     @classmethod
     def from_hdf5(cls, mat_grp) -> "SupressionMatrix":
@@ -970,5 +976,7 @@ class BeamlineData:
             logging.warning(
                 "### WARNING, while reading 'Data Analysis' from HDF5 file:"
                 f"\n {warn}"
-            )
+                "\n Instantiating DataAnalysis with default values.\n"
+                )
+            kwargs["analysis"] = DataAnalysis()
         return cls(**kwargs)
