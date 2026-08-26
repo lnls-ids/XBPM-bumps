@@ -784,6 +784,16 @@ class SupressionMatrix:
         return cls(**kwargs)
 
 
+class GL2RMatrix:
+    """Container for partial delta/sigma transformation matrices.
+    
+    std   : identity matrix.
+    rt_st : rotation plus stretching matrix.
+    """
+    std   : np.ndarray = np.identity(2)
+    rt_st : np.ndarray = np.array([])
+
+
 @dataclass
 class AnalyzedRawPositions:
     """Container for analyzed positions and associated metadata.
@@ -869,8 +879,8 @@ class AnalyzedPositions:
     raw : AnalyzedRawPositions
     trn : TransformedPositions
     """
-    pos_raw   : AnalyzedRawPositions
-    pos_trnsf : TransformedPositions | None = None
+    pos_raw : AnalyzedRawPositions
+    pos_trn : TransformedPositions | None = None
 
     @classmethod
     def from_hdf5(cls, pos_grp) -> "AnalyzedPositions":
@@ -883,7 +893,7 @@ class AnalyzedPositions:
         else:
             trn = None
 
-        return cls(pos_raw=raw, pos_trnsf=trn)
+        return cls(pos_raw=raw, pos_trn=trn)
 
 
 @dataclass
