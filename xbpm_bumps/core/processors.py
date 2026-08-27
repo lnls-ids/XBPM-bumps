@@ -1,36 +1,9 @@
 """XBPM and BPM data processors."""
 
-# import os
-# import matplotlib
 import numpy as np
-
-# from .visualizers import PositionVisualizer as PSV
-# from .visualizers import SweepVisualizer as SWV
-# from .visualizers import BladeCurrentVisualizer as BCV
-
-from .config         import Config    
-from .constants      import FIGDPI
-from .data_structure import (
-    Positions,
-    BeamlineData,
-    BeamlinePrm,
-    BeamlineRawData,
-    Prm,
-    CentralSweeps,
-    CentralSweepLine,
-    Blades,
-    RMSGridStatistics,
-    RMSStatistics,
-    ROISlice,
-    )
-
-# _Title = Config.get_plot_title   # shorthand for plot titles
-# from .exporters import Exporter
-
-# Keep math font consistent with visualizers (Computer Modern / cm).
-# matplotlib.rcParams['mathtext.fontset'] = 'cm'
-# matplotlib.rcParams['mathtext.rm'] = 'serif'
-# matplotlib.rcParams['font.family'] = 'serif'
+from copy import deepcopy
+from .constants import FIGDPI
+from . import data_structure as DStr
 
 
 class XBPMProcessor:
@@ -49,16 +22,18 @@ class XBPMProcessor:
     """
 
     def __init__(self,
-                 beamlinedata: BeamlineData,
-                 prm_bml: BeamlinePrm,
-                 prm_gen: Prm
+                 beamlinedata: DStr.BeamlineData,
+                 prm_bml: DStr.BeamlinePrm,
+                 prm_gen: DStr.Prm
                  ) -> None:
         """Initialize processor with data and parameters.
 
         Args:
-            blade_avg : BladeAvgData instance containing measurement data.
-            prm_gen   : General parameters dataclass instance.
-            prm_bml   : Beamline parameters dataclass instance.
+            beamlinedata : DStr.BeamlineData instance containing
+                        measurement data.
+            prm_gen      : DStr.Prm instance containing general parameters.
+            prm_bml      : DStr.BeamlinePrm instance containing
+                        beamline parameters.
         """
         # Get blade data structures.
         self.blade_avg  = beamlinedata.raw_data.blade_avg
@@ -69,15 +44,16 @@ class XBPMProcessor:
         # Analysis data.
         self.analysis = beamlinedata.analysis
         self.supmat   = self.analysis.supmat
+        self.gl2r     = self.analysis.gl2r
 
         # Beamline parameters.
         self.prm_bml    = prm_bml
         self.beamline   = self.prm_bml.beamline
         # ROI defines V and H sizes (sz_h/v), and respective slices (sl_h/v).
         self.roi        = self.prm_bml.roi
-
+ 
         # Nominal positions.
-        self.pos_nom = Positions(
+        self.pos_nom = DStr.Positions(
             self.blade_avg.pos_nom.x,
             self.blade_avg.pos_nom.y
             )
@@ -86,18 +62,22 @@ class XBPMProcessor:
         self.range_h    = np.unique(self.pos_nom.x)
         self.range_v    = np.unique(self.pos_nom.y)
 
-    def analyze_central_sweeps(self) -> "CentralSweeps":
+    def analyze_central_sweeps(self,
+                               pairw: bool = False
+                               ) -> DStr.CentralSweeps:
         """Assemble the central sweep analysis.
 
         Returns:
             CentralSweeps instance containing horizontal and vertical central sweeps.
         """
         # Run through central lines if data is not just a point.
-        h = (self.central_sweep_h() if len(self.range_h) > 1 else None)
-        v = (self.central_sweep_v() if len(self.range_v) > 1 else None)
-        return CentralSweeps(h=h, v=v)
+        h = (self.central_sweep_h(pairw) if len(self.range_h) > 1 else None)
+        v = (self.central_sweep_v(pairw) if len(self.range_v) > 1 else None)
+        return DStr.CentralSweeps(h=h, v=v)
 
-    def central_sweep_h(self) -> "CentralSweepLine":
+    def central_sweep_h(self,
+                        pairw: bool = False
+                        ) -> DStr.CentralSweepLine:
         """Analyze position calculation along the central horizontal line."""
         # Select blades at y ~ 0 (central horizontal line).
         pos_nom_x = self.blade_avg.pos_nom.x
@@ -116,12 +96,17 @@ class XBPMProcessor:
         nom_x = pos_nom_x[mask][idx]
         nom_y = pos_nom_y[mask][idx]
 
-        # Calculate positions using pairwise Δ/Σ formula.
+        # Calculate positions using pairwise Δ/Σ or cross-blades formula.
         # calc_pos_v is the calculated set of positions at central line
         # along h direction (fixed nominal y at 0), expected to be zero.
-        s_top = to + ti
-        s_bot = bo + bi
-        pos_calc_v = (s_top - s_bot) / (s_top + s_bot)
+        if pairw:
+            s_top = to + ti
+            s_bot = bo + bi
+            pos_calc_v = (s_top - s_bot) / (s_top + s_bot)
+        else:
+            v1 = (to - bi) / (to + bi)
+            v2 = (ti - bo) / (ti + bo)
+            pos_calc_v = (v1 + v2)
 
         # Fit a linear model to the position data and calculate uncertainties.
         fit, cov   = np.polyfit(self.range_h, pos_calc_v, deg=1, cov=True)
@@ -130,17 +115,24 @@ class XBPMProcessor:
         fit_v_err  = np.sqrt((self.range_h * sa)**2 + sb**2)
 
         # Build the SweepLine data structure for horizontal sweep.
-        blades = Blades(to, ti, bi, bo, sto, sti, sbi, sbo, nom_x, nom_y)
-        return CentralSweepLine(
+        blades = DStr.Blades(
+            to, ti, bi, bo,
+            sto, sti, sbi, sbo,
+            nom_x, nom_y
+            )
+        return DStr.CentralSweepLine(
             blades=blades,
             pos_index=self.range_h,
             pos_fixed=pos_nom_y[mask][idx],
             pos_calc=pos_calc_v,
             pos_fit=fit_pos_v,
-            pos_fit_err=fit_v_err
-            )
+            pos_fit_err=fit_v_err,
+            coeffs=fit,
+            sigmas=np.sqrt(np.diag(cov))
+        )
 
-    def central_sweep_v(self) -> "CentralSweepLine":
+    def central_sweep_v(self,
+                        pairw: bool = False) -> DStr.CentralSweepLine:
         """Analyze position calculation along the central vertical line."""
         # Select blades at x ~ 0 (central vertical line).
         pos_nom_x = self.blade_avg.pos_nom.x
@@ -159,10 +151,15 @@ class XBPMProcessor:
         nom_x = pos_nom_x[mask][idx]
         nom_y = pos_nom_y[mask][idx]
 
-        # Calculate positions using pairwise Δ/Σ formula.
-        s_left     = to + bo
-        s_right    = ti + bi
-        pos_calc_h = (s_left - s_right) / (s_left + s_right)
+        # Calculate positions using pairwise Δ/Σ or cross-blades formula.
+        if pairw:
+            s_left     = to + bo
+            s_right    = ti + bi
+            pos_calc_h = (s_left - s_right) / (s_left + s_right)
+        else:
+            h1 = (to - bi) / (to + bi)
+            h2 = (ti - bo) / (ti + bo)
+            pos_calc_h = (h1 + h2)
 
         # Fit a linear model to the position data and calculate uncertainties.
         fit, cov   = np.polyfit(self.range_v, pos_calc_h, deg=1, cov=True)
@@ -171,8 +168,12 @@ class XBPMProcessor:
         fit_h_err  = np.sqrt((self.range_v * sa)**2 + sb**2)
 
         # Build the SweepLine data structure for vertical sweep.
-        blades = Blades(to, ti, bi, bo, sto, sti, sbi, sbo, nom_x, nom_y)
-        return CentralSweepLine(
+        blades = DStr.Blades(
+            to, ti, bi, bo,
+            sto, sti, sbi, sbo,
+            nom_x, nom_y
+            )
+        return DStr.CentralSweepLine(
             blades=blades,
             pos_index=self.range_v,
             pos_fixed=pos_nom_x[mask][idx],
@@ -191,53 +192,123 @@ class XBPMProcessor:
         Delegates to helpers for reduced complexity while maintaining
         full analysis pipeline.
         """
+        # Define reference positions as nominal or BPM's.
+        self.pos_ref = (self.pos_nom
+                        if self.prm_bml.refpos == "nominal"
+                        else self.blade_avg.pos_bpm)
+
         # Ensure central sweep data is available.
         # This call should be transferred to the orchestrator.
-        self.pos_central_sweeps = self.analyze_central_sweeps()
-
-        # Extract nominal ROI slices.
-        pos_nom_h_roi = self.pos_nom.x[self.roi.sl_v, self.roi.sl_h]
-        pos_nom_v_roi = self.pos_nom.y[self.roi.sl_v, self.roi.sl_h]
+        self.pos_central_sweeps = self.analyze_central_sweeps(pairw=True)
 
         # Compute suppression matrix at the ROI.
         self.suppression_matrix()
 
-        # Pairwise calculation (Delta/Sigma).
+        # Pairwise (pw) calculation (Delta/Sigma).
+        # Positions with standard suppression matrix.
+        pos_pw_std = self.beam_position_pair(self.supmat.standard)
 
-        # No correction, uses standard suppression matrix.
-        pos_pair_std = self.beam_position_pair(self.supmat.standard)
-
-        # Process data: fitting, scaling, stats, visualization.
-        pairwise_result_std = self.scale_positions(pos_pair_std)
-
-
-
-
-        # Cross-blade calculation (partial Delta/Sigma).
-        pos_cross_h, pos_cross_v = self.beam_position_cross(self.blades)
-
-        # Extract ROI slices from measured data.
-        pos_roi_cross_h = pos_cross_h[self.roi.sl_v, self.roi.sl_h]
-        pos_roi_cross_v = pos_cross_v[self.roi.sl_v, self.roi.sl_h]
-
-        # Process data: fitting, scaling, stats, visualization.
-        cross_result = self.scale_positions(
-            pos_cross_h,
-            pos_cross_v,
-            pos_roi_cross_h,
-            pos_roi_cross_v,
-            pos_nom_h_roi,
-            pos_nom_v_roi,
+        # Scale positions for pairwise standard case.
+        pw_scale_std, pw_pos_std = self.scale_positions(
+            self.pos_ref,
+            pos_pw_std,
             )
 
+        # RMS statistics.
+        rms_pw_std = grid_statistics(
+            self.pos_ref.x,
+            self.pos_ref.y,
+            pw_pos_std.x,
+            pw_pos_std.y,
+            self.roi
+        )
+
+        # Positions with calculated suppression matrix and scaling.
+        pos_pw_sup = self.beam_position_pair(self.supmat.calculated)
+
+        # Scale positions.
+        pw_scale_sup, pw_pos_sup = self.scale_positions(
+            self.pos_ref,
+            pos_pw_sup,
+            )
+
+        # RMS statistics.
+        rms_pw_sup = grid_statistics(
+            self.pos_ref.x,
+            self.pos_ref.y,
+            pw_pos_sup.x,
+            pw_pos_sup.y,
+            self.roi
+        )
+
+        # Pairwise results instance.
+        pairwise_res = DStr.CalculatedPositions(
+            roi=deepcopy(self.roi),
+            pos_std=pw_pos_std,
+            scale_std=pw_scale_std,
+            stat_std=rms_pw_std,
+            pos_trn=pw_pos_sup,
+            scale_trn=pw_scale_sup,
+            stat_trn=rms_pw_sup
+        )
+
+        # Compute suppression matrix at the ROI.
+        self.general_linear_transformation()
+
+        # Cross-blade calculation (partial Delta/Sigma).
+        # Positions from standard formulae.
+        pos_cr_std = self.beam_position_cross(self.blades)
+
+        # Process data: fitting, scaling, stats, visualization.
+        cr_scale_std, cr_pos_std = self.scale_positions(
+            self.pos_ref,
+            pos_cr_std,
+            )
+
+        # RMS statistics.
+        rms_cr_std = grid_statistics(
+            self.pos_ref.x,
+            self.pos_ref.y,
+            cr_pos_std.x,
+            cr_pos_std.y,
+            self.roi
+        )
+
+        # Positions with linear general transfomation.
+        pos_cr_lintr = self.transform_position_cross()
+
+        # Scale positions.
+        cr_scale_lintr, cr_pos_lintr = self.scale_positions(
+            self.pos_ref,
+            pos_cr_lintr,
+            )
+
+        # RMS statistics.
+        rms_cr_lintr = grid_statistics(
+            self.pos_ref.x,
+            self.pos_ref.y,
+            cr_pos_lintr.x,
+            cr_pos_lintr.y,
+            self.roi
+        )
+
+        # Cross-blade results instance.
+        cross_res = DStr.CalculatedPositions(
+            roi=deepcopy(self.roi),
+            pos_std=cr_pos_std,
+            scale_std=cr_scale_std,
+            stat_std=rms_cr_std,
+            pos_trn=pos_cr_lintr,
+            scale_trn=cr_scale_lintr,
+            stat_trn=rms_cr_lintr
+        )
+
         # Compile and return results
-        return self._compile_results(
-            pairwise_result_std,
-            cross_result,
-            self.supmat,
-            suppress,
-            self.pos_nom.x,
-            self.pos_nom.y
+        return DStr.AnalyzedPositions(
+            nom=deepcopy(self.pos_ref),
+            bpm=deepcopy(self.blade_avg.pos_bpm),
+            pairw=pairwise_res,
+            cross=cross_res
             )
 
     def suppression_matrix(self) -> None:
@@ -288,6 +359,25 @@ class XBPMProcessor:
             [sdv_h[0], sdv_h[1], sdv_h[2], sdv_h[3]],
         ])
 
+    def general_linear_transformation(self) -> None:
+        """Calculate the linear transformation matrix from position slopes."""
+        csweep = self.analyze_central_sweeps(pairw=False)
+        kx, dx = csweep.h.coeffs
+        ky, dy = csweep.v.coeffs
+        mat = np.array([
+            [dx, kx],
+            [dy, ky]
+        ])
+        self.gl2r.calc = np.linalg.inv(mat)
+
+    def transform_position_cross(self) -> DStr.Positions:
+        """Transform cross-blade positions using the linear transformation matrix."""
+        scross = np.vstack((
+            self.blade_avg.pos_cross.x, self.blade_avg.pos_cross.y
+            ))
+        pos_tr = np.matmul(self.gl2r.calc, scross)
+        return DStr.Positions(x=pos_tr[0], y=pos_tr[1])
+
     def blade_central_line_fit(self,
                                range_vals: np.ndarray
                                ) -> tuple:
@@ -302,14 +392,13 @@ class XBPMProcessor:
             Tuple of (fit coefficients, std dev values) for each blade.
         """
         # Define blades values according to ROI for slope calculation.
-        to = self.blades.to[self.roi.sl_v, self.roi.sl_h]
-        ti = self.blades.ti[self.roi.sl_v, self.roi.sl_h]
-        bi = self.blades.bi[self.roi.sl_v, self.roi.sl_h]
-        bo = self.blades.bo[self.roi.sl_v, self.roi.sl_h]
-
+        to  = self.blades.to[self.roi.sl_v, self.roi.sl_h]
         sto = self.blades.sto[self.roi.sl_v, self.roi.sl_h]
+        ti  = self.blades.ti[self.roi.sl_v, self.roi.sl_h]
         sti = self.blades.sti[self.roi.sl_v, self.roi.sl_h]
+        bi  = self.blades.bi[self.roi.sl_v, self.roi.sl_h]
         sbi = self.blades.sbi[self.roi.sl_v, self.roi.sl_h]
+        bo  = self.blades.bo[self.roi.sl_v, self.roi.sl_h]
         sbo = self.blades.sbo[self.roi.sl_v, self.roi.sl_h]
 
         pc = list()
@@ -336,7 +425,16 @@ class XBPMProcessor:
         return pc, covs
 
     def beam_position_pair(self, supmat: np.ndarray) -> dict:
-        """Calculate beam position from blades' currents (pairwise)."""
+        """Calculate beam position from blades' currents (pairwise).
+        
+        Args:
+            supmat: Suppression matrix to apply to blade measurements.
+            supmat may be either the standard or calculated suppression matrix.
+
+        Returns:
+            Calculated beam position as a Positions instance.
+        """
+        # Stack blade measurements into a 4xN array for matrix multiplication.
         blade_meas = np.stack([
             self.blades.to,
             self.blades.ti,
@@ -344,9 +442,10 @@ class XBPMProcessor:
             self.blades.bo
             ], axis=0)
         Q_deltasum = np.matmul(supmat, blade_meas.reshape(4, -1))
+        # Calculate positions using the Δ/Σ formula.
         x = Q_deltasum.T[:, 0] / Q_deltasum.T[:, 1]
         y = Q_deltasum.T[:, 2] / Q_deltasum.T[:, 3]
-        return Positions(x, y)
+        return DStr.Positions(x, y)
 
     @staticmethod
     def beam_position_cross(blades) -> list:
@@ -358,32 +457,36 @@ class XBPMProcessor:
         vpos = (v1 + v2)
         return [hpos, vpos]
 
-    def scale_positions(self, pos_calc: Positions) -> dict:
+    def scale_positions(self,
+                        pos_nom: DStr.Positions,
+                        pos_calc: DStr.Positions
+                        ) -> tuple[DStr.Scales,
+                                   DStr.Positions,
+                                   DStr.Positions]:
         """Scale positions, pairwise or cross-blade.
 
+        Scale positions using polynomial fitting to reference positions (nominal or BPM's). Return calculated scales (polynomial coefficients with errors) and scaled positions.
+
         Args:
-            calc_type       : 'pairwise' (Δ/Σ) or 'cross' (partial Δ/Σ).
-            pos_all_h/v     : Full position array (measured)
-            pos_nom_h/v_roi : ROI slice of nominal positions
-            nosuppress      : If True, label results as raw mode.
+            calc_type   : 'pairwise' (Δ/Σ) or 'cross' (partial Δ/Σ).
+            pos_all_h/v : Full position array (measured)
+            pos_nom_h/v : nominal h or v positions
+            nosuppress  : If True, label results as raw mode.
 
         Returns:
-            Dict with scaled positions, scales, stats, visualizer.
+            Tuple with scales, all scaled positions, and ROI scaled positions.
         """
-        pos_nom_roi_x = self.pos_nom.x[self.roi.sl_v, self.roi.sl_h]
-        pos_nom_roi_y = self.pos_nom.y[self.roi.sl_v, self.roi.sl_h]
-
-        pos_roi_x = pos_calc.x[self.roi.sl_v, self.roi.sl_h]
-        pos_roi_y = pos_calc.y[self.roi.sl_v, self.roi.sl_h]
+        calc_roi_x = pos_calc.x[self.roi.sl_v, self.roi.sl_h]
+        calc_roi_y = pos_calc.y[self.roi.sl_v, self.roi.sl_h]
 
         # Perform scaling fit
         # label = "Δ/Σ" if calc_type == "pairwise" else "Partial Δ/Σ"
         ((scl_x, sig_x),
          (scl_y, sig_y)) = self.scaling_fit(
-            pos_roi_x,
-            pos_roi_y,
-            pos_nom_roi_x,
-            pos_nom_roi_y,
+            pos_nom.x,
+            pos_nom.y,
+            calc_roi_x,
+            calc_roi_y,
             polydeg=self.prm_bml.scalepolydeg,
         )
         (qx, kx, deltax), (sqx, skx, sdeltax) = scl_x, sig_x
@@ -392,51 +495,17 @@ class XBPMProcessor:
         # Scale all positions.
         pos_all_x_scaled = qx * pos_calc.x**2 + kx * pos_calc.x + deltax
         pos_all_y_scaled = qy * pos_calc.y**2 + ky * pos_calc.y + deltay
-        # Scale ROI positions.
-        pos_roi_x_scaled = qx * pos_roi_x**2 + kx * pos_roi_x + deltax
-        pos_roi_y_scaled = qy * pos_roi_y**2 + ky * pos_roi_y + deltay
 
-        # Compute statistics
-        rms_all = calculate_grid_stats(
-            pos_calc.x,
-            pos_calc.y,
-            pos_all_x_scaled,
-            pos_all_y_scaled,
+        # Build scales dataclass instance.
+        scales = DStr.Scales(
+            qx=qx, sqx=sqx, kx=kx, skx=skx, dx=deltax, sdx=sdeltax,
+            qy=qy, sqy=sqy, ky=ky, sky=sky, dy=deltay, sdy=sdeltay
         )
-
-        rms_roi = calculate_grid_stats(
-            pos_roi_x,
-            pos_roi_y,
-            pos_roi_x_scaled,
-            pos_roi_y_scaled,
-        )
-
-        pos_analyzed = {
-            'pos_nom' : Positions(pos_nom_roi_x, pos_nom_roi_y),
-            'pos_calc' : Positions(pos_roi_x, pos_roi_y),
-        }
-
-
-        return {
-            'h_scaled'     : pos_all_x_scaled,
-            'v_scaled'     : pos_all_y_scaled,
-            'h_roi_scaled' : pos_roi_x_scaled,
-            'v_roi_scaled' : pos_roi_y_scaled,
-            'qx'           : qx,
-            'sqx'          : sqx,
-            'kx'           : kx,
-            'skx'          : skx,
-            'qy'           : qy,
-            'sqy'          : sqy,
-            'ky'           : ky,
-            'sky'          : sky,
-            'dx'           : deltax,
-            'sdx'          : sdeltax,
-            'dy'           : deltay,
-            'sdy'          : sdeltay,
-            'rms_all'      : rms_all,
-            'rms_roi'      : rms_roi,
-        }
+        pos_all_scaled = DStr.Positions(
+            x=pos_all_x_scaled,
+            y=pos_all_y_scaled
+            )
+        return scales, pos_all_scaled
 
     def _compile_results(self, pair_result: dict, cross_result: dict,
                          supmat: np.ndarray, stddevmat: np.ndarray,
@@ -509,19 +578,19 @@ class XBPMProcessor:
         }
 
     def scaling_fit(self,
-                    pos_cal_h: np.ndarray,
-                    pos_cal_v: np.ndarray,
                     pos_nom_h: np.ndarray,
                     pos_nom_v: np.ndarray,
+                    pos_cal_h: np.ndarray,
+                    pos_cal_v: np.ndarray,
                     polydeg: int = 1,
                     ) -> tuple:
         """Calculate scaling coefficients from fitted positions.
         
         Args:
-            pos_cal_h: Measured horizontal positions array.
-            pos_cal_v: Measured vertical positions array.
             pos_nom_h: Nominal horizontal positions array.
             pos_nom_v: Nominal vertical positions array.
+            pos_cal_h: Measured horizontal positions array.
+            pos_cal_v: Measured vertical positions array.
             polydeg  : Degree of the polynomial fit.
         
         Returns:
@@ -602,8 +671,8 @@ class BPMProcessor:
     """
 
     def __init__(self,
-                 rawdata : BeamlineRawData,
-                 prm_bml : BeamlinePrm,
+                 rawdata : DStr.BeamlineRawData,
+                 prm_bml : DStr.BeamlinePrm,
                  ) -> None:
         """Store raw BPM/XBPM dataset and parameters for later processing."""
         self.rawdata = rawdata
@@ -631,7 +700,7 @@ class BPMProcessor:
         self._positions_from_tangents()
 
         # Estimate standard deviations.
-        self.rms_grid_stats = RMSGridStatistics(
+        self.rms_grid_stats = DStr.RMSGridStatistics(
             self.nom_x,  self.nom_y,
             self.meas_x, self.meas_y,
             self.prm_bml.roi
@@ -822,7 +891,7 @@ def calculate_grid_stats(
         nom_y   : np.ndarray,
         meas_x  : np.ndarray,
         meas_y  : np.ndarray,
-    ) -> "RMSGridStatistics":
+    ) -> DStr.RMSGridStatistics:
     """Calculate RMS statistics from squared position differences in ROI.
 
     Args:
@@ -832,7 +901,7 @@ def calculate_grid_stats(
         meas_y : measured values in y direction
 
     Returns:
-        dict: Statistics with rms_h, rms_v, rms_total,
+        DStr.RMSGridStatistics: Statistics with rms_h, rms_v, rms_total,
                 rms_max_h, rms_min_h, rms_max_v, rms_min_v.
     """
     # Squared differences.
@@ -844,14 +913,14 @@ def calculate_grid_stats(
     nsites = int(np.count_nonzero(valid))
     if nsites == 0:
         print("\n WARNING: no valid BPM points found for RMS estimation.")
-        rms_stats = {
-            key : np.nan
-            for key in [
+        rms_stats = DStr.RMSGridStatistics(
+            **{key: np.nan for key in [
                 'h', 'v', 'tot',
                 'min_h', 'max_h',
                 'min_v', 'max_v',
                 'mean_h', 'mean_v', 'mean_tot',
                 ]}
+        )
         return rms_stats
 
     # Valid points only.
@@ -892,15 +961,15 @@ def calculate_grid_stats(
         'mean_v'   : rms_mean_v,
         'mean_tot' : rms_mean_tot,
     }
-    return RMSStatistics(**rms)
+    return DStr.RMSGridStatistics(**rms)
 
 
 def grid_statistics(nom_x: np.ndarray,
                     nom_y: np.ndarray,
                     meas_x: np.ndarray,
                     meas_y: np.ndarray,
-                    roislice: ROISlice,
-                    ) -> RMSGridStatistics:
+                    roislice: DStr.ROISlice,
+                    ) -> DStr.RMSGridStatistics:
     """Calculate grid statistics from measured and nominal positions.
 
     Args:
@@ -921,7 +990,7 @@ def grid_statistics(nom_x: np.ndarray,
         meas_y[sl_v, sl_h]
         )
 
-    return RMSGridStatistics(
+    return DStr.RMSGridStatistics(
         all=rms_all,
         roi=rms_roi,
         roislice=roislice

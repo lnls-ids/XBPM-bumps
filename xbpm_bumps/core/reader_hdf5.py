@@ -6,57 +6,39 @@ import numpy as np
 # import sys
 import matplotlib
 
-from .config import Config
-from .data_structure import BeamlineData
+from .config import Config as Cfg
+from . import data_structure as DStr
 
-# from dataclasses import dataclass, field
 # from typing import Optional, Any, List
 
+def read_hdf5(filepath: str) -> dict[str, DStr.BeamlineData]:
+    beamlinedata ={}
+    with h5py.File(filepath, 'r') as hf:
+        for beamline, bldata in hf.items():
+            if beamline not in Cfg.BLADEMAP.keys():
+                print(f" WARNING: Unknown beamline '{beamline}'"
+                        " defined in HDF5 file. Skipping.")
+                continue
 
-# --- Object-Oriented HDF5 Data Reader ---
-class HDF5DataReader:
-    """Encapsulates HDF5 file access and data extraction for XBPM.
+            # Assemble the extracted data in the raw_data dictionary.
+            beamlinedata[beamline] = DStr.BeamlineData.from_hdf5(bldata)
+    return beamlinedata
+
+
+def write_hdf5(
+        filepath: str,
+        beamlinedata: dict[str, DStr.BeamlineData]
+        ) -> None:
+    """Write beamline data to an HDF5 file.
     
-    An object is created containing all beamline data from the HDF5 file.
-    It encapsulates more than one beamline, if present, since BeamlineData
-    extracts the data for each beamline separately.
-
     Args:
-        filepath (str): Path to the HDF5 file.
+        filepath (str): Path to the HDF5 file to write.
+        beamlinedata (dict): Dictionary of beamline data to write.
     """
-
-    def __init__(self, filepath: str) -> None:
-        """Initialize HDF5DataReader with file path.
-        
-        Args:
-            filepath (str) : the HDF5 file with data.
-        
-        """
-        self.filepath = filepath
-        self.beamlinedata = {}
-        self.load_data()
-
-    def __enter__(self: "HDF5DataReader") -> "HDF5DataReader":
-        """Enter context: open HDF5 file."""
-        self.h5 = h5py.File(self.filepath, 'r')
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Exit context: close HDF5 file."""
-        if hasattr(self, 'h5') and self.h5 is not None:
-            self.h5.close()
-            self.h5 = None
-
-    def load_data(self) -> None:
-        with h5py.File(self.filepath, 'r') as hf:
-            for beamline, bldata in hf.items():
-                if beamline not in Config.BLADEMAP.keys():
-                    print(f" WARNING: Unknown beamline '{beamline}'"
-                          " defined in HDF5 file. Skipping.")
-                    continue
-
-                # Assemble the extracted data in the raw_data dictionary.
-                self.beamlinedata[beamline] = BeamlineData.from_hdf5(bldata)
+    with h5py.File(filepath, 'w') as hf:
+        for beamline, bldata in beamlinedata.items():
+            # Write the beamline data to the HDF5 file.
+            bldata.to_hdf5(hf, beamline)
 
 
 # --- Object-Oriented HDF5 Figure Reconstructor ---
@@ -330,7 +312,8 @@ class HDF5FigureReconstructor:
         )
 
     @staticmethod
-    def _reconstruct_bpm_from_raw(h5_file: h5py.File,
+    def _reconstruct_bpm_from_raw(bpmrawdata: DStr.BPMRawData,
+                                  bpmanalysis: DStr.BPMAnalysis,
                                   analysis_grp: h5py.Group
                                   ) -> "matplotlib.figure.Figure":
         """Fallback reconstruction of BPM positions from raw_data sweeps."""
@@ -338,11 +321,7 @@ class HDF5FigureReconstructor:
         from .processors import BPMProcessor
         from .config import Config
 
-        raw_grp = h5_file.get('raw_data')
-        if raw_grp is None:
-            raise ValueError("No BPM dataset in positions and no raw_data")
-
-        raw_data = HDF5DataReader.extract_sweeps(raw_grp)
+        raw_data = bpmrawdata
         if not raw_data:
             raise ValueError("No BPM dataset in positions and raw_data is empty")
 
@@ -423,23 +402,20 @@ class HDF5FigureReconstructor:
 
     @staticmethod
     def _derive_bpm_stats_from_raw(
-        h5file: h5py.File,
-        analysis: h5py.Group,
-        beamline: str) -> dict | None:
+            h5file: h5py.File,
+            analysis: h5py.Group,
+            beamline: str
+            ) -> dict | None:
         """Derive BPM stats from /raw_data when /positions/bpm is missing."""
         raw_grp = h5file.get('raw_data') if h5file is not None else None
         if raw_grp is None:
             return None
 
-        raw_data = HDF5DataReader.extract_sweeps(raw_grp)
-        if not raw_data:
-            return None
-
         from .data_structure import BeamlinePrm as Prm
-        from .processors import BPMProcessor
+        # from .processors import BPMProcessor
         from .config import Config
-        from contextlib import redirect_stdout, redirect_stderr
-        from io import StringIO
+        # from contextlib import redirect_stdout, redirect_stderr
+        # from io import StringIO
 
         beamline_val = beamline or analysis.attrs.get('beamline', '')
         base_bl = beamline_val[:3] if beamline_val else ''
@@ -459,28 +435,28 @@ class HDF5FigureReconstructor:
         prm.bpmdist = float(bpmdist)
         prm.xbpmdist = float(xbpmdist)
 
-        bpm_processor = BPMProcessor(raw_data, prm)
-        sink = StringIO()
-        try:
-            with redirect_stdout(sink), redirect_stderr(sink):
-                bpm_processor.calculate_positions()
-        except Exception:
-            return None
-        return getattr(bpm_processor, 'last_stats', None)
+        # bpm_processor = BPMProcessor(bpmrawdata, prm)
+        # sink = StringIO()
+        # try:
+        #     with redirect_stdout(sink), redirect_stderr(sink):
+        #         bpm_processor.calculate_positions()
+        # except Exception:
+        #     return None
+        # return getattr(bpm_processor, 'last_stats', None)
 
     @staticmethod
     def _load_scales_meta(analysis: h5py.Group, meta: dict) -> None:
-        scales = HDF5DataReader._read_scale_attrs(analysis)
+        scales = DStr.Scales(analysis)
         if not scales:
             scales_grp = analysis.get('scales')
             if scales_grp is not None:
-                scales = HDF5DataReader._read_scales_group(scales_grp)
+                scales = DStr.Scales.from_hdf5_group(scales_grp)
         if scales:
             meta['scales'] = scales
 
     @staticmethod
     def _load_sweeps_meta(analysis: h5py.Group, meta: dict) -> None:
-        sweeps_meta = HDF5DataReader._read_sweeps_meta(analysis)
+        sweeps_meta = DStr.CentralSweeps(analysis)
         if sweeps_meta:
             meta['sweeps'] = sweeps_meta
 
@@ -547,9 +523,7 @@ class HDF5FigureReconstructor:
                 stats[key] = float(bpm_ds.attrs[key])
         roi_bounds = meta.get('bpm_stats', {}).get('roi_bounds')
         if not roi_bounds:
-            roi_bounds = (
-                HDF5DataReader._load_roi_bounds_fallback_attrs(positions_grp)
-                )
+            roi_bounds = DStr.ROISlice.update(positions_grp)
             if roi_bounds:
                 stats['roi_bounds'] = roi_bounds
         if stats:
@@ -662,8 +636,8 @@ class HDF5FigureReconstructor:
         h_ds = sweeps.get('blades_h')
         v_ds = sweeps.get('blades_v')
 
-        positions = HDF5DataReader._collect_sweep_positions(h_ds, v_ds)
-        blades = HDF5DataReader._collect_sweep_blade_trends(h_ds, v_ds)
+        positions = DStr.Positions(h_ds, v_ds)
+        blades = DStr.Blades(h_ds, v_ds)
 
         meta = {}
         if positions:
@@ -678,7 +652,7 @@ class HDF5FigureReconstructor:
         v_ds: h5py.Dataset | None) -> dict | None:
         positions = {}
         for axis, dataset in (('horizontal', h_ds), ('vertical', v_ds)):
-            fit = HDF5DataReader._read_sweep_fit_attrs(dataset)
+            fit = DStr.CentralSweepLine(dataset)
             if fit:
                 positions[axis] = fit
         return positions
@@ -693,7 +667,7 @@ class HDF5FigureReconstructor:
             ('vertical', v_ds, 'y_index'),
         )
         for axis, dataset, coord_field in axis_map:
-            fits = HDF5DataReader._fit_blade_trends(dataset, coord_field)
+            fits = DStr.Blades(dataset, coord_field)
             if fits:
                 blades[axis] = fits
         return blades

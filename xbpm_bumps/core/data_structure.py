@@ -1,6 +1,7 @@
 """Parameter handling and CLI parsing."""
 
 # import sys
+from curses import raw
 from dataclasses import dataclass, field
 import logging
 from typing import List
@@ -506,7 +507,6 @@ class RMSGridStatistics:
     """Statistics calculated at a given ROI."""
     all      : RMSStatistics   # Full grid statistics.
     roi      : RMSStatistics   # ROI statistics.
-    roislice : ROISlice        # ROI bounds.
 
 
 @dataclass
@@ -523,7 +523,6 @@ class BPMAnalysis:
     """
     prm      : BeamlinePrm
     pos_meas : Positions
-    pos_nom  : Positions
     rms_diff : RMSGridStatistics
 
     @classmethod
@@ -555,7 +554,6 @@ class BPMAnalysis:
 
         return cls(
             prm=prm,
-            pos_nom=bpm_proc.nominal,
             pos_meas=bpm_proc.measured,
             rms_diff=rms_diff,
             )
@@ -610,6 +608,8 @@ class CentralSweepLine:
     pos_calc    : np.ndarray
     pos_fit     : np.ndarray
     pos_fit_err : np.ndarray
+    coeffs      : np.ndarray | None = None
+    sigmas      : np.ndarray | None = None
 
     @classmethod
     def from_hdf5(cls,
@@ -642,6 +642,8 @@ class CentralSweepLine:
             pos_calc=sln_grp[f"{fix}_calc"][:],
             pos_fit=sln_grp[f"{fix}_fit"][:],
             pos_fit_err=sln_grp[f"s_{fix}_fit"][:],
+            coeffs=sln_grp.attrs.get(f"{fix}_fit_coeffs", None),
+            sigmas=sln_grp.attrs.get(f"{fix}_fit_sigmas", None)
         )
 
 
@@ -790,110 +792,96 @@ class GL2RMatrix:
     std   : identity matrix.
     rt_st : rotation plus stretching matrix.
     """
-    std   : np.ndarray = np.identity(2)
-    rt_st : np.ndarray = np.array([])
+    std  : np.ndarray = np.identity(2)
+    calc : np.ndarray = np.array([])
 
 
 @dataclass
-class AnalyzedRawPositions:
+class CalculatedPositions:
     """Container for analyzed positions and associated metadata.
 
     These data were calculated, but not correct by the suppression matrix.
 
-    x: horizontal positions
-    y: vertical positions
+        roi        : ROI slice used in the analysis
+        pos_std    : positions calculated from standard formulae
+        scale_std  : scaling factors for standard positions
+        stat_std   : RMS statistics of the differences between standard
+                 positions and nominal or BPM-calculated positions.
+        pos_trn    : positions calculated from transformed formulae
+        scale_trn  : scaling factors for transformed positions
+        stat_trn   : RMS statistics of the differences between transformed
+                 positions and nominal or BPM-calculated positions.
     """
-    pos_nom : Positions
-    pos_bpm : Positions
-    pos_pws : Positions
-    pos_crs : Positions
+    roi       : ROISlice
+
+    pos_std   : Positions
+    scale_std : Scales
+    stat_std  : RMSGridStatistics
+
+    pos_trn   : Positions
+    scale_trn : Scales
+    stat_trn  : RMSGridStatistics
 
     @classmethod
-    def from_hdf5(cls, h5group) -> "AnalyzedRawPositions":
-        """Create an AnalyzedRawPositions instance from an HDF5 group."""
-        # Nominal positions.
-        gr  = h5group["bpm"] 
-        xn  = gr["x_nom"][:]
-        yn  = gr["y_nom"][:]
-        nom = Positions(x=xn, y=yn)
+    def from_hdf5(cls, pos_grp) -> "CalculatedPositions":
+        """Create a CalculatedPositions instance from an HDF5 group."""
+        # Standard positions.
+        gr  = pos_grp["xbpm_raw"]
+        xs  = gr["nom_x"][:]
+        ys  = gr["nom_y"][:]
+        std = Positions(x=xs, y=ys)
 
-        # Measured BPM positions.
-        xb  = gr["x_bpm"][:]
-        yb  = gr["y_bpm"][:]
-        bpm = Positions(x=xb, y=yb)
+        # Transformed positions.
+        gr  = pos_grp["xbpm_transformed"]
+        xt  = gr["trn_x"][:]
+        yt  = gr["trn_y"][:]
+        trn = Positions(x=xt, y=yt)
 
-        # Pairwise calculated positions.
-        gr  = h5group["xbpm_raw_pairwise"]
-        xp  = gr["x_raw"][:]
-        yp  = gr["y_raw"][:]
-        pws = Positions(x=xp, y=yp)
-
-        # Cross-blade calculated positions.
-        gr  = h5group["xbpm_raw_cross"]
-        xc  = gr["x_raw"][:]
-        yc  = gr["y_raw"][:]
-        crs = Positions(x=xc, y=yc)
+        roi       = ROISlice.from_hdf5(pos_grp["roi"])
+        scale_std = Scales.from_hdf5(pos_grp["scales_std"])
+        scale_trn = Scales.from_hdf5(pos_grp["scales_trn"])
+        stat_std  = RMSGridStatistics.from_hdf5(pos_grp["stat_std"])
+        stat_trn  = RMSGridStatistics.from_hdf5(pos_grp["stat_trn"])
 
         return cls(
-            pos_nom=nom,
-            pos_bpm=bpm,
-            pos_pws=pws,
-            pos_crs=crs,
-            )
-
-
-@dataclass
-class TransformedPositions:
-    """Container for analyzed positions and associated metadata.
-
-    These data were calculated and corrected by the suppression matrix.
-
-    x: horizontal positions
-    y: vertical positions
-    """
-    pos_pws : Positions
-    pos_crs : Positions
-
-    @classmethod
-    def from_hdf5(cls, h5group) -> "TransformedPositions":
-        """Create a TransformedPositions instance from an HDF5 group."""
-        # Cross-blade calculated positions.
-        gr  = h5group["xbpm_transformed_pw"]
-        xp  = gr["x_trn"][:]
-        yp  = gr["y_trn"][:]
-        pws = Positions(x=xp, y=yp)
-
-        # Cross-blade calculated positions.
-        gr  = h5group["xbpm_transformed_cr"]
-        xc  = gr["x_trn"][:]
-        yc  = gr["y_trn"][:]
-        crs = Positions(x=xc, y=yc)
-
-        return cls(pos_pws=pws, pos_crs=crs)
+            pos_std=std,
+            pos_trn=trn,
+            scale_std=scale_std,
+            scale_trn=scale_trn,
+            roi=roi,
+            stat_std=stat_std,
+            stat_trn=stat_trn
+        )
 
 
 @dataclass
 class AnalyzedPositions:
     """Container for analyzed positions and associated metadata.
     
-    raw : AnalyzedRawPositions
-    trn : TransformedPositions
+    nom   : Nominal positions.
+    bpm   : positions calculated from BPM analysis.
+    pairw : positions calculated from pairwise analysis.
+    cross : positions calculated from cross-blade analysis.
     """
-    pos_raw : AnalyzedRawPositions
-    pos_trn : TransformedPositions | None = None
+    nom   : Positions
+    bpm   : BPMAnalysis
+    pairw : CalculatedPositions
+    cross : CalculatedPositions
 
     @classmethod
     def from_hdf5(cls, pos_grp) -> "AnalyzedPositions":
         """Create an AnalyzedPositions instance from an HDF5 group."""
-        raw  = AnalyzedRawPositions.from_hdf5(pos_grp)
+        nom   = Positions.from_hdf5(pos_grp["nominal"])
+        bpm   = BPMAnalysis.from_hdf5(pos_grp)
+        pairw = CalculatedPositions.from_hdf5(pos_grp["pairwise"])
+        cross = CalculatedPositions.from_hdf5(pos_grp["cross"])
 
-        if ("xbpm_transformed_pw" in pos_grp and
-            "xbpm_transformed_cr" in pos_grp):
-            trn = TransformedPositions.from_hdf5(pos_grp)
-        else:
-            trn = None
-
-        return cls(pos_raw=raw, pos_trn=trn)
+        return cls(
+            nom=nom,
+            bpm=bpm,
+            pairw=pairw,
+            cross=cross
+        )
 
 
 @dataclass
@@ -918,6 +906,7 @@ class DataAnalysis:
     centralsweeps : CentralSweeps     | None = None
     scales        : AllScales         | None = None
     supmat        : SupressionMatrix  | None = None
+    gl2r          : GL2RMatrix        | None = None
 
     @classmethod
     def from_hdf5(cls, anl_grp: h5py.Group) -> "DataAnalysis":
@@ -990,3 +979,37 @@ class BeamlineData:
                 )
             kwargs["analysis"] = DataAnalysis()
         return cls(**kwargs)
+
+    def to_hdf5(self, raw: bool = False) -> int:
+        """Serialize the BeamlineData instance to an HDF5 file.
+
+        Args:
+            raw (bool): If True, raw data is overwritten.
+
+        Returns:
+            int: Status code (0 for success).
+        """
+        # Create a temporary HDF5 file in memory.
+        try:
+            with h5py.File(self.prm.outputfile, 'w') as h5f:
+                # Create a group for the beamline data.
+                bl_group = h5f.require_group(self.prm.beamline)
+
+                # Rewrite raw data only if explicitly requested.
+                if raw:
+                    raw_group = bl_group.require_group("raw_data")
+                    self.raw_data.to_hdf5(raw_group)
+
+                # Store analysis data if present.
+                if self.analysis is not None:
+                    anl_group = bl_group.require_group("analysis")
+                    self.analysis.to_hdf5(anl_group)
+        except Exception as err:
+            logging.error(f"Failed to write BeamlineData to HDF5: {err}")
+            return 1
+        finally:
+            # Ensure that the HDF5 file is closed properly.
+            if 'h5f' in locals() and h5f:
+                h5f.close()
+
+        return 0
