@@ -1,7 +1,7 @@
 """Parameter handling and CLI parsing."""
 
 # import sys
-from curses import raw
+# from curses import raw
 from dataclasses import dataclass, field
 import logging
 from typing import List
@@ -9,8 +9,9 @@ from typing import List
 import h5py
 import numpy as np
 
-from xbpm_bumps.core.config import Config
-from .constants import ROI_SIZE_H, ROI_SIZE_V, MAX_RAD_ANGLE
+# from xbpm_bumps.core.config import Config
+from config import Config
+from constants import ROI_SIZE_H, ROI_SIZE_V, MAX_RAD_ANGLE
 
 
 @dataclass
