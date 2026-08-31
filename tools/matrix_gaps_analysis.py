@@ -9,11 +9,12 @@ there is a significant relationship between matrices calculated for different
 gaps/phases from the acquisitions of the same beamline undulator.
 """
 
-import glob
-import h5py
-import numpy as np
-import matplotlib.pyplot as plt
 import argparse
+import glob
+
+import h5py
+import matplotlib.pyplot as plt
+import numpy as np
 
 desc = """This script uses the suppression matrices obtained from the XBPM analisys
 to fit curves, check standard deviations, and plot the results to check if 
@@ -38,15 +39,14 @@ def _check_hdf5_structure(file, xbpm):
         for group in required_groups:
             if group not in f:
                 raise KeyError(f"Required group '{group}' not found in file: {file}")
-            if group == "/raw_data/sweep_0000":
-                if f[group].attrs.get(f'{xbpm[:3].lower()} gap') is None:
-                    raise KeyError(f"Required attribute '{xbpm[:3].lower()} gap' not"
-                                   "found in group '/raw_data/sweep_0000' of file: {file}")
+            if group == "/raw_data/sweep_0000" and f[group].attrs.get(f'{xbpm[:3].lower()} gap') is None:
+                raise KeyError(f"Required attribute '{xbpm[:3].lower()} gap' not"
+                               "found in group '/raw_data/sweep_0000' of file: {file}")
 
 
 def _load_xbpm_data(path, xbpm):
     # Read HDF5 files containing the suppression matrices
-    xbpm_data = dict()
+    xbpm_data = {}
     idx = 0
     _check_file_path(f"{path}")
     for file in glob.glob(f"{path}/*.h5"):
@@ -67,7 +67,7 @@ def _load_xbpm_data(path, xbpm):
 
 
 def _get_matrices_coefs(data, row, col):
-    idx = list()
+    idx = []
     for i in data:
         matrix = abs(data[i]['supmat'])
         idx.append(matrix[row, col])
@@ -75,7 +75,7 @@ def _get_matrices_coefs(data, row, col):
 
 
 def _get_matrices_errors(data, row, col):
-    errors = list()
+    errors = []
     for i in data:
         stddev = data[i]['stddev']
         errors.append(stddev[row, col])
@@ -142,7 +142,7 @@ if __name__ == "__main__":
         comparison_xbpm_data = _load_xbpm_data(args.compare_path, args.compare_xbpm)
 
         fig, ax = plt.subplots(nrows=2, ncols=3, figsize=(15, 10))
-        fig.suptitle(f"Comparison of XBPMs Suppression Matrices Coefficients Relationship", fontsize=16)
+        fig.suptitle("Comparison of XBPMs Suppression Matrices Coefficients Relationship", fontsize=16)
         for i in range(0, 4, 2):
             for j in range(1, 4):
                 coef_1 = _get_matrices_coefs(xbpm_data, i, j)
