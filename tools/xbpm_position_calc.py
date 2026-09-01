@@ -31,7 +31,7 @@ XBPM_DIST_DIFF = {
     "MNC": 3.850,
 }
 
-def _get_beamline_name(prefix):
+def get_beamline_name(prefix):
     curr_bl = ""
     for bl_id, bl in BEAMLINES.items():
         if prefix == bl_id:
@@ -63,6 +63,7 @@ def _parse_dates(dt):
     """Parse dates from date string."""
     year, month, day = dt.year, dt.month, dt.day
     hour, minute = dt.hour, dt.minute
+
     return [year, month, day, hour, minute]
 
 
@@ -81,6 +82,7 @@ def get_pvdata(pvnames, initdate, enddate, timeout):
     pvs_data.update(mean_sec=5)
 
     t0 = pvs_data[pvnames[0]].timestamp[0]
+
     return pvs_data, t0, pvs_data[pvnames[0]].timestamp
 
 
@@ -118,8 +120,8 @@ def calculate_positions(blades, adj, matrix):
 
 def _calculate_angle(xbpm1_pos, xbpm2_pos, beamline):
     xbpms_dist = 0
-    diff = abs(xbpm2_pos - xbpm1_pos) / 1000
-
+    diff = (xbpm2_pos - xbpm1_pos) / 1000
+    
     for bl, dist in XBPM_DIST_DIFF.items():
         if beamline == bl:
             xbpms_dist = dist
@@ -127,11 +129,12 @@ def _calculate_angle(xbpm1_pos, xbpm2_pos, beamline):
     if xbpms_dist == 0:
         raise ValueError("Invalid distance between XBPMs")
     
-    angle = diff / xbpms_dist
+    angle = np.arctan(diff / xbpms_dist)
+
     return angle
 
 
-def plot_simple_data(result, idt, edt, prefix, xnum):
+def plot_simple_data(result, idt, edt, curr_bl, xnum):
     x_data = []
     y_data = []
     time   = []
@@ -146,7 +149,6 @@ def plot_simple_data(result, idt, edt, prefix, xnum):
         time.append(count)
         count += ninterval
 
-    curr_bl = _get_beamline_name(prefix)
     fig, (ax_x, ax_y) = plt.subplots(2, 1, figsize=(8, 5))
     fig.suptitle(f"{curr_bl} XBPM{xnum} X and Y calculated positions - {idt.date()}")
 
@@ -168,7 +170,7 @@ def plot_simple_data(result, idt, edt, prefix, xnum):
     plt.show()
     
 
-def plot_comparison_data(xbpm1_pos, xbpm2_pos, idt, edt, prefix):
+def plot_comparison_data(xbpm1_pos, xbpm2_pos, idt, edt, curr_bl, plot_map):
     x1_data   = []
     y1_data   = []
     x2_data   = []
@@ -178,8 +180,6 @@ def plot_comparison_data(xbpm1_pos, xbpm2_pos, idt, edt, prefix):
     angle_x   = []
     angle_y   = []
     time      = []
-
-    curr_bl = _get_beamline_name(prefix)
 
     ndots  = len(xbpm1_pos)
     ninterval = ((edt - idt) / ndots)
@@ -246,7 +246,6 @@ def plot_comparison_data(xbpm1_pos, xbpm2_pos, idt, edt, prefix):
     ax_x_avg.plot(time, avg_pos_x, color='red', label='Avg. X position')
     ax_x_avg.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
     ax_x_avg.set_ylabel("Position (µm)")
-    ax_x_avg.set_xlabel("Time (hh:mm)")
     ax_x_avg.legend()
     ax_x_avg.grid()
 
@@ -258,26 +257,46 @@ def plot_comparison_data(xbpm1_pos, xbpm2_pos, idt, edt, prefix):
     ax_y_avg.grid()
 
     # Plot angle analysis
-    fig, (ax_angx, ax_angy) = plt.subplots(2, 1, figsize=(8, 5))
-    fig.suptitle(f"{curr_bl} XBPMs angle comparison - {idt.date()}")
+    fig, (ax_ang_x, ax_ang_y) = plt.subplots(2, 1, figsize=(8, 5))
+    fig.suptitle(f"{curr_bl} XBPMs angle comparison - {idt.date()}")  
 
-    ax_angx.plot(time, angle_x, color='red', label='X angle')
-    ax_angx.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-    ax_angx.set_ylabel("Angle (µrad)")
-    ax_angx.set_xlabel("Time (hh:mm)")
-    ax_angx.legend()
-    ax_angx.grid()
+    ax_ang_x.plot(time, angle_x, color='red', label='X angle')
+    ax_ang_x.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+    ax_ang_x.set_ylabel("Angle (µrad)")
+    ax_ang_x.legend()
+    ax_ang_x.grid()
 
-    ax_angy.plot(time, angle_y, color='blue', label='Y angle')
-    ax_angy.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-    ax_angy.set_ylabel("Angle (µrad)")
-    ax_angy.set_xlabel("Time (hh:mm)")
-    ax_angy.legend()
-    ax_angy.grid()
+    ax_ang_y.plot(time, angle_y, color='blue', label='Y angle')
+    ax_ang_y.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+    ax_ang_y.set_ylabel("Angle (µrad)")
+    ax_ang_y.set_xlabel("Time (hh:mm)")
+    ax_ang_y.legend()
+    ax_ang_y.grid()
+
+    if plot_map:
+        y1_data = [pos[1] / 1000 for pos in xbpm1_pos]
+        x2_data = [pos[0] / 1000 for pos in xbpm2_pos]
+        y2_data = [pos[1] / 1000 for pos in xbpm2_pos]
+
+        plt.figure(figsize=(4, 3))
+        plt.scatter(x1_data, y1_data, color='red', label='XBPM1', alpha=0.5)
+        plt.scatter(x2_data, y2_data, color='blue', label='XBPM2', alpha=0.5)
+        plt.title(f"{curr_bl} XBPMs Position Map")
+        plt.xlabel("X Position (µm)")
+        plt.ylabel("Y Position (µm)")
+
+        if curr_bl == 'MGN':
+            plt.xlim(-10, 10)
+            plt.ylim(-1000, 1000)
+        else:
+            plt.xlim(-200, 200)
+            plt.ylim(-200, 200)
+        plt.tight_layout()
+        plt.legend()
+        plt.grid()
 
     plt.tight_layout()  
     plt.show()
-
 
 def cmd_args():
     """Parse command line arguments"""
@@ -299,6 +318,10 @@ def cmd_args():
         '-e', '--end_date', type=str, required=True,
         help=("End date in ISO format (YYYY-MM-DD [HH:MM]), without seconds.")
     )
+    parser.add_argument(
+        '-m', '--map', action='store_true',
+        help='Plot position map'
+    )
 
     args = parser.parse_args()
 
@@ -316,6 +339,7 @@ def cmd_args():
 
 def main():
     args = cmd_args()
+    current_bl = get_beamline_name(args.prefix)
 
     if args.xbpm_number == 0:
         xbpm1_pvnames = set_pv_names(args.prefix, 1)
@@ -338,7 +362,7 @@ def main():
             caget(xbpm2_pvnames["MATRIX"])
         )
 
-        plot_comparison_data(xbpm1_pos, xbpm2_pos, args.init_date, args.end_date, args.prefix)
+        plot_comparison_data(xbpm1_pos, xbpm2_pos, args.init_date, args.end_date, current_bl, args.map)
 
     else:
         pvnames = set_pv_names(args.prefix, args.xbpm_number)
@@ -349,7 +373,7 @@ def main():
         data, _, _ = get_pvdata(pvnames["BLADES"], args.init_date, args.end_date, timeout=5)
 
         positions = calculate_positions(data, adj_data, matrix)
-        plot_simple_data(positions, args.init_date, args.end_date, args.prefix, args.xbpm_number)
+        plot_simple_data(positions, args.init_date, args.end_date, current_bl, args.xbpm_number)
 
 if __name__ == "__main__":
     main()
