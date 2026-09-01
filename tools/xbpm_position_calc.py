@@ -129,7 +129,7 @@ def _calculate_angle(xbpm1_pos, xbpm2_pos, beamline):
     if xbpms_dist == 0:
         raise ValueError("Invalid distance between XBPMs")
     
-    angle = np.arctan(diff / xbpms_dist)
+    angle = diff / xbpms_dist
 
     return angle
 
@@ -258,7 +258,7 @@ def plot_comparison_data(xbpm1_pos, xbpm2_pos, idt, edt, curr_bl, plot_map):
 
     # Plot angle analysis
     fig, (ax_ang_x, ax_ang_y) = plt.subplots(2, 1, figsize=(8, 5))
-    fig.suptitle(f"{curr_bl} XBPMs angle comparison - {idt.date()}")  
+    fig.suptitle(f"{curr_bl} XBPMs angle comparison - {idt.date()}")
 
     ax_ang_x.plot(time, angle_x, color='red', label='X angle')
     ax_ang_x.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
@@ -274,26 +274,21 @@ def plot_comparison_data(xbpm1_pos, xbpm2_pos, idt, edt, curr_bl, plot_map):
     ax_ang_y.grid()
 
     if plot_map:
-        y1_data = [pos[1] / 1000 for pos in xbpm1_pos]
-        x2_data = [pos[0] / 1000 for pos in xbpm2_pos]
-        y2_data = [pos[1] / 1000 for pos in xbpm2_pos]
-
-        plt.figure(figsize=(4, 3))
-        plt.scatter(x1_data, y1_data, color='red', label='XBPM1', alpha=0.5)
-        plt.scatter(x2_data, y2_data, color='blue', label='XBPM2', alpha=0.5)
-        plt.title(f"{curr_bl} XBPMs Position Map")
-        plt.xlabel("X Position (µm)")
-        plt.ylabel("Y Position (µm)")
+        fig, ax = plt.subplots(figsize=(4, 3))
+        ax.scatter(x1_data, y1_data, color='red', label='XBPM1', alpha=0.5)
+        ax.scatter(x2_data, y2_data, color='blue', label='XBPM2', alpha=0.5)
+        ax.set_title(f"{curr_bl} XBPMs Position Map - {idt.date()}")
+        ax.set_xlabel("X Position (µm)")
+        ax.set_ylabel("Y Position (µm)")
 
         if curr_bl == 'MGN':
-            plt.xlim(-10, 10)
-            plt.ylim(-1000, 1000)
+            ax.set_xlim(10, -10) # Invert X-axis to match SR coordinates
+            ax.set_ylim(-1000, 1000)
         else:
-            plt.xlim(-200, 200)
-            plt.ylim(-200, 200)
-        plt.tight_layout()
-        plt.legend()
-        plt.grid()
+            ax.set_xlim(200, -200)
+            ax.set_ylim(-200, 200)
+        ax.legend()
+        ax.grid()
 
     plt.tight_layout()  
     plt.show()
@@ -346,8 +341,8 @@ def main():
         xbpm2_pvnames = set_pv_names(args.prefix, 2)
 
         # Fetch data for both XBPMs
-        xbpm1_data, _, _ = get_pvdata(xbpm1_pvnames["BLADES"], args.init_date, args.end_date, timeout=5)
-        xbpm2_data, _, _ = get_pvdata(xbpm2_pvnames["BLADES"], args.init_date, args.end_date, timeout=5)
+        xbpm1_data, _, _ = get_pvdata(xbpm1_pvnames["BLADES"], args.init_date, args.end_date, timeout=10)
+        xbpm2_data, _, _ = get_pvdata(xbpm2_pvnames["BLADES"], args.init_date, args.end_date, timeout=10)
 
         # Calculate positions for both XBPMs
         xbpm1_pos = calculate_positions(
