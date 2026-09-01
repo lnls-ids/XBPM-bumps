@@ -252,9 +252,6 @@ class XBPMProcessor:
             stat_trn=rms_pw_sup
         )
 
-        # Compute suppression matrix at the ROI.
-        self.general_linear_transformation()
-
         # Cross-blade calculation (partial Delta/Sigma).
         # Positions from standard formulae.
         pos_cr_std = self.beam_position_cross(self.blades)
@@ -359,24 +356,27 @@ class XBPMProcessor:
             [sdv_h[0], sdv_h[1], sdv_h[2], sdv_h[3]],
         ])
 
-    def general_linear_transformation(self) -> None:
-        """Calculate the linear transformation matrix from position slopes."""
-        csweep = self.analyze_central_sweeps(pairw=False)
-        kx, dx = csweep.h.coeffs
-        ky, dy = csweep.v.coeffs
-        mat = np.array([
-            [dx, kx],
-            [dy, ky]
-        ])
-        self.gl2r.calc = np.linalg.inv(mat)
-
     def transform_position_cross(self) -> DStr.Positions:
         """Transform cross-blade positions using the linear transformation matrix."""
+        # Compute suppression matrix at the ROI.
+        self.general_linear_transformation()
+        # Stack cross-blade positions into a 2xN array for transformation.
         scross = np.vstack((
             self.blade_avg.pos_cross.x, self.blade_avg.pos_cross.y
             ))
-        pos_tr = np.matmul(self.gl2r.calc, scross)
+        # Apply the linear transformation to the stacked positions.
+        pos_tr = np.matmul(self.gl2rmat, scross)
         return DStr.Positions(x=pos_tr[0], y=pos_tr[1])
+
+    def general_linear_transformation(self) -> None:
+        """Calculate the linear transformation matrix from position slopes."""
+        csweep = self.analyze_central_sweeps(pairw=False)
+        kx, ky = csweep.h.coeffs[0], csweep.v.coeffs[0]
+        c = 1. / (ky - kx)
+        self.gl2rmat = c * np.array([
+            [ ky, -1],
+            [-kx,  1]
+        ])
 
     def blade_central_line_fit(self,
                                range_vals: np.ndarray
@@ -461,7 +461,6 @@ class XBPMProcessor:
                         pos_nom: DStr.Positions,
                         pos_calc: DStr.Positions
                         ) -> tuple[DStr.Scales,
-                                   DStr.Positions,
                                    DStr.Positions]:
         """Scale positions, pairwise or cross-blade.
 
@@ -474,7 +473,7 @@ class XBPMProcessor:
             nosuppress  : If True, label results as raw mode.
 
         Returns:
-            Tuple with scales, all scaled positions, and ROI scaled positions.
+            Tuple with scales and all scaled positions.
         """
         calc_roi_x = pos_calc.x[self.roi.sl_v, self.roi.sl_h]
         calc_roi_y = pos_calc.y[self.roi.sl_v, self.roi.sl_h]

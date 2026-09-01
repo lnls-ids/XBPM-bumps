@@ -24,7 +24,7 @@ from ..core.config            import Config
 from ..core.constants         import FIGDPI
 # from ..core.parameters        import ParameterBuilder, Prm
 
-from ..core.reader_hdf5 import HDF5DataReader as H5DRead
+from ..core.reader_hdf5 import read_hdf5
 from ..core.data_structure import ROISlice
 
 logger = logging.getLogger(__name__)
@@ -276,7 +276,7 @@ class XBPMMainWindow(QMainWindow):
 
         (Routes through Analyzer for beamline selection.)
         """
-        workdir, _ = QFileDialog.getOpenFileName(
+        h5file, _ = QFileDialog.getOpenFileName(
             self,
             "Select HDF5 File",
             os.getcwd(),
@@ -284,32 +284,30 @@ class XBPMMainWindow(QMainWindow):
         )
 
         # Empty pathnames.
-        if not workdir:
+        if not h5file:
             return
 
         # Validate selected path and read data.
         try:
-            self.dataset = H5DRead(workdir)
+            self.dataset = read_hdf5(h5file)
         except OSError as exc:
             self.show_error(
-                f"cannot open HDF5 file {workdir}:", f"\n{str(exc)}"
+                f"cannot open HDF5 file {h5file}:", f"\n{str(exc)}"
                 )
             return
 
         # Store workdir in parameter panel and update status bar
         # self.param_panel.show_workdir(os.path.dirname(workdir))
-        self.status_bar.showMessage(f"Opened: {workdir}")
+        self.status_bar.showMessage(f"Opened: {h5file}")
 
         # Select beamline and create effective links to
         # data and analysis objects.
         self._select_beamline()
 
         # Define links to effective beamline data. 
-        self.workdata = self.dataset.beamlinedata[self.workbeamline]
+        self.workdata = self.dataset[self.workbeamline]
         self.prm      = self.workdata.prm
         self.analysis = self.workdata.analysis
-
-        
 
         # Update BPM distance.
         self.prm.bpmdist = Config.BPMDISTS.get(self.workbeamline, None)
@@ -318,7 +316,7 @@ class XBPMMainWindow(QMainWindow):
         self._update_xbpmdist_from_beamline()
 
         # Set / update ROI.
-        nom_pos = self.workdata.raw_data.blade_avg.nom
+        nom_pos = self.workdata.raw_data.blade_avg.pos_nom
         self.grid_shape = self.param_panel.set_roi_defaults_from_grid(nom_pos)
         self.prm.roi = ROISlice.update(
             self.grid_shape,
@@ -327,7 +325,7 @@ class XBPMMainWindow(QMainWindow):
              )
 
         self.log_message(
-            f"Loading data from: {workdir} "
+            f"Loading data from: {h5file} "
             f"(beamline: {self.workbeamline})"
         )
 
@@ -374,14 +372,13 @@ class XBPMMainWindow(QMainWindow):
         workdir = params.get('workdir', "")
         if workdir and workdir != self._last_workdir:
             self._last_workdir = workdir
-        nom_pos = self.workdata.raw_data.blade_avg.nom
+        nom_pos = self.workdata.raw_data.blade_avg.pos_nom
         self.grid_shape = self.param_panel.set_roi_defaults_from_grid(nom_pos)
         self.prm.roi = ROISlice.update(
             self.grid_shape,
             [self.param_panel.roi_v_spin.value(),
              self.param_panel.roi_h_spin.value()]
              )
-
 
     def _create_status_bar(self) -> None:
         """Create status bar with progress indicator."""
