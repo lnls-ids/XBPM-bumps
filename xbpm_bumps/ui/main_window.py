@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QTextEdit, QSplitter, QTabWidget,
     QStatusBar, QProgressBar, QMessageBox, QFileDialog
 )
-from PyQt5.QtCore import Qt, pyqtSignal, pyqtSlot
+from PyQt5.QtCore import Qt, pyqtSlot
 from PyQt5.QtGui  import QFont
 from PyQt5.QtGui  import QCloseEvent
 
@@ -19,13 +19,11 @@ from .widgets.parameter_panel import ParameterPanel
 from .widgets.mpl_canvas      import MatplotlibCanvas
 from .dialogs.beamline_dialog import BeamlineSelectionDialog
 from .dialogs.help_dialog     import HelpDialog
-# from .analyzer                import XBPMAnalyzer
 from ..core.config            import Config
 from ..core.constants         import FIGDPI
-# from ..core.parameters        import ParameterBuilder, Prm
-
-from ..core.reader_hdf5 import read_hdf5
-from ..core.data_structure import ROISlice
+from ..core.reader_hdf5       import read_hdf5
+from ..core.analysis_service  import AnalysisService
+from ..core import data_structure as DStr
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +37,6 @@ class XBPMMainWindow(QMainWindow):
     - Progress monitoring
     - Result visualization
     """
-    # Signals
-    # Emits parameters when Run is clicked
-    analysisRequested = pyqtSignal(dict)  # noqa: N815
-
     ANALYSIS_SECTION_TITLES = {
         'positions'       : 'Positions',
         'sweep_positions' : 'Sweep Positions',
@@ -64,42 +58,40 @@ class XBPMMainWindow(QMainWindow):
         self.canvases          = {}
         self.beamlinedata      = None  # Canonical DataReader instance
         self.workbeamline      = None
-        self._last_workdir     = ""
+        self.workdata          = None  # Effective BeamlineData instance
+        self._last_inputfile   = ""
         self.results           = {}    # Single unified results storage
         self._last_roisize     = None
         self._analysis_running = False
-        # self._roi_rerun_timer  = QTimer(self)
-        # self._roi_rerun_timer.setSingleShot(True)
-        # self._roi_rerun_timer.timeout.connect(self._on_run_clicked)
+        # self.grid_shape        : tuple[int, int] | None = None
         self.setup_ui()
-        # self.setup_worker_thread()
         self.setWindowTitle("XBPM Calibration and Analysis Tool")
         # Wider default window to give canvases more horizontal room
-        self.resize(1600, 900)
+        self.resize(1920, 1080)
 
     @pyqtSlot()
     def _on_run_clicked(self) -> None:
-        """Handle Run Analysis button click."""
-        params = self.param_panel.get_parameters()
-        if not (swp := params.get('workdir')):
-            QMessageBox.warning(
-                self,
-                "Missing Input",
-                "Please select a working directory or data file."
-            )
+        if self.workdata is None:
+            self.show_error("No data loaded", "Open an HDF5 file first.")
             return
-        # Check whether data has been loaded.
-        if not self.beamlinedata:
-            QMessageBox.warning(
-                self,
-                "No data loaded",
-                "Please load data first (open HDF5 file)."
+
+        self._on_parameters_changed()  # synchronize final widget state
+        self.set_analysis_running(True)
+
+        try:
+            analysis = AnalysisService.run(
+                self.workdata,
+                self.runtime_prm,
             )
+        except Exception as exc:
+            self.show_error("Analysis failed", str(exc))
             return
-        # Use already selected beamline
-        self.log_message("Starting analysis with workdir:"
-                         f" {swp}\n (beamline: {self.workbeamline})")
-        self.analysisRequested.emit(params)
+        finally:
+            self.set_analysis_running(False)
+
+        self.workdata.analysis = analysis
+        self.analysis = analysis
+        self.log_message("Analysis completed.")
 
     def setup_ui(self) -> None:
         """Initialize the main window layout."""
@@ -289,15 +281,15 @@ class XBPMMainWindow(QMainWindow):
 
         # Validate selected path and read data.
         try:
-            self.dataset = read_hdf5(h5file)
+            self.beamlinedata = read_hdf5(h5file)
         except OSError as exc:
             self.show_error(
                 f"cannot open HDF5 file {h5file}:", f"\n{str(exc)}"
                 )
             return
 
-        # Store workdir in parameter panel and update status bar
-        # self.param_panel.show_workdir(os.path.dirname(workdir))
+        # Store inputfile in parameter panel and update status bar
+        self.param_panel.show_inputfile(h5file)
         self.status_bar.showMessage(f"Opened: {h5file}")
 
         # Select beamline and create effective links to
@@ -305,24 +297,30 @@ class XBPMMainWindow(QMainWindow):
         self._select_beamline()
 
         # Define links to effective beamline data. 
-        self.workdata = self.dataset[self.workbeamline]
-        self.prm      = self.workdata.prm
-        self.analysis = self.workdata.analysis
+        self.workdata     = self.beamlinedata[self.workbeamline]
+        self.analysis     = self.workdata.analysis
+        self.runtime_prm  = DStr.Prm(inputfile=h5file)
+        self.beamline_prm : DStr.BeamlinePrm = self.workdata.prm
 
         # Update BPM distance.
-        self.prm.bpmdist = Config.BPMDISTS.get(self.workbeamline, None)
+        self.beamline_prm.bpmdist = Config.BPMDISTS.get(
+            self.workbeamline, None
+            )
 
-        # Update XBPM distance.
-        self._update_xbpmdist_from_beamline()
-
-        # Set / update ROI.
+        # Calculate grid shape from nominal positions.
         nom_pos = self.workdata.raw_data.blade_avg.pos_nom
-        self.grid_shape = self.param_panel.set_roi_defaults_from_grid(nom_pos)
-        self.prm.roi = ROISlice.update(
+        self.grid_shape = (
+            len(np.unique(nom_pos.y)),  # vertical dimension
+            len(np.unique(nom_pos.x)),  # horizontal dimension
+        )
+
+        # Update parameter panel.
+        self.param_panel.load_beamline_data(
+            h5file,
+            self.runtime_prm,
+            self.beamline_prm,
             self.grid_shape,
-            [self.param_panel.roi_v_spin.value(),
-             self.param_panel.roi_h_spin.value()]
-             )
+        )
 
         self.log_message(
             f"Loading data from: {h5file} "
@@ -330,12 +328,12 @@ class XBPMMainWindow(QMainWindow):
         )
 
         # Automatically load and display figures after import
-        # self._on_load_hdf5_figures(workdir)
+        # self._on_load_hdf5_figures()
 
     def _select_beamline(self) -> str:
         """Centralized beamline selection: returns the chosen beamline."""
         # Set beamline list from dataset keys.
-        self.beamlines = list(self.dataset.beamlinedata.keys())
+        self.beamlines = list(self.beamlinedata.keys())
 
         if len(self.beamlines) == 1:
             self.workbeamline = self.beamlines[0]
@@ -356,7 +354,7 @@ class XBPMMainWindow(QMainWindow):
         """Update the XBPM distance field from Config.XBPMDISTS."""
         try:
             dist = Config.XBPMDISTS.get(self.workbeamline)
-            self.prm.xbpmdist = dist
+            self.beamline_prm.xbpmdist = dist
             self.param_panel.xbpmdist_spin.setValue(float(dist))
             self.log_message(
                 "XBPM distance set from beamline"
@@ -366,19 +364,37 @@ class XBPMMainWindow(QMainWindow):
         except Exception as exc:  # pragma: no cover - defensive
             self.log_message(f"Could not set XBPM distance: {exc}")
 
+    @pyqtSlot()
     def _on_parameters_changed(self) -> None:
-        """React to parameter changes; pre-select beamline on workdir set."""
-        params  = self.param_panel.get_parameters()
-        workdir = params.get('workdir', "")
-        if workdir and workdir != self._last_workdir:
-            self._last_workdir = workdir
-        nom_pos = self.workdata.raw_data.blade_avg.pos_nom
-        self.grid_shape = self.param_panel.set_roi_defaults_from_grid(nom_pos)
-        self.prm.roi = ROISlice.update(
+        """React to parameter changes; pre-select beamline on input set."""
+        # If data was not imported yet.
+        if self.workdata is None or self.grid_shape is None:
+            return
+
+        # Check and reread parameter set.
+        params = self.param_panel.get_parameters()
+
+        # Reset prm values from parameter panel.
+        # Beamline parameters.
+        bl_prm = self.beamline_prm
+        bl_prm.xbpmdist     = params["xbpmdist"]
+        bl_prm.skip         = params["skip"]
+        bl_prm.scalepolydeg = params["scalepolydeg"]
+        bl_prm.usebpmref    = params["usebpmref"]
+        bl_prm.roi          = DStr.ROISlice.update(
             self.grid_shape,
-            [self.param_panel.roi_v_spin.value(),
-             self.param_panel.roi_h_spin.value()]
-             )
+            params["roisize"]
+            )
+
+        # Runtime parameters.
+        rt_prm = self.runtime_prm
+        rt_prm.show_bladecenter      = params["show_bladecenter"]
+        rt_prm.show_blademap         = params["show_blademap"]
+        rt_prm.show_bpmpositions     = params["show_bpmpositions"]
+        rt_prm.show_centralsweep     = params["show_centralsweep"]
+        rt_prm.show_xbpmpositionsraw = params["show_xbpmpositionsraw"]
+        rt_prm.show_xbpmpositions    = params["show_xbpmpositions"]
+        
 
     def _create_status_bar(self) -> None:
         """Create status bar with progress indicator."""
@@ -393,10 +409,10 @@ class XBPMMainWindow(QMainWindow):
 
         self.status_bar.showMessage("Ready")
 
-    def _prompt_beamline_selection(self, workdir: str) -> None:
-        """Attempt beamline selection immediately after workdir change."""
+    def _prompt_beamline_selection(self, inputfile: str) -> None:
+        """Attempt beamline selection immediately after input file change."""
         try:
-            self.prm.workdir = workdir
+            self.beamline_prm.inputfile = inputfile
             # DataReader instantiation and reading now handled by
             # _read_data_and_select_beamline
             # Handle beamline result
@@ -594,7 +610,7 @@ class XBPMMainWindow(QMainWindow):
             hdf5_path: Path to the HDF5 file.
         """
         try:
-            self.prm.workdir = hdf5_path
+            self.beamline_prm.inputfile = hdf5_path
             from xbpm_bumps.core.reader_hdf5 import HDF5FigureReconstructor
             reconstructor = HDF5FigureReconstructor(hdf5_path)
             figures = reconstructor.load_figures()
@@ -766,7 +782,7 @@ class XBPMMainWindow(QMainWindow):
                 f" | Type: positions / {calc_type} / {sup}\n"
             )
 
-            if self.prm.scalepolydeg == 2:
+            if self.beamline_prm.scalepolydeg == 2:
                 fp.write("qx           ="
                          f" {float(scales.get('qx', 1)):.6f}\n")
                 fp.write("sqx          ="
@@ -777,7 +793,7 @@ class XBPMMainWindow(QMainWindow):
             fp.write(f"dx           = {float(scales.get('dx', 0)):.6f}\n")
             fp.write(f"sdx          = {float(scales.get('sdx', 0)):.6f}\n")
 
-            if self.prm.scalepolydeg == 2:
+            if self.beamline_prm.scalepolydeg == 2:
                 fp.write("qy           ="
                          f" {float(scales.get('qy', 1)):.6f}\n")
                 fp.write("sqy          ="
@@ -1582,7 +1598,7 @@ class XBPMMainWindow(QMainWindow):
         if isinstance(bpm_stats, dict):
             bpm_lines.append(
                 "  ROI size [lines x columns points] ="
-                f" {self.prm.roi.sz_v} x {self.prm.roi.sz_h}"
+                f" {self.beamline_prm.roi.sz_v} x {self.beamline_prm.roi.sz_h}"
             )
             bpm_lines.append("\n  Sigmas (all sites):")
             for key in ('sigma_h', 'sigma_v', 'sigma_total'):
@@ -2007,9 +2023,4 @@ class XBPMMainWindow(QMainWindow):
                     window.close()
                 except Exception:  # pragma: no cover
                     logger.exception("Failed to close detail window")
-
-        # Clean up worker thread
-        if hasattr(self, 'worker_thread'):
-            self.worker_thread.quit()
-            self.worker_thread.wait()
         event.accept()

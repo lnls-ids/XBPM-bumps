@@ -1,9 +1,8 @@
 """Core business logic for XBPM analysis."""
 
-# from .config import Config
-# from .parameters import Prm, ParameterBuilder
-from .reader_hdf5 import HDF5DataReader as DataReader
+from .config import Config
 from .processors import XBPMProcessor, BPMProcessor
+from .data_structure import Prm, BeamlinePrm, DataAnalysis, BeamlineData
 from .visualizers import (
     BladeMapVisualizer,
     PositionVisualizer,
@@ -14,7 +13,6 @@ from .exporters import Exporter
 
 __all__ = [
     "Config",
-    "DataReader",
     "XBPMProcessor",
     "BPMProcessor",
     "BladeMapVisualizer",
@@ -22,7 +20,11 @@ __all__ = [
     "SweepVisualizer",
     "BladeCurrentVisualizer",
     "Exporter",
+    "Prm",
+    "BeamlinePrm",
+    "DataAnalysis",
+    "BeamlineData",
 ]
 
-# Add to __all__ at the end ogf the refactoring process:
+# Add to __all__ at the end of the refactoring process:
 # "Prm", "BeamlinePrm", "DataAnalysis", "BeamlineData"

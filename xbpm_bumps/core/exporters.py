@@ -41,7 +41,7 @@ class Exporter:
                 'Use BPM measured positions as nominal reference'
                 ),
             'outputfile'       : 'Path to output HDF5 file',
-            'workdir'          : 'Working directory for analysis',
+            'inputfile'        : 'Path to input HDF5 file',
             'skip'             : 'Number of initial sweeps to skip in processing',
             # 'gridstep'         : 'Grid step size for scan range',
             'maxradangle'      : 'Maximum radiation angle for analysis (mrad)',

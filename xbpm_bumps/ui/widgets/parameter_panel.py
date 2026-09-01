@@ -1,16 +1,13 @@
 """Parameter input panel for XBPM analysis."""
 
 import numpy as np
-
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QCheckBox, QGroupBox, QDoubleSpinBox, QSpinBox, QPushButton, QLabel,
-    QLineEdit
+    QCheckBox, QGroupBox, QDoubleSpinBox, QSpinBox,
+    QPushButton, QLabel, QLineEdit
 )
-from PyQt5.QtCore import pyqtSignal
-
-from xbpm_bumps.core.data_structure import Positions
-
+from PyQt5.QtCore import QSignalBlocker, pyqtSignal
+from ...core.data_structure import Positions, Prm, BeamlinePrm
 from ...core.constants import ROI_SIZE_H, ROI_SIZE_V
 
 
@@ -27,9 +24,9 @@ class ParameterPanel(QWidget):
             parent: Optional parent widget.
         """
         super().__init__(parent)
-        self.all_check : bool = False  # Track toggle state
-        self.inputfile : str  = ""
-        self.beamline  : str  | None = None
+        self.inputfile  : str  = ""
+        self.outputfile : str  = ""
+        self.beamline   : str  | None = None
         self.setup_ui()
 
     parametersChanged = pyqtSignal()  # noqa: N815
@@ -37,7 +34,6 @@ class ParameterPanel(QWidget):
     def set_beamline(self, beamline: str):
         """Set the beamline value for persistence in the panel."""
         self.beamline = beamline
-        self.parametersChanged.emit()
 
     def get_beamline(self) -> str | None:
         """Get the currently set beamline, if any."""
@@ -191,14 +187,18 @@ class ParameterPanel(QWidget):
 
     def _check_all_options(self) -> None:
         """Toggle all analysis option checkboxes."""
-        self._all_checked = not self._all_checked
-        self.bpm_check.setChecked(self._all_checked)
-        self.blademap_check.setChecked(self._all_checked)
-        self.central_check.setChecked(self._all_checked)
-        self.center_check.setChecked(self._all_checked)
-        self.xbpm_raw_check.setChecked(self._all_checked)
-        self.xbpm_check.setChecked(self._all_checked)
-        self.parametersChanged.emit()
+        boxes = (
+                self.bpm_check,
+                self.blademap_check,
+                self.central_check,
+                self.center_check,
+                self.xbpm_raw_check,
+                self.xbpm_check,
+            )
+        checked = not all(box.isChecked() for box in boxes)
+
+        for box in boxes:
+            box.setChecked(checked)
 
     def show_inputfile(self, inputfile: str) -> None:
         """Set the input file path programmatically.
@@ -211,15 +211,16 @@ class ParameterPanel(QWidget):
             display = inputfile if inputfile else ""
             self.inputfile_field.setText(display)
             self.inputfile_field.setToolTip(display)
-            self.parametersChanged.emit()
 
-    def set_roi_defaults_from_grid(self, coords: Positions) -> None:
+    def set_roi_defaults_from_grid(self,
+                                   coords: Positions,
+                                   ) -> None:
         """Set ROI defaults from available grid points in each axis."""
         nh = len(np.unique(coords.x))
         nv = len(np.unique(coords.y))
         self.roi_h_spin.setValue(max(1, nh))
         self.roi_v_spin.setValue(max(1, nv))
-        return (nh, nv)  # Return the grid shape for reference
+        return (nv, nh)  # Return the grid shape for reference
 
     def get_parameters(self) -> dict:
         """Extract current parameter values as a dictionary.
@@ -252,6 +253,38 @@ class ParameterPanel(QWidget):
         # Define variables in parameters dataclass.
         return params
 
+    def load_beamline_data(self,
+                           runtime_prm: Prm,
+                           beamline_prm: BeamlinePrm,
+                           grid_shape: tuple[int, int]) -> None:
+        nv, nh = grid_shape
+
+        # Block signals while programmatically reflecting loaded state.
+        blockers = [QSignalBlocker(widget)
+                    for widget in (
+                        self.xbpmdist_spin,
+                        self.roi_h_spin,
+                        self.roi_v_spin,
+                        self.skip_spin,
+                        self.scalepolydeg,
+                        self.bpm_ref_check,
+                        )
+                    ]   
+
+        self.show_inputfile(runtime_prm.inputfile)
+        self.set_beamline(beamline_prm.beamline)
+
+        self.roi_h_spin.setRange(1, nh)
+        self.roi_v_spin.setRange(1, nv)
+        self.roi_h_spin.setValue(min(beamline_prm.roi.sz_h, nh))
+        self.roi_v_spin.setValue(min(beamline_prm.roi.sz_v, nv))
+        self.xbpmdist_spin.setValue(beamline_prm.xbpmdist or 0.0)
+        self.skip_spin.setValue(beamline_prm.skip)
+        self.scalepolydeg.setValue(beamline_prm.scalepolydeg)
+        self.bpm_ref_check.setChecked(beamline_prm.usebpmref)
+
+        del blockers
+
     # def set_parameters(self, params: dict):
     #     """Set parameter values from a dictionary.
 
@@ -259,8 +292,8 @@ class ParameterPanel(QWidget):
     #         params: Dictionary with parameter names and values.
     #     """
     #     # Text and numeric parameters
-    #     if 'workdir' in params:
-    #         self.set_workdir(params['workdir'])
+    #     if 'inputfile' in params:
+    #         self.set_inputfile(params['inputfile'])
     #     if 'xbpmdist' in params and params['xbpmdist'] is not None:
     #         self.xbpmdist_spin.setValue(params['xbpmdist'])
     #     if 'scalepolydeg' in params and params['scalepolydeg'] is not None:

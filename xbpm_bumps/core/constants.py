@@ -37,7 +37,7 @@ The data is treated with linear transformations first, to correct for
 distortions promoted by different gains in each blade. Firstly, gains
 (or their reciprocal, 1/G, which is the suppression) are estimated by
 analyzing the slope of the line formed by central points in vertical
-and horizontal sweeping. The supression is applied to the set of points
+and horizontal sweeping. The suppression is applied to the set of points
 to correct the grid, then a linear scaling is calculated to set distances
 in micrometers.
 """)

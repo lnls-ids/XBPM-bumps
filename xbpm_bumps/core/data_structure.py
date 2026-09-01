@@ -10,8 +10,8 @@ import h5py
 import numpy as np
 
 # from xbpm_bumps.core.config import Config
-from config import Config
-from constants import ROI_SIZE_H, ROI_SIZE_V, MAX_RAD_ANGLE
+from .config import Config
+from .constants import ROI_SIZE_H, ROI_SIZE_V, MAX_RAD_ANGLE
 
 
 @dataclass
@@ -28,7 +28,7 @@ class Prm:
     inputfile        : str   | None = None      # HDF5 input file name.
     outputfile       : str   | None = None      # HDF5 output file name. 
     phaseorgap       : dict  | None = None      # Phase/gap for the ID.
-    maxradangle      : float = MAX_RAD_ANGLE    # Maximum angle of bumps in mrad.
+    maxradangle      : float = MAX_RAD_ANGLE    # Max. angle of bumps in mrad.
 
     # What to calculate and show.
     show_bpmpositions     : bool = False
@@ -113,6 +113,7 @@ class BeamlinePrm:
     scalepolydeg : int   = 1
     sector       : list  | None = None
     usebpmref    : bool = False
+    grid_shape   : tuple[int, int] | None = None
     roi          : ROISlice = field(default_factory=ROISlice)
     updated      : str  | None = None
 
@@ -136,6 +137,9 @@ class BeamlinePrm:
 
             if "xbpmdist" not in attrs:
                 attrs["xbpmdist"] = Config.XBPMDISTS.get(beamline, None)
+
+            if "grid_shape" not in attrs:
+                attrs["grid_shape"] = None
 
             # Initialize ROI data.
             rs = int(np.sqrt(attrs["sweeps"]))
@@ -747,7 +751,7 @@ class AllScales:
 
 
 @dataclass
-class SupressionMatrix:
+class SuppressionMatrix:
     """Container for suppression matrix data.
     
     matrix: 4x4 numpy array representing the suppression matrix
@@ -763,12 +767,12 @@ class SupressionMatrix:
             self.standard, self.stddev = Config.standard_suppression_matrix()
 
     @classmethod
-    def from_hdf5(cls, mat_grp) -> "SupressionMatrix":
-        """Create a SupressionMatrix instance from an HDF5 group."""
+    def from_hdf5(cls, mat_grp) -> "SuppressionMatrix":
+        """Create a SuppressionMatrix instance from an HDF5 group."""
         if ("standard" not in mat_grp or
             "calculated" not in mat_grp):
             raise ValueError(
-                " ERROR while reading Supression Matrix from HDF5 file:\n"
+                " ERROR while reading Suppression Matrix from HDF5 file:\n"
                 " Missing 'standard' or 'calculated' dataset in HDF5 group."
             )
 
@@ -906,7 +910,7 @@ class DataAnalysis:
     positions     : AnalyzedPositions | None = None
     centralsweeps : CentralSweeps     | None = None
     scales        : AllScales         | None = None
-    supmat        : SupressionMatrix  | None = None
+    supmat        : SuppressionMatrix  | None = None
     gl2r          : GL2RMatrix        | None = None
 
     @classmethod
@@ -931,7 +935,7 @@ class DataAnalysis:
         scales = AllScales.from_hdf5(anl_grp["scales"])
 
         # Extract suppression matrix.        
-        supmat = SupressionMatrix.from_hdf5(anl_grp["matrices"])
+        supmat = SuppressionMatrix.from_hdf5(anl_grp["matrices"])
 
         return cls(
             prm           = prm,
@@ -974,7 +978,7 @@ class BeamlineData:
             kwargs["analysis"] = DataAnalysis.from_hdf5(bd_grp["analysis"])
         except Exception as warn:
             logging.warning(
-                "### WARNING, while reading 'Data Analysis' from HDF5 file:"
+                "### while reading 'Data Analysis' from HDF5 file:"
                 f"\n {warn}"
                 "\n Instantiating DataAnalysis with default values.\n"
                 )

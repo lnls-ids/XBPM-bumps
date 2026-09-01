@@ -288,7 +288,7 @@ class XBPMAnalyzer(QObject):
             Tuple (pos_nom_h, pos_nom_v) - nominal position grids scaled
             by XBPM distance.
         """
-        supmat, _ = self.processor.suppression_matrix(
+        supmat, _ = self.processor._calculate_suppression_matrix(
                 showmatrix=False, suppress=True
             )
         pair = self.processor.beam_position_pair(supmat)
