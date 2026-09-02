@@ -284,39 +284,3 @@ class ParameterPanel(QWidget):
         self.bpm_ref_check.setChecked(beamline_prm.usebpmref)
 
         del blockers
-
-    # def set_parameters(self, params: dict):
-    #     """Set parameter values from a dictionary.
-
-    #     Args:
-    #         params: Dictionary with parameter names and values.
-    #     """
-    #     # Text and numeric parameters
-    #     if 'inputfile' in params:
-    #         self.set_inputfile(params['inputfile'])
-    #     if 'xbpmdist' in params and params['xbpmdist'] is not None:
-    #         self.xbpmdist_spin.setValue(params['xbpmdist'])
-    #     if 'scalepolydeg' in params and params['scalepolydeg'] is not None:
-    #         self.scalepolydeg.setValue(params['scalepolydeg'])
-    #     if 'roisize' in params and params['roisize']:
-    #         try:
-    #             self.roi_h_spin.setValue(int(params['roisize'][0]))
-    #             self.roi_v_spin.setValue(int(params['roisize'][1]))
-    #         except Exception:  # noqa: S110
-    #             pass
-    #     if 'skip' in params:
-    #         self.skip_spin.setValue(params['skip'])
-
-    #     # Boolean checkboxes - map parameter name to widget
-    #     checkboxes = {
-    #         'xbpmpositionsraw' : self.xbpm_raw_check,
-    #         'xbpmpositions'    : self.xbpm_check,
-    #         'xbpmfrombpm'      : self.bpm_check,
-    #         'usebpmref'         : self.bpm_ref_check,
-    #         'showblademap'     : self.blademap_check,
-    #         'centralsweep'     : self.central_check,
-    #         'showbladescenter' : self.center_check,
-    #     }
-    #     for param, checkbox in checkboxes.items():
-    #         if param in params:
-    #             checkbox.setChecked(params[param])
