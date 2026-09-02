@@ -407,7 +407,7 @@ class SweepData:
     bpm   : BPM registered orbit at the time of the sweep
     blades: BladeRawData
     """
-    prm    : dict
+    meta   : dict
     bpm    : BPMRawData
     blades : BladeRawData
 
@@ -416,7 +416,7 @@ class SweepData:
         """Create a SweepData instance from an HDF5 group."""
         try:
             # Sweep metadata.
-            prm = dict(swp_grp.attrs.items())
+            meta = dict(swp_grp.attrs.items())
 
             # BPM dataset.
             bpm = BPMRawData.from_hdf5(swp_grp['bpm_data'])
@@ -425,7 +425,7 @@ class SweepData:
             bld = BladeRawData.from_hdf5(swp_grp["blade_data"], beamline)
 
             # Instantiate SweepData with parameters, BPM data, and raw data.
-            return cls(prm=prm, bpm=bpm, blades=bld)
+            return cls(meta=meta, bpm=bpm, blades=bld)
         except Exception as err:
             raise ValueError(
                 "### ERROR while reading 'Sweep Data' from HDF5 file:\n"
@@ -437,11 +437,12 @@ class SweepData:
 class BeamlineRawData:
     """Container for all sweep data and associated metadata for a beamline.
     
-    metadata  : Metadata info for raw_data group. 
-    sweeps    : List of SweepData instances
-    blade_avg : BladeAvgData instance
+    metadata   : Metadata info for raw_data group. 
+    sweeps_bld : List of BladeRawData instances for each sweep (int)
+    sweeps_bpm : List of BPMRawData instances for each sweep (int)
+    blade_avg  : BladeAvgData instance
     """
-    metadata   : dict
+    meta       : dict
     sweeps_bld : dict[int, BladeRawData] = field(default_factory=dict)
     sweeps_bpm : dict[int, BPMRawData]   = field(default_factory=dict)
     blade_avg  : BladeAvgData | None     = None
@@ -452,7 +453,7 @@ class BeamlineRawData:
                   beamline : str) -> "BeamlineRawData":
         """Extract raw data from the a raw_data HDF5 group."""
         # Group metadata.
-        kwargs = dict(metadata=dict(raw_grp.attrs.items()))
+        kwargs = dict(meta=dict(raw_grp.attrs.items()))
 
         # Run through all stored data.
         sweeps = {}
@@ -477,12 +478,14 @@ class BeamlineRawData:
                       f" in beamline '{beamline}'. Skipping.")
 
         # Build structures for blade and BPM data separately.
-        blds, bpms = {}, {}
-        for key, val in sweeps.items():
-            blds[key] = val.blades
-            bpms[key] = val.bpm
+        blds, bpms, meta = {}, {}, {}
+        for key, swp in sweeps.items():
+            blds[key] = swp.blades
+            bpms[key] = swp.bpm
+            meta[key] = swp.meta
         kwargs["sweeps_bld"] = blds
         kwargs["sweeps_bpm"] = bpms
+        kwargs["meta"]       = meta
 
         return cls(**kwargs)
 
@@ -516,6 +519,7 @@ class RMSGridStatistics:
     """Statistics calculated at a given ROI."""
     all      : RMSStatistics   # Full grid statistics.
     roi      : RMSStatistics   # ROI statistics.
+    roislice : ROISlice        # ROI slice object.
 
 
 @dataclass
@@ -551,7 +555,7 @@ class BPMAnalysis:
         # Instantiate BPMProcessor to calculate BPM positions.
         from .processors import BPMProcessor as BPMP
         bpm_proc = BPMP(
-            rawdata=bl_data.raw_data,
+            raw_data=bl_data.raw_data,
             prm_bml=bl_data.prm,
         )
 

@@ -84,7 +84,8 @@ class XBPMMainWindow(QMainWindow):
                 self.runtime_prm,
             )
         except Exception as exc:
-            self.show_error("Analysis failed", str(exc))
+            msg = f"{str(exc)}\n(workdata: {type(self.workdata)})"
+            self.show_error("Analysis failed", msg)
             return
         finally:
             self.set_analysis_running(False)
@@ -252,7 +253,10 @@ class XBPMMainWindow(QMainWindow):
         self.console.append(message)
 
     @pyqtSlot(str, str)
-    def show_error(self, title: str, message: str) -> None:
+    def show_error(self,
+                   title: str,
+                   message: str
+                   ) -> None:
         """Display error dialog.
 
         Args:
@@ -303,7 +307,7 @@ class XBPMMainWindow(QMainWindow):
 
         # Update BPM distance.
         self.beamline_prm.bpmdist = Config.BPMDISTS.get(
-            self.workbeamline, None
+            self.workbeamline[:3], None
             )
 
         # Calculate grid shape from nominal positions.
@@ -587,10 +591,10 @@ class XBPMMainWindow(QMainWindow):
             from ..core.exporters import Exporter
             exporter = Exporter(self.analyzer.app.prm)
 
-            # Include rawdata for complete re-analysis capability
-            rawdata = getattr(self.analyzer.app.reader, 'rawdata', None)
+            # Include raw_data for complete re-analysis capability
+            raw_data = getattr(self.analyzer.app.reader, 'raw_data', None)
             exporter.write_hdf5(path, self.analyzer.app.data, results,
-                                include_figures=True, rawdata=rawdata)
+                                include_figures=True, raw_data=raw_data)
 
             self.log_message(f"HDF5 export written: {path}")
             QMessageBox.information(

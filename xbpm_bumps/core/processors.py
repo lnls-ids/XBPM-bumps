@@ -22,31 +22,31 @@ class XBPMProcessor:
     """
 
     def __init__(self,
-                 beamlinedata: DStr.BeamlineData,
-                 prm_bml: DStr.BeamlinePrm,
-                 prm_gen: DStr.Prm,
-                 analysis: DStr.DataAnalysis,
+                 beamlinedata : DStr.BeamlineData,
+                 beamline_prm : DStr.BeamlinePrm,
+                 runtime_prm  : DStr.Prm,
+                 analysis     : DStr.DataAnalysis,
                  ) -> None:
         """Initialize processor with data and parameters.
 
         Args:
             beamlinedata : DStr.BeamlineData instance containing
                         measurement data.
-            prm_gen      : DStr.Prm instance containing general parameters.
-            prm_bml      : DStr.BeamlinePrm instance containing
+            runtime_prm  : DStr.Prm instance containing general parameters.
+            beamline_prm : DStr.BeamlinePrm instance containing
                         beamline parameters.
         """
         # Get blade data structures.
         self.blade_avg  = beamlinedata.raw_data.blade_avg
         self.blades     = self.blade_avg.blades
         self.prm_avg    = self.blade_avg.prm
-        self.prm_gen    = prm_gen
+        self.prm_gen    = runtime_prm
 
         # Analysis data.
         self.analysis = analysis
 
         # Beamline parameters.
-        self.prm_bml    = prm_bml
+        self.prm_bml    = beamline_prm
         self.beamline   = self.prm_bml.beamline
         # ROI defines V and H sizes (sz_h/v), and respective slices (sl_h/v).
         self.roi        = self.prm_bml.roi
@@ -658,14 +658,15 @@ class BPMProcessor:
     """
 
     def __init__(self,
-                 rawdata : DStr.BeamlineRawData,
-                 prm_bml : DStr.BeamlinePrm,
+                 raw_data : DStr.BeamlineRawData,
+                 prm_bml  : DStr.BeamlinePrm,
                  ) -> None:
         """Store raw BPM/XBPM dataset and parameters for later processing."""
-        self.rawdata = rawdata
-        self.sweeps  = rawdata.sweeps_bpm
-        self.prm_bml = prm_bml
-        self.roi     = prm_bml.roi
+        self.raw_data   = raw_data
+        self.sweeps_bpm = raw_data.sweeps_bpm
+        self.meta       = raw_data.meta
+        self.prm_bml    = prm_bml
+        self.roi        = prm_bml.roi
         self._print_bpm_info()
         self.calculate_positions()
 
@@ -687,7 +688,7 @@ class BPMProcessor:
         self._positions_from_tangents()
 
         # Estimate standard deviations.
-        self.rms_grid_stats = DStr.RMSGridStatistics(
+        self.rms_grid_stats = grid_statistics(
             self.nom_x,
             self.nom_y,
             self.meas_x,
@@ -758,14 +759,15 @@ class BPMProcessor:
         offset_x_next, offset_y_next = 0, 0
         offsetfound = False
 
-        for swp in self.sweeps:
-            agx = swp.prm.get('Angle x')
-            agy = swp.prm.get('Angle y')
+        # Select offsets from BPMs with zero angles (reference orbit).
+        for ns in self.sweeps_bpm:
+            agx = self.meta[ns].get('Angle x')
+            agy = self.meta[ns].get('Angle y')
             if agx == 0 and agy == 0:
-                offset_x_sect = swp.bpm.pos.x[sector_idx]
-                offset_y_sect = swp.bpm.pos.y[sector_idx]
-                offset_x_next = swp.bpm.pos.x[sector_idx_nxt]
-                offset_y_next = swp.bpm.pos.y[sector_idx_nxt]
+                offset_x_sect = self.sweeps_bpm[ns].pos.x[sector_idx]
+                offset_y_sect = self.sweeps_bpm[ns].pos.y[sector_idx]
+                offset_x_next = self.sweeps_bpm[ns].pos.x[sector_idx_nxt]
+                offset_y_next = self.sweeps_bpm[ns].pos.y[sector_idx_nxt]
                 offsetfound = True
                 break
 
@@ -777,15 +779,14 @@ class BPMProcessor:
         # Calculate tangents for all angles.
         self.tangents = dict()
         bdist = self.prm_bml.bpmdist
-        # for dt in self.rawdata:
-        for swp in self.sweeps:
-            agx = swp.prm.get('Angle x')
-            agy = swp.prm.get('Angle y')
+        for ns in self.sweeps_bpm:
+            agx = self.meta[ns].get('Angle x')
+            agy = self.meta[ns].get('Angle y')
 
-            orbx     = swp.bpm.pos.x[sector_idx]
-            orby     = swp.bpm.pos.y[sector_idx]
-            orbx_nxt = swp.bpm.pos.x[sector_idx_nxt]
-            orby_nxt = swp.bpm.pos.y[sector_idx_nxt]
+            orbx     = self.sweeps_bpm[ns].pos.x[sector_idx]
+            orby     = self.sweeps_bpm[ns].pos.y[sector_idx]
+            orbx_nxt = self.sweeps_bpm[ns].pos.x[sector_idx_nxt]
+            orby_nxt = self.sweeps_bpm[ns].pos.y[sector_idx_nxt]
             tx = ((orbx_nxt - offset_x_next) -
                   (orbx - offset_x_sect)) / bdist
             ty = ((orby_nxt - offset_y_next) -
@@ -803,13 +804,15 @@ class BPMProcessor:
         sector_idx_nxt = sector_idx + 1
 
         def _offset_from_direction(direction: str,
-                                         orb: np.ndarray,
-                                         orb_nxt: np.ndarray
-                                         ) -> tuple:
+                                   orb: np.ndarray,
+                                   orb_nxt: np.ndarray
+                                   ) -> tuple:
             """Search offset in given direction."""
             # Get nominal angle value.
-            angle = np.array([swp.prm.get(f'Angle {direction}')
-                              for swp in self.sweeps])
+            angle = np.array([
+                swp.meta.get(f'Angle {direction}')
+                for ns, swp in self.sweeps_bpm.items()
+                ])
 
             ang_min = np.min(angle)
             ang_max = np.max(angle)
@@ -832,15 +835,15 @@ class BPMProcessor:
             return (offset_sect, offset_next)
 
         orbx     = np.array([swp.bpm.pos.x[sector_idx]
-                             for swp in self.sweeps])
+                             for ns, swp in self.sweeps_bpm.items()])
         orbx_nxt = np.array([swp.bpm.pos.x[sector_idx_nxt]
-                             for swp in self.sweeps])
+                             for ns, swp in self.sweeps_bpm.items()])
         (offset_x, offset_x_nxt) = _offset_from_direction('x', orbx, orbx_nxt)
 
         orby     = np.array([swp.bpm.pos.y[sector_idx]
-                             for swp in self.sweeps])
+                             for ns, swp in self.sweeps_bpm.items()])
         orby_nxt = np.array([swp.bpm.pos.y[sector_idx_nxt]
-                             for swp in self.sweeps])
+                             for ns, swp in self.sweeps_bpm.items()])
         (offset_y, offset_y_nxt) = _offset_from_direction('y', orby, orby_nxt)
 
         return (offset_x, offset_x_nxt, offset_y, offset_y_nxt)
@@ -851,7 +854,7 @@ def calculate_grid_stats(
         nom_y   : np.ndarray,
         meas_x  : np.ndarray,
         meas_y  : np.ndarray,
-    ) -> DStr.RMSGridStatistics:
+    ) -> DStr.RMSStatistics:
     """Calculate RMS statistics from squared position differences in ROI.
 
     Args:
@@ -861,7 +864,7 @@ def calculate_grid_stats(
         meas_y : measured values in y direction
 
     Returns:
-        DStr.RMSGridStatistics: Statistics with rms_h, rms_v, rms_total,
+        DStr.RMSStatistics: Statistics with rms_h, rms_v, rms_total,
                 rms_max_h, rms_min_h, rms_max_v, rms_min_v.
     """
     # Squared differences.
@@ -921,7 +924,7 @@ def calculate_grid_stats(
         'mean_v'   : rms_mean_v,
         'mean_tot' : rms_mean_tot,
     }
-    return DStr.RMSGridStatistics(**rms)
+    return DStr.RMSStatistics(**rms)
 
 
 def grid_statistics(nom_x: np.ndarray,

@@ -4,11 +4,10 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import logging
-import matplotlib.pyplot as plt
 import os
 
 from typing import Optional
-from pyparsing import Optional
+# from pyparsing import Optional
 
 from .constants import FIGDPI
 from .config import Config
@@ -40,8 +39,6 @@ matplotlib.rcParams['legend.handletextpad'] = 0.8
 
 # Module logger
 logger = logging.getLogger(__name__)
-
-
 
 
 class BladeMapVisualizer:
@@ -965,7 +962,7 @@ class BladeCurrentVisualizer:
         y: np.ndarray,
         yerr: np.ndarray,
         marker: str,
-        blade_name: str) -> Optional:
+        blade_name: str) -> Optional[plt.Line2D]:
         if yerr is not None:
             container = ax.errorbar(
                 rng, y, yerr=yerr, fmt=marker, label=blade_name, zorder=2

@@ -19,8 +19,8 @@ class AnalysisService:
         # Create a processor instance to perform the calculations.
         xprocessor = XBPMProcessor(
             beamlinedata=workdata,
-            prm_bml=workdata.prm,
-            prm_gen=runtime_prm,
+            beamline_prm=workdata.prm,
+            runtime_prm=runtime_prm,
             analysis=analysis,
         )
 
