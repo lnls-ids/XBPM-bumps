@@ -2,7 +2,6 @@
 
 import numpy as np
 from copy import deepcopy
-from .constants import FIGDPI
 from .config import Config
 from . import data_structure as DStr
 
@@ -193,9 +192,11 @@ class XBPMProcessor:
         full analysis pipeline.
         """
         # Define reference positions as nominal or BPM's.
-        self.pos_ref = (self.pos_nom
-                        if self.prm_bml.refpos == "nominal"
-                        else self.blade_avg.pos_bpm)
+        self.pos_ref = (
+            self.analysis.bpm.pos_meas
+            if self.prm_bml.usebpmref
+            else self.blade_avg.pos_nom
+            )
 
         # Compute suppression matrix at the ROI.
         self.supmat = self._calculate_suppression_matrix()
@@ -306,6 +307,57 @@ class XBPMProcessor:
             cross=cross_res
             )
 
+
+    def analyze_blade_centers(self) -> DStr.BladeCenterAnalysis:
+        """Analyze the central positions of the blades."""
+        # Define blades values according to ROI for slope calculation.
+        blades = {
+            'to' : (
+                self.blades.to[self.roi.sl_v, self.roi.sl_h],
+                self.blades.sto[self.roi.sl_v, self.roi.sl_h]
+                ),
+            'ti' : (
+                self.blades.ti[self.roi.sl_v, self.roi.sl_h],
+                self.blades.sti[self.roi.sl_v, self.roi.sl_h]
+                ),
+            'bi' : (
+                self.blades.bi[self.roi.sl_v, self.roi.sl_h],
+                self.blades.sbi[self.roi.sl_v, self.roi.sl_h]
+                ),
+            'bo' : (
+                self.blades.bo[self.roi.sl_v, self.roi.sl_h],
+                self.blades.sbo[self.roi.sl_v, self.roi.sl_h]
+                ),
+        }
+
+        # Get central indices for vertical and horizontal directions.
+        nv, nh = blades['to'][0].shape
+        vc, hc = int(nv / 2), int(nh / 2)
+
+        # Cut blades at central lines for horizontal and vertical analysis.
+        hblades = {
+            k : (bld[0][vc, :], bld[1][vc, :])
+            for k, bld in blades.items()
+        }
+        vblades = {
+            k : (bld[0][:, hc], bld[1][:, hc])
+            for k, bld in blades.items()
+        }
+
+        # Perform central line fit for horizontal and vertical blade analysis.
+        horz = self.blade_central_line_fit(
+            self.range_h[self.roi.sl_h],
+            hblades
+            )
+        vert = self.blade_central_line_fit(
+            self.range_v[self.roi.sl_v],
+            vblades
+            )
+        return {
+            "h": horz,
+            "v": vert,
+        }
+
     def _calculate_suppression_matrix(self) -> DStr.SuppressionMatrix:
         """Calculate the suppression matrix from blade behavior.
 
@@ -316,44 +368,43 @@ class XBPMProcessor:
         Returns:
             Tuple of (suppression matrix, standard deviation matrix)
         """
-        # Calculate blade slopes for scaled calculations.
-        # Blade sweep in horizontal direction.
-        pc_h, covs_h = self.blade_central_line_fit(
-            self.range_h[self.roi.sl_h]
-            )
-        # Blade sweep in vertical direction.
-        pc_v, covs_v = self.blade_central_line_fit(
-            self.range_v[self.roi.sl_v]
-            )
+        sw_h = self.analysis.bladecenter['h']
+        sw_v = self.analysis.bladecenter['v']
 
+        pc_h  = np.array([sw_h.to.k,  sw_h.ti.k,  sw_h.bi.k,  sw_h.bo.k])
+        pc_v  = np.array([sw_v.to.k,  sw_v.ti.k,  sw_v.bi.k,  sw_v.bo.k])
+        sdv_h = np.array([sw_h.to.sk, sw_h.ti.sk, sw_h.bi.sk, sw_h.bo.sk])
+        sdv_v = np.array([sw_v.to.sk, sw_v.ti.sk, sw_v.bi.sk, sw_v.bo.sk])
+
+        # Check for the vertical and horizontal cases.
         if len(self.range_h) > 1:
-            sdv_h = np.sqrt(covs_h) * pc_h[0, 0] / (pc_h[:, 0]**2)
-            pc_h  = pc_h[0] / np.abs(pc_h)
+            sdv_h = sdv_h * sw_h.to.k / (pc_h[:]**2)
+            # Normalize the suppression coefficients by TO blade.
+            pc_h  = sw_h.to.k / np.abs(pc_h)
         else:
             pc_h  = np.ones(8).reshape(4, 2)
             sdv_h = np.zeros(4)
 
         if len(self.range_v) > 1:
-            sdv_v = np.sqrt(covs_v) * pc_v[0, 0] / (pc_v[:, 0]**2)
-            pc_v  = pc_v[0] / np.abs(pc_v)
+            sdv_v = sdv_v * sw_v.to.k / (pc_v[:]**2)
+            # Normalize the suppression coefficients by TO blade.
+            pc_v  = sw_v.to.k / np.abs(pc_v)
         else:
             pc_v  = np.ones(8).reshape(4, 2)
             sdv_v = np.zeros(4)
 
+        # Assemble the calculated suppression matrix.
         calculated = np.array([
-            [pc_v[0, 0], -pc_v[1, 0], -pc_v[2, 0],  pc_v[3, 0]],
-            [pc_v[0, 0],  pc_v[1, 0],  pc_v[2, 0],  pc_v[3, 0]],
-            [pc_h[0, 0],  pc_h[1, 0], -pc_h[2, 0], -pc_h[3, 0]],
-            [pc_h[0, 0],  pc_h[1, 0],  pc_h[2, 0],  pc_h[3, 0]],
+            [pc_v[0], -pc_v[1], -pc_v[2],  pc_v[3]],
+            [pc_v[0],  pc_v[1],  pc_v[2],  pc_v[3]],
+            [pc_h[0],  pc_h[1], -pc_h[2], -pc_h[3]],
+            [pc_h[0],  pc_h[1],  pc_h[2],  pc_h[3]],
         ])
 
-        stddev = np.array([
-            [sdv_v[0], sdv_v[1], sdv_v[2], sdv_v[3]],
-            [sdv_v[0], sdv_v[1], sdv_v[2], sdv_v[3]],
-            [sdv_h[0], sdv_h[1], sdv_h[2], sdv_h[3]],
-            [sdv_h[0], sdv_h[1], sdv_h[2], sdv_h[3]],
-        ])
+        # Assemble the standard deviation matrix.
+        stddev = np.array([sdv_v, sdv_h])
 
+        # Get the standard matrix (gains == 1).
         std, _ = Config.standard_suppression_matrix()
         return DStr.SuppressionMatrix(
             standard=std,
@@ -361,7 +412,6 @@ class XBPMProcessor:
             stddev=stddev,
             optimized=deepcopy(calculated)
             )
-
 
     def transform_position_cross(self) -> DStr.Positions:
         """Transform cross-blade positions using the linear transformation matrix."""
@@ -386,50 +436,51 @@ class XBPMProcessor:
         ])
 
     def blade_central_line_fit(self,
+                               blades: dict,
                                range_vals: np.ndarray
-                               ) -> tuple:
+                               ) -> DStr.BladeCenterAnalysis:
         """Linear fittings to each blade's data through central line.
         
         Args:
-            roi_h: slice for horizontal ROI.
-            roi_v: slice for vertical ROI.
-            range_vals: range values corresponding to the ROI.
+            blades     : dictionary containing blade data and associated
+                         errors within the ROI.
+            range_vals : range values corresponding to the ROI.
 
         Returns:
-            Tuple of (fit coefficients, std dev values) for each blade.
+            BladeCenterAnalysis dataclass containing the fit coefficients and standard deviations for each blade.
         """
-        # Define blades values according to ROI for slope calculation.
-        to  = self.blades.to[self.roi.sl_v, self.roi.sl_h]
-        sto = self.blades.sto[self.roi.sl_v, self.roi.sl_h]
-        ti  = self.blades.ti[self.roi.sl_v, self.roi.sl_h]
-        sti = self.blades.sti[self.roi.sl_v, self.roi.sl_h]
-        bi  = self.blades.bi[self.roi.sl_v, self.roi.sl_h]
-        sbi = self.blades.sbi[self.roi.sl_v, self.roi.sl_h]
-        bo  = self.blades.bo[self.roi.sl_v, self.roi.sl_h]
-        sbo = self.blades.sbo[self.roi.sl_v, self.roi.sl_h]
-
-        pc = list()
-        covs = list()
-        for blade, err in [
-            (to, sto), (ti, sti), (bi, sbi), (bo, sbo)
-            ]:
+        # Loop over each blade and perform linear fitting.
+        results = {}
+        for bl, (blade, err) in blades.items():
+            # Calculate weights as the inverse of the errors, if possible.
             weight = 1. / err[:]
-
             if np.isinf(weight).any():
                 weight = None
 
+            # Fit a linear polynomial to the blade data with weights.
             coefs, cov = np.polyfit(range_vals,
-                                    blade[:, 0],
+                                    blade,
                                     deg=1,
                                     w=weight,
                                     cov=True)
-            pc.append(coefs)
-            covs.append(cov[0, 0])
-        pc = np.array(pc)
 
-        if np.isinf(pc).any() or (pc == 0).any():
-            pc = np.array([[1, 0] for _ in range(4)]) 
-        return pc, covs
+            # Coefficient errors.
+            sigmas = np.sqrt(np.diag(cov))
+            # Nominal values.
+            nom  = DStr.Positions(x=range_vals, y=blade)
+            yfit = np.polyval(coefs, range_vals)
+            # Fitted values.
+            fit_val = DStr.Positions(x=range_vals, y=yfit)
+            # Store results in the dataclass for each blade.
+            results[bl] = DStr.BladeLineFit(
+                k=coefs[0],
+                d=coefs[1],
+                sk=sigmas[0],
+                sd=sigmas[1],
+                nom=nom,
+                fit=fit_val,
+            )
+        return DStr.BladeCenterAnalysis(**results)
 
     def beam_position_pair(self, supmat: np.ndarray) -> DStr.Positions:
         """Calculate beam position from blades' currents (pairwise).

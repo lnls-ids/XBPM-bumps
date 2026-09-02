@@ -4,7 +4,7 @@
 # from curses import raw
 from dataclasses import dataclass, field
 import logging
-from typing import List
+from typing import List, Optional
 
 import h5py
 import numpy as np
@@ -592,6 +592,90 @@ class BladeMap:
 
 
 @dataclass
+class Scales:
+    """Container for scaling factors.
+    
+    q: quadratic coefficient
+    k: linear coefficient
+    d: constant offset
+    s: standard deviation of the respective coefficient
+    """
+    kx  : float
+    skx : float
+    dx  : float
+    sdx : float
+    ky  : float
+    sky : float
+    dy  : float
+    sdy : float
+
+    qx  : Optional[float] = 0.0
+    sqx : Optional[float] = 0.0
+    qy  : Optional[float] = 0.0
+    sqy : Optional[float] = 0.0
+
+    @classmethod
+    def from_hdf5(cls, scl_grp) -> "Scales":
+        """Create a Scales instance from an HDF5 group."""
+        required_fields = [
+            'qx', 'sqx', 'kx', 'skx', 'dx', 'sdx',
+            'qy', 'sqy', 'ky', 'sky', 'dy', 'sdy'
+        ]
+        for fld in required_fields:
+            if fld not in scl_grp.attrs:
+                raise ValueError(
+                    f" ERROR while reading Scales from HDF5 file:\n"
+                    f" Missing '{fld}' attribute in HDF5 group."
+                )
+
+        return cls(
+            qx  = scl_grp.attrs['qx'],
+            sqx = scl_grp.attrs['sqx'],
+            kx  = scl_grp.attrs['kx'],
+            skx = scl_grp.attrs['skx'],
+            dx  = scl_grp.attrs['dx'],
+            sdx = scl_grp.attrs['sdx'],
+            qy  = scl_grp.attrs['qy'],
+            sqy = scl_grp.attrs['sqy'],
+            ky  = scl_grp.attrs['ky'],
+            sky = scl_grp.attrs['sky'],
+            dy  = scl_grp.attrs['dy'],
+            sdy = scl_grp.attrs['sdy']
+        )
+
+
+@dataclass
+class BladeLineFit:
+    """Container for the results of a linear fit to blade data.
+
+    Attributes:
+        coeffs : Coefficients of the linear fit (slope and intercept).
+        sigmas : Standard deviations of the coefficients.
+    """
+    k   : float
+    sk  : float
+    d   : float
+    sd  : float
+    nom : Positions
+    fit : Positions
+
+
+@dataclass
+class BladeCenterAnalysis:
+    """Container for the analysis of blade central positions.
+
+    Attributes:
+        sh   : Fitting results for horizontal sweep.
+        sv   : Fitting results for vertical sweep.
+    """
+    to : BladeLineFit
+    ti : BladeLineFit
+    bi : BladeLineFit
+    bo : BladeLineFit
+    pos_nom : Positions
+
+
+@dataclass
 class CentralSweepLine:
     """Container for central sweep data.
     
@@ -673,59 +757,6 @@ class CentralSweeps:
         return cls(
             h = CentralSweepLine.from_hdf5(swp_grp["blades_h"], dir='h'),
             v = CentralSweepLine.from_hdf5(swp_grp["blades_v"], dir='v')
-        )
-
-
-@dataclass
-class Scales:
-    """Container for scaling factors.
-    
-    q: quadratic coefficient
-    k: linear coefficient
-    d: constant offset
-    s: standard deviation of the respective coefficient
-    """
-    kx  : float
-    skx : float
-    dx  : float
-    sdx : float
-    ky  : float
-    sky : float
-    dy  : float
-    sdy : float
-
-    qx  : float = 0.0
-    sqx : float = 0.0
-    qy  : float = 0.0
-    sqy : float = 0.0
-
-    @classmethod
-    def from_hdf5(cls, scl_grp) -> "Scales":
-        """Create a Scales instance from an HDF5 group."""
-        required_fields = [
-            'qx', 'sqx', 'kx', 'skx', 'dx', 'sdx',
-            'qy', 'sqy', 'ky', 'sky', 'dy', 'sdy'
-        ]
-        for fld in required_fields:
-            if fld not in scl_grp.attrs:
-                raise ValueError(
-                    f" ERROR while reading Scales from HDF5 file:\n"
-                    f" Missing '{fld}' attribute in HDF5 group."
-                )
-
-        return cls(
-            qx  = scl_grp.attrs['qx'],
-            sqx = scl_grp.attrs['sqx'],
-            kx  = scl_grp.attrs['kx'],
-            skx = scl_grp.attrs['skx'],
-            dx  = scl_grp.attrs['dx'],
-            sdx = scl_grp.attrs['sdx'],
-            qy  = scl_grp.attrs['qy'],
-            sqy = scl_grp.attrs['sqy'],
-            ky  = scl_grp.attrs['ky'],
-            sky = scl_grp.attrs['sky'],
-            dy  = scl_grp.attrs['dy'],
-            sdy = scl_grp.attrs['sdy']
         )
 
 
@@ -911,10 +942,11 @@ class DataAnalysis:
     beamline_prm  : BeamlinePrm       | None = None
     bpm           : BPMAnalysis       | None = None
     blademap      : BladeMap          | None = None
+    bladecenter   : dict              | None = None
     positions     : AnalyzedPositions | None = None
     centralsweeps : CentralSweeps     | None = None
     scales        : AllScales         | None = None
-    supmat        : SuppressionMatrix  | None = None
+    supmat        : SuppressionMatrix | None = None
     gl2r          : GL2RMatrix        | None = None
 
     @classmethod
@@ -928,6 +960,11 @@ class DataAnalysis:
 
         # Extract blade map.
         blademap = BladeMap.from_hdf5(anl_grp["blade_map"])
+
+        bladecenter = {
+            'h' : BladeCenterAnalysis.from_hdf5(anl_grp["blade_center/h"]),
+            'v' : BladeCenterAnalysis.from_hdf5(anl_grp["blade_center/v"])
+        }
 
         # Extract other analysis data.
         positions = AnalyzedPositions.from_hdf5(anl_grp["positions"])
@@ -945,6 +982,7 @@ class DataAnalysis:
             beamline_prm  = bl_prm,
             bpm           = bpm,
             blademap      = blademap,
+            bladecenter   = bladecenter,
             positions     = positions,
             centralsweeps = centralsweeps,
             scales        = scales,
