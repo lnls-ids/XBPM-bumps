@@ -256,12 +256,19 @@ class ParameterPanel(QWidget):
     def load_beamline_data(self,
                            runtime_prm: Prm,
                            beamline_prm: BeamlinePrm,
-                           grid_shape: tuple[int, int]) -> None:
-        nv, nh = grid_shape
+                           grid_shape: tuple[int, int]
+                           ) -> None:
+        """Load parameters from BeamlinePrm and runtime Prm into the panel.
 
+        Args:
+            runtime_prm   : Runtime parameters to load.
+            beamline_prm  : Beamline-specific parameters to load.
+            grid_shape    : Tuple containing the vertical and horizontal
+                            grid sizes.
+        """
         # Block signals while programmatically reflecting loaded state.
         blockers = [QSignalBlocker(widget)
-                    for widget in (
+                     for widget in (
                         self.xbpmdist_spin,
                         self.roi_h_spin,
                         self.roi_v_spin,
@@ -270,10 +277,10 @@ class ParameterPanel(QWidget):
                         self.bpm_ref_check,
                         )
                     ]   
-
         self.show_inputfile(runtime_prm.inputfile)
         self.set_beamline(beamline_prm.beamline)
 
+        nv, nh = grid_shape
         self.roi_h_spin.setRange(1, nh)
         self.roi_v_spin.setRange(1, nv)
         self.roi_h_spin.setValue(min(beamline_prm.roi.sz_h, nh))

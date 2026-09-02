@@ -27,7 +27,7 @@ class Prm:
     # File names and analysis parameters.
     inputfile        : str   | None = None      # HDF5 input file name.
     outputfile       : str   | None = None      # HDF5 output file name. 
-    phaseorgap       : dict  | None = None      # Phase/gap for the ID.
+    phaseorgap       : dict  | None = None      # Phase/gap for the IDs.
     maxradangle      : float = MAX_RAD_ANGLE    # Max. angle of bumps in mrad.
 
     # What to calculate and show.
@@ -47,11 +47,15 @@ class Prm:
         setattr(self, key, value)
 
     @classmethod
-    def from_hdf5(cls, dset_grp: h5py.Group) -> "Prm":
+    def from_hdf5(cls,
+                  dset_grp: h5py.Group,
+                  inputfile: str
+                  ) -> "Prm":
         """Create a Prm instance from an HDF5 group."""
         # Extract attributes from the HDF5 group.
         try:
             attrs = {key: val for key, val in dset_grp.attrs.items()}
+            attrs["inputfile"] = inputfile
         except Exception as err:
             raise ValueError(
                 "### ERROR while reading 'Prm' from HDF5 group:\n"
@@ -904,7 +908,7 @@ class DataAnalysis:
     supmat       : Suppression matrices
     """
     # Beamline, description and XBPM-source distance.
-    prm           : BeamlinePrm       | None = None
+    beamline_prm  : BeamlinePrm       | None = None
     bpm           : BPMAnalysis       | None = None
     blademap      : BladeMap          | None = None
     positions     : AnalyzedPositions | None = None
@@ -917,7 +921,7 @@ class DataAnalysis:
     def from_hdf5(cls, anl_grp: h5py.Group) -> "DataAnalysis":
         """Create a DataAnalysis instance from an HDF5 group."""
         # Extract parameters.
-        prm = BeamlinePrm.from_hdf5(anl_grp)
+        bl_prm = BeamlinePrm.from_hdf5(anl_grp)
 
         # Extract BPM analysis data.
         bpm = BPMAnalysis.from_hdf5(anl_grp["bpm_analysis"])
@@ -938,7 +942,7 @@ class DataAnalysis:
         supmat = SuppressionMatrix.from_hdf5(anl_grp["matrices"])
 
         return cls(
-            prm           = prm,
+            beamline_prm  = bl_prm,
             bpm           = bpm,
             blademap      = blademap,
             positions     = positions,
@@ -970,7 +974,8 @@ class BeamlineData:
 
         # Raw data.
         kwargs["raw_data"] = BeamlineRawData.from_hdf5(
-            bd_grp["raw_data"], beamline
+            bd_grp["raw_data"],
+            beamline
             )
 
         # Analysis data may be not present when data are imported.

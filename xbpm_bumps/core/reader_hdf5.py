@@ -14,6 +14,11 @@ from . import data_structure as DStr
 def read_hdf5(filepath: str) -> dict[str, DStr.BeamlineData]:
     beamlinedata ={}
     with h5py.File(filepath, 'r') as hf:
+        runtime_prm = DStr.Prm.from_hdf5(
+            dset_grp=hf,
+            inputfile=filepath
+        )
+
         for beamline, bldata in hf.items():
             if beamline not in Cfg.BLADEMAP.keys():
                 print(f" WARNING: Unknown beamline '{beamline}'"
@@ -22,7 +27,7 @@ def read_hdf5(filepath: str) -> dict[str, DStr.BeamlineData]:
 
             # Assemble the extracted data in the raw_data dictionary.
             beamlinedata[beamline] = DStr.BeamlineData.from_hdf5(bldata)
-    return beamlinedata
+    return runtime_prm, beamlinedata
 
 
 def write_hdf5(

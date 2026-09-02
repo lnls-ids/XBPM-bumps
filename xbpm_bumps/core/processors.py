@@ -197,10 +197,6 @@ class XBPMProcessor:
                         if self.prm_bml.refpos == "nominal"
                         else self.blade_avg.pos_bpm)
 
-        # Ensure central sweep data is available.
-        # This call should be transferred to the orchestrator.
-        self.pos_central_sweeps = self.analyze_central_sweeps(pairw=True)
-
         # Compute suppression matrix at the ROI.
         self.supmat = self._calculate_suppression_matrix()
         # Keep track of the calculated matrices.
@@ -641,24 +637,24 @@ class BPMProcessor:
 
         # Estimate standard deviations.
         self.rms_grid_stats = DStr.RMSGridStatistics(
-            self.nom_x,  self.nom_y,
-            self.meas_x, self.meas_y,
+            self.nom_x,
+            self.nom_y,
+            self.meas_x,
+            self.meas_y,
             self.prm_bml.roi
+        )
+
+        # Build structures for BPM analysis results.
+        pos_meas = DStr.Positions(
+            x=self.meas_x,
+            y=self.meas_y
             )
-        # self.rms_diff_all, self.rms_diff_roi = self.std_dev_estimate()
-
-        # Extract ROI data for closeup view.
-        self._extract_roi_positions()
-
-        if self.prm_bml.outputfile:
-            outfile = f"bpm_positions_{self.prm_bml.beamline}.png"
-            self.fig.savefig(outfile, dpi=FIGDPI)
-            print(" Figure of positions calculated by BPM measurements "
-                  f"saved to file {outfile}.\n")
-
-        self._stack_measurement_results()
-
-        # self.plot_bpm_positions()
+        bpmanalysis = DStr.BPMAnalysis(
+            pos_meas=pos_meas,
+            prm=self.prm_bml,
+            rms_diff=self.rms_grid_stats,
+        )
+        return bpmanalysis
 
     def _positions_from_tangents(self) -> dict:
         """Calculate beam positions from tangents at BPMs."""
@@ -797,33 +793,6 @@ class BPMProcessor:
         (offset_y, offset_y_nxt) = _offset_from_direction('y', orby, orby_nxt)
 
         return (offset_x, offset_x_nxt, offset_y, offset_y_nxt)
-
-    def _extract_roi_positions(self) -> tuple:
-        """Extract ROI positions from full grid for closeup view.
-
-        Returns:
-            Tuple (xnom_roi, ynom_roi, xpos_roi, ypos_roi) of ROI arrays.
-        """
-        rows, cols = self.bana.roi.update(
-            self.nom_x.shape, (self.roi.sz_v, self.roi.sz_h)
-            )
-        self.xnom_roi = self.nom_x[rows, cols]
-        self.ynom_roi = self.nom_y[rows, cols]
-        self.xpos_roi = self.meas_x[rows, cols]
-        self.ypos_roi = self.meas_y[rows, cols]
-
-    def _stack_measurement_results(self) -> tuple:
-        """Compile measured and nominal coordinates into return format.
-
-        Returns:
-            Tuple (measured, nominal) where each is a 2-column array or None.
-        """
-        self.measured = (np.column_stack(
-            (self.meas_x.ravel(), self.meas_y.ravel()))
-            if self.meas_x.size else None)
-        self.nominal = (np.column_stack(
-            (self.nom_x.ravel(), self.nom_y.ravel()))
-            if self.nom_x.size else None)
 
 
 def calculate_grid_stats(

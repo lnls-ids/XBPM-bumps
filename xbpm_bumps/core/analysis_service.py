@@ -2,6 +2,7 @@
 
 from .            import data_structure as DStr
 from .processors import XBPMProcessor
+from .processors import BPMProcessor
 
 
 class AnalysisService:
@@ -11,16 +12,19 @@ class AnalysisService:
     def run(
         workdata: DStr.BeamlineData,
         runtime_prm: DStr.Prm,
-    ) -> DStr.DataAnalysis:
-        analysis = DStr.DataAnalysis(prm=workdata.prm)
+        ) -> DStr.DataAnalysis:
+        # Initialize the analysis result container.
+        analysis = DStr.DataAnalysis(beamline_prm=workdata.prm)
 
-        processor = XBPMProcessor(
+        # Create a processor instance to perform the calculations.
+        xprocessor = XBPMProcessor(
             beamlinedata=workdata,
             prm_bml=workdata.prm,
             prm_gen=runtime_prm,
             analysis=analysis,
         )
 
+        # Determine if central sweeps need to be analyzed.
         needs_sweeps = (
             runtime_prm.show_centralsweep
             or runtime_prm.show_bladecenter
@@ -28,12 +32,26 @@ class AnalysisService:
             or runtime_prm.show_xbpmpositions
         )
         if needs_sweeps:
-            analysis.centralsweeps = processor.analyze_central_sweeps()
+            analysis.centralsweeps = xprocessor.analyze_central_sweeps()
 
         if (
             runtime_prm.show_xbpmpositionsraw
             or runtime_prm.show_xbpmpositions
-        ):
-            analysis.positions = processor.xbpm_position_calculation()
+            ):
+            analysis.positions = xprocessor.xbpm_position_calculation()
+
+        if runtime_prm.show_blademap:
+            analysis.blademap = DStr.BladeMap(
+                prm=workdata.prm,
+                blades=workdata.raw_data.blade_avg.blades,
+                pos=workdata.raw_data.blade_avg.pos_nom
+            )
+
+        if runtime_prm.show_bpmpositions:
+            bprocessor = BPMProcessor(
+                raw_data=workdata.raw_data,
+                prm_bml=workdata.prm,
+                )
+            analysis.bpm = bprocessor.calculate_positions()
 
         return analysis

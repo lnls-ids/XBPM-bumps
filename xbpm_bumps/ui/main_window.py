@@ -281,7 +281,7 @@ class XBPMMainWindow(QMainWindow):
 
         # Validate selected path and read data.
         try:
-            self.beamlinedata = read_hdf5(h5file)
+            self.runtime_prm, self.beamlinedata = read_hdf5(h5file)
         except OSError as exc:
             self.show_error(
                 f"cannot open HDF5 file {h5file}:", f"\n{str(exc)}"
@@ -299,7 +299,6 @@ class XBPMMainWindow(QMainWindow):
         # Define links to effective beamline data. 
         self.workdata     = self.beamlinedata[self.workbeamline]
         self.analysis     = self.workdata.analysis
-        self.runtime_prm  = DStr.Prm(inputfile=h5file)
         self.beamline_prm : DStr.BeamlinePrm = self.workdata.prm
 
         # Update BPM distance.
@@ -316,7 +315,6 @@ class XBPMMainWindow(QMainWindow):
 
         # Update parameter panel.
         self.param_panel.load_beamline_data(
-            h5file,
             self.runtime_prm,
             self.beamline_prm,
             self.grid_shape,
