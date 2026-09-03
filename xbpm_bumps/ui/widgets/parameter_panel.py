@@ -142,36 +142,44 @@ class ParameterPanel(QWidget):
         layout = QVBoxLayout()
 
         # 1. Calculate BPM positions
-        self.bpm_check = QCheckBox("Calculate BPM positions (-b)")
+        self.bpm_check = QCheckBox(
+            "Show positions from BPM measurements"
+            )
         self.bpm_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.bpm_check)
 
         # 2. Show blade map
-        self.blademap_check = QCheckBox("Show blade map (-m)")
+        self.blademap_check = QCheckBox("Show blade map")
         self.blademap_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.blademap_check)
 
         # 3. Show central line sweeps
-        self.central_check = QCheckBox("Show central line sweeps (-c)")
-        self.central_check.toggled.connect(self.parametersChanged.emit)
-        layout.addWidget(self.central_check)
+        self.blade_central_check = QCheckBox(
+            "Show blades at central line sweeps"
+            )
+        self.blade_central_check.toggled.connect(self.parametersChanged.emit)
+        layout.addWidget(self.blade_central_check)
 
         # 4. Show positions at center
-        self.center_check = QCheckBox("Show positions at center (-s)")
-        self.center_check.toggled.connect(self.parametersChanged.emit)
-        layout.addWidget(self.center_check)
+        self.position_center_check = QCheckBox(
+            "Show positions at center line sweeps"
+            )
+        self.position_center_check.toggled.connect(self.parametersChanged.emit)
+        layout.addWidget(self.position_center_check)
 
         # 5. XBPM positions without suppression
         self.xbpm_raw_check = QCheckBox(
-            "XBPM positions without suppression (-r)"
+            "XBPM positions without suppression"
         )
         self.xbpm_raw_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.xbpm_raw_check)
 
         # 6. Calculate XBPM positions (scaled)
-        self.xbpm_check = QCheckBox("Calculate XBPM positions (-x)")
-        self.xbpm_check.toggled.connect(self.parametersChanged.emit)
-        layout.addWidget(self.xbpm_check)
+        self.xbpm_calc_check = QCheckBox(
+            "Calculate XBPM positions"
+            )
+        self.xbpm_calc_check.toggled.connect(self.parametersChanged.emit)
+        layout.addWidget(self.xbpm_calc_check)
 
         # Button row for "All" option
         layout.addSpacing(10)
@@ -190,10 +198,10 @@ class ParameterPanel(QWidget):
         boxes = (
                 self.bpm_check,
                 self.blademap_check,
-                self.central_check,
-                self.center_check,
+                self.blade_central_check,
+                self.position_center_check,
                 self.xbpm_raw_check,
-                self.xbpm_check,
+                self.xbpm_calc_check,
             )
         checked = not all(box.isChecked() for box in boxes)
 
@@ -239,9 +247,9 @@ class ParameterPanel(QWidget):
                 int(self.roi_h_spin.value()),
                 ],
             'show_blademap'         : self.blademap_check.isChecked(),
-            'show_centralsweep'     : self.central_check.isChecked(),
-            'show_bladecenter'      : self.center_check.isChecked(),
-            'show_xbpmpositions'    : self.xbpm_check.isChecked(),
+            'show_centralsweep'     : self.blade_central_check.isChecked(),
+            'show_bladecenter'      : self.position_center_check.isChecked(),
+            'show_xbpmpositions'    : self.xbpm_calc_check.isChecked(),
             'show_bpmpositions'     : self.bpm_check.isChecked(),
             'show_xbpmpositionsraw' : self.xbpm_raw_check.isChecked(),
 

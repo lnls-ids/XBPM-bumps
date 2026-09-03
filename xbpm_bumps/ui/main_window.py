@@ -84,7 +84,7 @@ class XBPMMainWindow(QMainWindow):
                 self.runtime_prm,
             )
         except Exception as exc:
-            msg = f"{str(exc)}\n(workdata: {type(self.workdata)})"
+            msg = f"{str(exc)}"   # + "\n(workdata: {type(self.workdata)})"
             self.show_error("Analysis failed", msg)
             return
         finally:

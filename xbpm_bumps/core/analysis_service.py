@@ -24,7 +24,23 @@ class AnalysisService:
             analysis=analysis,
         )
 
-        # Blade center is necessary for the suppression matrix.
+        # BPM tab.
+        if runtime_prm.show_bpmpositions:
+            bprocessor = BPMProcessor(
+                raw_data=workdata.raw_data,
+                prm_bml=workdata.prm,
+                )
+            analysis.bpm = bprocessor.calculate_positions()
+
+        # Blade map.
+        if runtime_prm.show_blademap:
+            analysis.blademap = DStr.BladeMap(
+                prm=workdata.prm,
+                blades=workdata.raw_data.blade_avg.blades,
+                pos=workdata.raw_data.blade_avg.pos_nom
+            )
+
+        # Blades at center are necessary for the suppression matrix.
         if runtime_prm.show_bladecenter:
             analysis.bladecenter = xprocessor.analyze_blade_centers()
 
@@ -39,24 +55,11 @@ class AnalysisService:
         if needs_sweeps:
             analysis.centralsweeps = xprocessor.analyze_central_sweeps()
 
+        # XBPM positions calculation.
         if (
             runtime_prm.show_xbpmpositionsraw
             or runtime_prm.show_xbpmpositions
             ):
             analysis.positions = xprocessor.xbpm_position_calculation()
-
-        if runtime_prm.show_blademap:
-            analysis.blademap = DStr.BladeMap(
-                prm=workdata.prm,
-                blades=workdata.raw_data.blade_avg.blades,
-                pos=workdata.raw_data.blade_avg.pos_nom
-            )
-
-        if runtime_prm.show_bpmpositions:
-            bprocessor = BPMProcessor(
-                raw_data=workdata.raw_data,
-                prm_bml=workdata.prm,
-                )
-            analysis.bpm = bprocessor.calculate_positions()
 
         return analysis

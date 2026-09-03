@@ -1,10 +1,10 @@
 """Constants for XBPM analysis."""
 
-FILE_EXTENSION = ".pickle"  # Data file type.
-ROI_SIZE_V = 5              # Default vertical ROI number of sites (lines).
-ROI_SIZE_H = 5              # Default horizontal ROI number of sites (columns).
-FIGDPI = 300                # Figure dpi saving parameter.
-MAX_RAD_ANGLE = 20.0        # Maximum angle of bumps in mrad.
+FILE_EXTENSION = ".h5"    # Data file type.
+ROI_SIZE_V = 5            # Default vertical ROI number of sites (lines).
+ROI_SIZE_H = 5            # Default horizontal ROI number of sites (columns).
+FIGDPI = 300              # Figure dpi saving parameter.
+MAX_RAD_ANGLE = 20.0      # Maximum angle of bumps in mrad.
 
 HELP_DESCRIPTION = (
 """

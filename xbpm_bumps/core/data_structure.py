@@ -8,6 +8,7 @@ from typing import List, Optional
 
 import h5py
 import numpy as np
+import xarray as xr
 
 # from xbpm_bumps.core.config import Config
 from .config import Config
@@ -217,36 +218,38 @@ class Blades:
                     and bottom out blades
     sto, sti, sbi, sbo: standard deviations of the respective currents
     """
-    to  : np.ndarray
-    ti  : np.ndarray
-    bi  : np.ndarray
-    bo  : np.ndarray
-    sto : np.ndarray
-    sti : np.ndarray
-    sbi : np.ndarray
-    sbo : np.ndarray
-    y   : np.ndarray
-    x   : np.ndarray
+    to      : np.ndarray
+    ti      : np.ndarray
+    bi      : np.ndarray
+    bo      : np.ndarray
+    sto     : np.ndarray
+    sti     : np.ndarray
+    sbi     : np.ndarray
+    sbo     : np.ndarray
+    pos_nom : Positions
 
     @classmethod
     def from_hdf5(cls,
                   avg_grp: h5py.Group,
-                  pos_nom: Positions
                   ) -> "Blades":
         """Create a Blades instance from an HDF5 group."""
         datanames = avg_grp.dtype.names
 
         # Check for required datasets in the HDF5 group.
-        blades = ['to_mean', 'ti_mean', 'bi_mean', 'bo_mean',
+        blade_titles = ['to_mean', 'ti_mean', 'bi_mean', 'bo_mean',
                   'to_err',  'ti_err',  'bi_err',  'bo_err']
-        for blade in blades:
+        for blade in blade_titles:
             if blade not in datanames:
                 raise ValueError(
                     " WARNING: while reading Average Blade Currents from HDF5"
                     f" file:\n Missing '{blade}' dataset in HDF5 group.")
 
-        blds = cls._sort_by_grid(avg_grp, pos_nom)
-        return cls(**blds)
+        # Extract nominal positions.
+        pos_nom = Positions.from_hdf5(avg_grp)
+
+        # Extract blades and sort them according to the nominal grid.
+        blades = cls._sort_by_grid(avg_grp, pos_nom)
+        return cls(**blades)
 
     @classmethod
     def _sort_by_grid(cls,
@@ -254,9 +257,6 @@ class Blades:
                       pos_nom: Positions
                       ) -> dict:
         """Sort the blade data by grid coordinates."""
-        import xarray as xr
-
-        # Create a Dataset with point-wise data
         ds = xr.Dataset(
             {
                 'to'  : ('points', bldata["to_mean"][:]),
@@ -273,17 +273,20 @@ class Blades:
                 'y': ('points', pos_nom.y),
             }
         )
-
         # Convert to a 2D grid by setting a MultiIndex and unstacking
         # This requires that every (y,x) combination appears exactly once,
         # otherwise you'll get NaN for missing combinations.
         ds = ds.set_index(points=['y', 'x']).unstack('points')
-        keys = [
-            'to', 'ti', 'bi', 'bo',
-            'sto', 'sti', 'sbi', 'sbo',
-            'x', 'y'
-            ]
-        return {key: ds[key].values for key in keys}
+
+        # Reshape the coordinate arrays to match the 2D grid.
+        xx = ds['x'].broadcast_like(ds['to']).values
+        yy = ds['y'].broadcast_like(ds['to']).values
+
+        keys   = ['to', 'ti', 'bi', 'bo', 'sto', 'sti', 'sbi', 'sbo']
+        dsdict = {key: ds[key].values for key in keys}
+        dsdict["pos_nom"] = Positions(x=xx, y=yy)
+        return dsdict
+
 
 #
 # Raw data structures.
@@ -307,10 +310,10 @@ class BladeAvgData:
     def from_hdf5(cls, avg_grp) -> "BladeAvgData":
         """Create a BladeAvgData instance from an HDF5 group."""
         # Extract metadata attributes.
-        prm        = {key : val for key, val in avg_grp.attrs.items()}
-        pos_nom    = Positions.from_hdf5(avg_grp)
-        blades     = Blades.from_hdf5(avg_grp, pos_nom=pos_nom)
-        pos_nom_sh = (len(np.unique(pos_nom.y)), len(np.unique(pos_nom.x)))
+        prm         = {key : val for key, val in avg_grp.attrs.items()}
+        blades      = Blades.from_hdf5(avg_grp)
+        pos_nom     = blades.pos_nom
+        pos_nom_sh  = pos_nom.x.shape
         return cls(
             prm=prm,
             pos_nom=pos_nom,
@@ -559,9 +562,11 @@ class BPMAnalysis:
             prm_bml=bl_data.prm,
         )
 
-        rms_diff = RMSGridStatistics.compute(
-            bpm_proc.nom_x, bpm_proc.nom_y,
-            bpm_proc.meas_x, bpm_proc.meas_y,
+        rms_diff = RMSGridStatistics(
+            bpm_proc.nom_x,
+            bpm_proc.nom_y,
+            bpm_proc.meas_x,
+            bpm_proc.meas_y,
             prm.roi
             )
 
