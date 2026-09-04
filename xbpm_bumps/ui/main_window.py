@@ -90,7 +90,6 @@ class XBPMMainWindow(QMainWindow):
         finally:
             self.set_analysis_running(False)
 
-        self.workdata.analysis = analysis
         self.analysis = analysis
         self.log_message("Analysis completed.")
 
@@ -132,11 +131,13 @@ class XBPMMainWindow(QMainWindow):
         open_hdf5_action.triggered.connect(self._on_open_hdf5)
 
         file_menu.addSeparator()
-        export_action = file_menu.addAction("Export…")
-        export_action.triggered.connect(self._on_export_clicked)
-
         export_hdf5_action = file_menu.addAction("Export to HDF5…")
         export_hdf5_action.triggered.connect(self._on_export_hdf5_clicked)
+
+        # WARNING: must be implemented before enabling export to txt/png.
+        export_action = file_menu.addAction("Export to txt/png…")
+        export_action.setEnabled(False)
+        # export_action.triggered.connect(self._on_export_clicked)
 
         file_menu.addSeparator()
         quit_action = file_menu.addAction("Quit")
@@ -230,7 +231,7 @@ class XBPMMainWindow(QMainWindow):
         self.canvases["xbpm_raw_pairwise"] = xbpm_raw_pw_canvas
 
         xbpm_scaled_pw_tab, xbpm_scaled_pw_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(xbpm_scaled_pw_tab, "XBPM Δ/Σ Tr")
+        self.results_tabs.addTab(xbpm_scaled_pw_tab, "XBPM Δ/Σ Sup. Mat.")
         self.canvases["xbpm_scaled_pairwise"] = xbpm_scaled_pw_canvas
 
         xbpm_raw_cr_tab, xbpm_raw_cr_canvas = self._create_canvas_tab()
@@ -238,7 +239,7 @@ class XBPMMainWindow(QMainWindow):
         self.canvases["xbpm_raw_cross"] = xbpm_raw_cr_canvas
 
         xbpm_scaled_cr_tab, xbpm_scaled_cr_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(xbpm_scaled_cr_tab, "XBPM part. Δ/Σ - Tr")
+        self.results_tabs.addTab(xbpm_scaled_cr_tab, "XBPM part. Δ/Σ - LinTr")
         self.canvases["xbpm_scaled_cross"] = xbpm_scaled_cr_canvas
 
         return self.results_tabs
@@ -329,9 +330,6 @@ class XBPMMainWindow(QMainWindow):
             f"(beamline: {self.workbeamline})"
         )
 
-        # Automatically load and display figures after import
-        # self._on_load_hdf5_figures()
-
     def _select_beamline(self) -> str:
         """Centralized beamline selection: returns the chosen beamline."""
         # Set beamline list from dataset keys.
@@ -396,7 +394,6 @@ class XBPMMainWindow(QMainWindow):
         rt_prm.show_centralsweep     = params["show_centralsweep"]
         rt_prm.show_xbpmpositionsraw = params["show_xbpmpositionsraw"]
         rt_prm.show_xbpmpositions    = params["show_xbpmpositions"]
-        
 
     def _create_status_bar(self) -> None:
         """Create status bar with progress indicator."""
@@ -410,79 +407,6 @@ class XBPMMainWindow(QMainWindow):
         self.status_bar.addPermanentWidget(self.progress_bar)
 
         self.status_bar.showMessage("Ready")
-
-    def _prompt_beamline_selection(self, inputfile: str) -> None:
-        """Attempt beamline selection immediately after input file change."""
-        try:
-            self.beamline_prm.inputfile = inputfile
-            # DataReader instantiation and reading now handled by
-            # _read_data_and_select_beamline
-            # Handle beamline result
-            if self.workbeamline:
-                self.log_message(
-                    f"Beamline selected: {self.workbeamline}"
-                )
-                self._update_xbpmdist_from_beamline()
-        except Exception as exc:  # pragma: no cover - defensive
-            self.log_message(f"Beamline preselection failed: {exc}")
-
-    def _create_beamline_selector(self) -> Callable[[list], str | None]:
-        """Create beamline selector function for UI dialog."""
-        def selector(bls: list) -> str | None:
-            if len(bls) == 1:
-                return bls[0]
-            dialog = BeamlineSelectionDialog(sorted(bls))
-            if dialog.exec_() == dialog.Accepted:
-                return dialog.get_selection()
-            return None
-        return selector
-
-    def _log_captured_output(self, log_capture) -> None:
-        """Log captured stdout/stderr output."""
-        output = log_capture.getvalue()
-        if output:
-            for line in output.split('\n'):
-                if line.strip():
-                    self.log_message(line)
-
-    @pyqtSlot(list)
-    def _on_beamline_selection_request(self, beamlines: list):
-        """Show beamline selection dialog on the UI thread."""
-        dialog = BeamlineSelectionDialog(sorted(beamlines))
-        choice = ""
-        if dialog.exec_() == dialog.Accepted:
-            choice = dialog.get_selection() or ""
-        self.analyzer.beamlineSelected.emit(choice)
-
-    @pyqtSlot()
-    def _on_analysis_started(self) -> None:
-        """Handle analysis started signal."""
-        self.set_analysis_running(True)
-        self.log_message("\n" + "=" * 60)
-        self.log_message("Analysis started")
-        self.log_message("=" * 60)
-
-    @pyqtSlot(str)
-    def _on_analysis_progress(self, message: str) -> None:
-        """Handle analysis progress update."""
-        self.status_bar.showMessage(message)
-        self.log_message(f"[PROGRESS] {message}")
-
-    @pyqtSlot(dict)
-    def _on_analysis_complete(self, results: dict) -> None:
-        """Handle analysis completion."""
-        self._last_results = results
-        self.set_analysis_running(False)
-        self.log_message("=" * 60)
-        self.log_message("Analysis completed successfully!")
-        self.log_message("=" * 60 + "\n")
-
-        self._update_canvases(results)
-        self.results = results
-        self.results['_source'] = 'analysis'
-        self._refresh_analysis_info()
-
-        self.status_bar.showMessage("Analysis complete", 5000)
 
     @pyqtSlot()
     def _on_export_clicked(self) -> None:
@@ -502,7 +426,7 @@ class XBPMMainWindow(QMainWindow):
 
             # Choose base filename prefix
             default_name = (
-                f"xbpm_{self.analyzer.app.prm.beamline}.dat"
+                f"xbpm_{self.workbeamline}.dat"
             )
             path, _ = QFileDialog.getSaveFileName(
                 self,
@@ -521,20 +445,20 @@ class XBPMMainWindow(QMainWindow):
             exported_any = False
 
             # Always export suppression matrices (independent of checkboxes)
-            exported_any |= self._export_suppression_matrices(prefix, results)
+            # exported_any |= self._export_suppression_matrices(prefix, results)
 
-            # Always export BPM positions when they were computed
-            exported_any |= self._export_bpm_positions(prefix, results)
+            # # Always export BPM positions when they were computed
+            # exported_any |= self._export_bpm_positions(prefix, results)
 
-            # Export XBPM data and figures for both raw and scaled scopes
-            exported_any |= self._export_xbpm_positions('raw', prefix,
-                                                        params, results)
-            exported_any |= self._export_xbpm_positions('scaled', prefix,
-                                                        params, results)
+            # # Export XBPM data and figures for both raw and scaled scopes
+            # exported_any |= self._export_xbpm_positions('raw', prefix,
+            #                                             params, results)
+            # exported_any |= self._export_xbpm_positions('scaled', prefix,
+            #                                             params, results)
 
             # Export other analysis figures and data
-            exported_any |= self._export_other_figures(prefix, params, results)
-            exported_any |= self._export_analysis_info(prefix)
+            # exported_any |= self._export_other_figures(prefix, params, results)
+            # exported_any |= self._export_analysis_info(prefix)
 
             if not exported_any:
                 QMessageBox.information(
@@ -556,272 +480,7 @@ class XBPMMainWindow(QMainWindow):
         except Exception as exc:  # pragma: no cover
             self.show_error("Export Failed", str(exc))
 
-    @pyqtSlot()
-    def _on_export_hdf5_clicked(self) -> None:
-        """Export data to HDF5 file (with or without analysis results)."""
-        try:
-            # Ensure data is loaded (analysis is optional)
-            if (not hasattr(self, 'analyzer') or not self.analyzer.app
-                or not hasattr(self.analyzer.app, 'data')):
-                QMessageBox.warning(
-                    self,
-                    "No Data Loaded",
-                    (
-                        "Please load data first.\n"
-                        "Use 'Open Directory' to load blade measurement data."
-                    ),
-                )
-                return
-
-            default_name = (
-                f"xbpm_{self.analyzer.app.prm.beamline or 'export'}.h5"
-            )
-            path, _ = QFileDialog.getSaveFileName(
-                self,
-                "Export to HDF5",
-                default_name,
-                "HDF5 Files (*.h5 *.hdf5);;All Files (*)",
-            )
-            if not path:
-                return
-
-            results = getattr(self, '_last_results', {}) or {}
-
-            # Export using current data and last results
-            from ..core.exporters import Exporter
-            exporter = Exporter(self.analyzer.app.prm)
-
-            # Include raw_data for complete re-analysis capability
-            raw_data = getattr(self.analyzer.app.reader, 'raw_data', None)
-            exporter.write_hdf5(path, self.analyzer.app.data, results,
-                                include_figures=True, raw_data=raw_data)
-
-            self.log_message(f"HDF5 export written: {path}")
-            QMessageBox.information(
-                self,
-                "Export Complete",
-                "Exported analysis and figures to HDF5.",
-            )
-        except Exception as exc:  # pragma: no cover
-            self.show_error("Export to HDF5 Failed", str(exc))
-
-    def _on_load_hdf5_figures(self, hdf5_path: str) -> None:
-        """Load figures from HDF5 file and display them.
-
-        Args:
-            hdf5_path: Path to the HDF5 file.
-        """
-        try:
-            self.beamline_prm.inputfile = hdf5_path
-            from xbpm_bumps.core.reader_hdf5 import HDF5FigureReconstructor
-            reconstructor = HDF5FigureReconstructor(hdf5_path)
-            figures = reconstructor.load_figures()
-            if not figures:
-                self.log_message("No figures found in HDF5 file")
-                return
-            self._display_hdf5_figures(figures)
-            self._refresh_analysis_info()
-        except Exception as e:
-            self.log_message(f"Error loading figures from HDF5: {e}")
-
-    def _display_hdf5_figures(self, figures: dict) -> None:
-        """Display loaded HDF5 figures in canvases or separate windows.
-
-        Parameters
-        ----------
-        figures : dict
-            Dictionary of reconstructed figures from HDF5.
-        """
-        # Figures that go in main window canvases
-        inline_specs = [
-            ('blade_figure', 'blade', "Loaded blade map from HDF5"),
-            ('sweeps_figure', 'sweeps',
-             "Loaded sweeps figure from HDF5"),
-            ('blades_center_figure', 'blades_center',
-             "Loaded blades center from HDF5"),
-            ('bpm_figure', 'bpm', "Loaded BPM positions from HDF5"),
-        ]
-
-        # Figures that need separate windows or tabs (position grids)
-        popup_specs = [
-            ('xbpm_raw_pairwise_figure', 'xbpm_raw_pairwise',
-               "XBPM Raw Δ/Σ"),
-              ('xbpm_raw_cross_figure', 'xbpm_raw_cross',
-               "XBPM Raw Partial Δ/Σ"),
-            ('xbpm_scaled_pairwise_figure', 'xbpm_scaled_pairwise',
-               "XBPM Transf. Δ/Σ"),
-            ('xbpm_scaled_cross_figure', 'xbpm_scaled_cross',
-               "XBPM Transf. Partial Δ/Σ"),
-        ]
-
-        # Display inline figures in main window
-        for fig_key, canvas_key, msg in inline_specs:
-            if fig_key in figures:
-                canvas = self.canvases.get(canvas_key)
-                if canvas:
-                    self._embed_figure(canvas, figures[fig_key])
-                    self.log_message(msg)
-
-        # Display position grid figures in tabs
-        for fig_key, canvas_key, title in popup_specs:
-            if fig_key in figures:
-                canvas = self.canvases.get(canvas_key)
-                if canvas:
-                    self._embed_figure(canvas, figures[fig_key])
-                    self.log_message(f"Loaded {title} in tab")
-
-    def _show_figure_window(self, fig, title: str) -> None:
-        """Display matplotlib figure in a separate window.
-
-        Parameters
-        ----------
-        fig : matplotlib.figure.Figure
-            The figure to display.
-        title : str
-            Window title.
-        """
-        try:
-            from matplotlib.backends.backend_qt5agg import (
-                FigureCanvasQTAgg as FigureCanvas
-            )
-            from PyQt5.QtWidgets import QDialog, QVBoxLayout
-
-            dialog = QDialog(self)
-            dialog.setWindowTitle(title)
-            dialog.resize(1400, 600)
-
-            layout = QVBoxLayout()
-            canvas = FigureCanvas(fig)
-            layout.addWidget(canvas)
-            dialog.setLayout(layout)
-
-            dialog.show()
-        except Exception as e:
-            self.log_message(f"Error displaying {title}: {e}")
-
-    @pyqtSlot()
-    def _on_help_clicked(self) -> None:
-        """Open Help dialog with program guidance (non-blocking)."""
-        try:
-            if not hasattr(self, '_help_dialog') or self._help_dialog is None:
-                self._help_dialog = HelpDialog(self)
-            self._help_dialog.show()
-            self._help_dialog.raise_()
-            self._help_dialog.activateWindow()
-            self.log_message("Help dialog opened")
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.exception("Failed to open Help dialog")
-            self.show_error("Help", f"Could not open Help: {exc}")
-
-    def _export_suppression_matrices(self, prefix: str,
-                                      results: dict) -> bool:
-        """Export both suppression matrices unconditionally.
-
-        Writes:
-          * ``<prefix>_supmat_standard.dat``  – fixed 1/-1 matrix
-          * ``<prefix>_supmat_calculated.dat`` – matrix fitted from slopes
-
-        Args:
-            prefix: Export filename prefix.
-            results: Results dict from last analysis run.
-
-        Returns:
-            True if at least one matrix was written.
-        """
-        from ..core.exporters import Exporter
-
-        exporter  = Exporter(self.analyzer.app.prm)
-        outdir    = os.path.dirname(prefix) or '.'
-        wrote_any = False
-
-        # --- Standard (1/-1) suppression matrix ---
-        supmat_std, _ = Config.standard_suppression_matrix()
-        std_path = os.path.join(
-            outdir,
-            f"xbpm_supmat_standard_{self.analyzer.app.prm.beamline}.dat"
-        )
-        exporter.write_supmat(supmat_std, write_file=True, outpath=std_path)
-        logger.info("Standard suppression matrix saved to %s", std_path)
-        wrote_any = True
-
-        # --- Calculated (slope-fitted) suppression matrix ---
-        supmat_calc = results.get('supmat')
-        if supmat_calc is None:
-            # Compute directly from processor if analysis was run
-            try:
-                supmat_calc, stddevmat_calc = (
-                    self.analyzer.app.processor.suppression_matrix(
-                    showmatrix=False, nosuppress=False
-                )
-                )
-            except Exception as exc:
-                logger.warning("Could not compute calculated supmat: %s", exc)
-                stddevmat_calc = None
-        else:
-            stddevmat_calc = results.get('stddevmat')
-
-        if supmat_calc is not None:
-            calc_path = os.path.join(
-                outdir,
-                f"xbpm_supmat_calculated_{self.analyzer.app.prm.beamline}.dat"
-            )
-            exporter.write_supmat(supmat_calc, write_file=True,
-                                  outpath=calc_path,
-                                  stddevmat=stddevmat_calc)
-            logger.info("Calculated suppression matrix saved to %s",
-                        calc_path)
-
-        return wrote_any
-
-    def _write_position_info_file(self, path: str, calc_type: str, sup: str,
-                                  scales: dict, stats: dict) -> None:
-        """Write scale coefficients and statistics to a labeled text file."""
-        beamline = self.analyzer.app.prm.beamline
-        with open(path, 'w') as fp:
-            fp.write("# Scaling coefficients and statistics\n")
-            fp.write(
-                f"# Beamline: {beamline}"
-                f" | Type: positions / {calc_type} / {sup}\n"
-            )
-
-            if self.beamline_prm.scalepolydeg == 2:
-                fp.write("qx           ="
-                         f" {float(scales.get('qx', 1)):.6f}\n")
-                fp.write("sqx          ="
-                         f" {float(scales.get('sqx', 0)):.6f}\n")
-
-            fp.write(f"kx           = {float(scales.get('kx', 1)):.6f}\n")
-            fp.write(f"skx          = {float(scales.get('skx', 0)):.6f}\n")
-            fp.write(f"dx           = {float(scales.get('dx', 0)):.6f}\n")
-            fp.write(f"sdx          = {float(scales.get('sdx', 0)):.6f}\n")
-
-            if self.beamline_prm.scalepolydeg == 2:
-                fp.write("qy           ="
-                         f" {float(scales.get('qy', 1)):.6f}\n")
-                fp.write("sqy          ="
-                         f" {float(scales.get('sqy', 0)):.6f}\n")
-            fp.write(f"ky           = {float(scales.get('ky', 1)):.6f}\n")
-            fp.write(f"sky          = {float(scales.get('sky', 0)):.6f}\n")
-            fp.write(f"dy           = {float(scales.get('dy', 0)):.6f}\n")
-            fp.write(f"sdy          = {float(scales.get('sdy', 0)):.6f}\n")
-
-            if stats:
-                fp.write("u\n# Position differences statistics ($\\mu$m)\n")
-                fp.write("RMS H diff.     = "
-                         f"{float(stats.get('sigma_h', 0)):.6f}  um\n")
-                fp.write("RMS V diff.     = "
-                         f"{float(stats.get('sigma_v', 0)):.6f}  um\n")
-                fp.write("RMS Total diff. = "
-                         f"{float(stats.get('sigma_total', 0)):.6f}  um\n")
-                fp.write("Max RMS H diff. = "
-                         f"{float(stats.get('diff_max_h', 0)):.6f}  um\n")
-                fp.write("Max RMS V diff. = "
-                         f"{float(stats.get('diff_max_v', 0)):.6f}  um\n")
-                fp.write("Min RMS H diff. = "
-                         f"{float(stats.get('diff_min_h', 0)):.6f}  um\n")
-                fp.write("Min RMS V diff. = "
-                         f"{float(stats.get('diff_min_v', 0)):.6f}  um\n")
-
+    # Print quality export helper, for later reuse.
     def _save_figure_for_export(self, fig, path: str) -> None:
         """Save figure with print-friendly typography without changing UI use.
 
@@ -912,230 +571,71 @@ class XBPMMainWindow(QMainWindow):
 
         fig.set_size_inches(original_size[0], original_size[1], forward=False)
 
-    def _export_xbpm_positions(self, scope: str, prefix: str,
-                               params: dict,
-                               results: dict) -> bool:
-        """Export XBPM positions and figures for a given scope (raw or scaled).
-
-        Args:
-            scope: 'raw' for raw positions, 'scaled' for suppression-corrected.
-            prefix: Export filename prefix.
-            params: Parameter dictionary from UI.
-            results: Last analysis results dictionary.
-
-        Returns:
-            True if export occurred, False otherwise.
-        """
-        # Check parameter for this scope
-        param_key = 'xbpmpositionsraw' if scope == 'raw' else 'xbpmpositions'
-        if not params.get(param_key):
-            return False
-
-        from ..core.exporters import Exporter
-
-        exporter = Exporter(self.analyzer.app.prm)
-        result_key = f'positions_{scope}_full'
-        result_data = results.get(result_key)
-        if not result_data:
-            logger.warning("%s XBPM export skipped: no cached analysis data.",
-                          scope.capitalize())
-            return False
-
-        exporter.data_dump_with_prefix(
-            prefix,
-            self.analyzer.app.data,
-            result_data['positions'],
-            sup=scope,
-        )
-
-        # Save figures
-        pair_fig_key = f'xbpm_{scope}_pairwise_figure'
-        pairwise_fig = (result_data.get('pairwise_figure') or
-                        results.get(pair_fig_key))
-        if pairwise_fig is not None:
-            fig_pair = os.path.join(
-                os.path.dirname(prefix),
-                f"xbpm_positions_pair_{scope}_{self.analyzer.app.prm.beamline}.png"
+    @pyqtSlot()
+    def _on_export_hdf5_clicked(self) -> None:
+        """Export data to HDF5 file (with or without analysis results)."""
+        # Ensure data is loaded (analysis is optional)
+        if self.workdata is None:
+            QMessageBox.warning(
+                self,
+                "No Data Loaded",
+                (
+                    "Please load data first.\n"
+                    "Use 'Open HDF5 file' to load blade measurement data."
+                ),
             )
-            self._save_figure_for_export(pairwise_fig, fig_pair)
-            logger.info("Pairwise figure saved to %s", fig_pair)
+            return
 
-        cross_fig_key = f'xbpm_{scope}_cross_figure'
-        cross_fig = (result_data.get('cross_figure') or
-                     results.get(cross_fig_key))
-        if cross_fig is not None:
-            fig_cross = os.path.join(
-                os.path.dirname(prefix),
-                f"xbpm_positions_cross_{scope}_{self.analyzer.app.prm.beamline}.png"
-            )
-            self._save_figure_for_export(cross_fig, fig_cross)
-            logger.info("Cross figure saved to %s", fig_cross)
-
-        # Export scaling factors and statistics
-        scales = result_data.get('scales') or {}
-        stats = result_data.get('xbpm_stats') or {}
-        bl = self.analyzer.app.prm.beamline
-        for calc_type, stats_key in (('pair', 'pairwise'), ('cross', 'cross')):
-            calc_scales = scales.get(calc_type)
-            if calc_scales:
-                info_path = os.path.join(
-                    os.path.dirname(prefix),
-                    f"xbpm_positions_{calc_type}_{scope}_{bl}_info.dat"
-                )
-                self._write_position_info_file(
-                    info_path, calc_type, scope,
-                    calc_scales, stats.get(stats_key) or {}
-                )
-                logger.info("Info file saved to %s", info_path)
-
-        return True
-
-    def _export_bpm_positions(self, prefix: str, results: dict) -> bool:
-        """Export BPM positions to a text file (always when data is available).
-
-        Args:
-            prefix: Export filename prefix (directory is derived from it).
-            results: Last analysis results dictionary.
-
-        Returns:
-            True if export occurred, False otherwise.
-        """
-        bpm_data = results.get('positions', {}).get('bpm')
-        if not bpm_data:
-            return False
-        measured = bpm_data.get('measured')
-        nominal = bpm_data.get('nominal')
-        if measured is None or nominal is None:
-            return False
-
-        from ..core.exporters import Exporter
-        exporter = Exporter(self.analyzer.app.prm)
-        exporter.data_dump_bpm(measured, nominal, prefix=prefix)
-        return True
-
-    def _export_analysis_info(self, prefix: str) -> bool:
-        """Export analysis info text shown in the read-only panel."""
-        if not hasattr(self, 'analysis_info') or self.analysis_info is None:
-            return False
-
-        text = (self.analysis_info.toPlainText() or "").strip()
-        if not text:
-            return False
-
-        info_path = os.path.join(
-            os.path.dirname(prefix),
-            f"xbpm_analysis_info_{self.analyzer.app.prm.beamline}.txt"
-        )
-        with open(info_path, 'w') as fp:
-            fp.write(text + "\n")
-        logger.info("Analysis info saved to %s", info_path)
-        return True
-
-    def _export_other_figures(self, prefix: str, params: dict,
-                              results: dict) -> bool:
-        """Export analysis figures (blade map, sweeps, etc) and sweeps data."""
-        exported = self._export_simple_figures(prefix, params, results)
-        if params.get('centralsweep'):
-            exported |= self._export_central_sweeps(prefix, results)
-        return exported
-
-    def _export_simple_figures(self, prefix: str, params: dict,
-                               results: dict) -> bool:
-        """Save blade-map, blades-at-center, and BPM figures."""
-        exported = False
-        beamline = self.analyzer.app.prm.beamline
-        figure_exports = [
-            ('showblademap', 'blade_figure',
-             f'xbpm_blademap_{beamline}.png'),
-            ('showbladescenter', 'blades_center_figure',
-             f'xbpm_blades_center_{beamline}.png'),
-        ]
-        for option_key, result_key, filename in figure_exports:
-            if not params.get(option_key):
-                continue
-            fig = results.get(result_key)
-            if fig is None:
-                continue
-            fig_path = os.path.join(os.path.dirname(prefix), filename)
-            self._save_figure_for_export(fig, fig_path)
-            logger.info("Figure saved to %s", fig_path)
-            exported = True
-        # BPM positions: always export the figure when it was computed
-        bpm_fig = results.get('bpm_figure')
-        if bpm_fig is not None:
-            fig_path = os.path.join(
-                os.path.dirname(prefix),
-                f'xbpm_bpm_positions_{beamline}.png'
-            )
-            self._save_figure_for_export(bpm_fig, fig_path)
-            logger.info("Figure saved to %s", fig_path)
-            exported = True
-        return exported
-
-    def _export_central_sweeps(self, prefix: str, results: dict) -> bool:
-        """Save central-sweeps figure and blade-current .dat files."""
-        exported = False
-        beamline = self.analyzer.app.prm.beamline
-        outdir = os.path.dirname(prefix)
-
-        fig = results.get('sweeps_figure')
-        if fig is not None:
-            fig_path = os.path.join(
-                outdir, f'xbpm_central_sweeps_{beamline}.png'
-            )
-            self._save_figure_for_export(fig, fig_path)
-            logger.info("Figure saved to %s", fig_path)
-            exported = True
-
-        sweeps_data = results.get('sweeps_data')
-        if not sweeps_data or len(sweeps_data) < 4:
-            if sweeps_data:
-                logger.warning("Sweeps data missing expected arrays")
-            return exported
-
-        range_h, range_v, blades_h, blades_v = sweeps_data[:4]
         try:
-            exported |= self._save_sweep_dat(
-                outdir, f'xbpm_central_sweeps_horizontal_{beamline}.dat',
-                range_h, blades_h, "range_h"
+            default_name = (
+                f"xbpm_{self.workbeamline}.h5"
             )
-            exported |= self._save_sweep_dat(
-                outdir, f'xbpm_central_sweeps_vertical_{beamline}.dat',
-                range_v, blades_v, "range_v"
+            path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export to HDF5",
+                default_name,
+                "HDF5 Files (*.h5 *.hdf5);;All Files (*)",
             )
-        except Exception:
-            logger.exception("Failed to save central sweeps data")
-        return exported
+            if not path:
+                return
 
-    @staticmethod
-    def _save_sweep_dat(outdir: str, filename: str, axis_range,
-                        blades, range_label: str) -> bool:
-        """Write a single sweep axis to a .dat file; return True if written."""
-        if not isinstance(blades, dict):
-            return False
-        arrays = [blades.get(k) for k in ("to", "ti", "bi", "bo")]
-        if not all(arr is not None for arr in arrays):
-            return False
-        path = os.path.join(outdir, filename)
-        np.savetxt(
-            path,
-            np.column_stack([axis_range, *arrays]),
-            header=f"{range_label} to ti bi bo",
-            fmt="%.6f",
-        )
-        logger.info("Sweeps data saved to %s", path)
-        return True
+            # Export using current data and last results
+            from ..core.exporters import Exporter
+            exporter = Exporter(self.workbeamline)
 
-    @pyqtSlot(str, str)
-    def _on_analysis_error(self, title: str, message: str):
-        """Handle analysis error.
+            # Include raw_data for complete re-analysis capability
+            raw_data = getattr(self.workdata, 'raw_data', None)
+            exporter.write_hdf5(
+                path,
+                self.workdata,
+                self.analysis,
+                include_figures=True,
+                raw_data=raw_data
+                )
 
-        Args:
-            title: Error dialog title.
-            message: Error message.
-        """
-        self.set_analysis_running(False)
-        self.show_error(title, message)
+            self.log_message(f"HDF5 export written: {path}")
+            QMessageBox.information(
+                self,
+                "Export Complete",
+                "Exported analysis and figures to HDF5.",
+            )
+        except Exception as exc:  # pragma: no cover
+            self.show_error("Export to HDF5 Failed", str(exc))
+
+    @pyqtSlot()
+    def _on_help_clicked(self) -> None:
+        """Open Help dialog with program guidance (non-blocking)."""
+        try:
+            if not hasattr(self, '_help_dialog') or self._help_dialog is None:
+                self._help_dialog = HelpDialog(self)
+            self._help_dialog.show()
+            self._help_dialog.raise_()
+            self._help_dialog.activateWindow()
+            self.log_message("Help dialog opened")
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.exception("Failed to open Help dialog")
+            self.show_error("Help", f"Could not open Help: {exc}")
+
 
     @pyqtSlot(bool)
     def set_analysis_running(self, running: bool) -> None:
@@ -1176,144 +676,6 @@ class XBPMMainWindow(QMainWindow):
         canvas = MatplotlibCanvas()
         layout.addWidget(canvas)
         return widget, canvas
-
-    def _update_canvases(self, results: dict) -> None:
-        """Render available results into canvases."""
-        for canvas in self.canvases.values():
-            canvas.clear()
-
-        positions = (results.get('positions', {})
-                     if isinstance(results, dict) else {})
-
-        def _render_position(canvas_key: str, figure_key: str,
-                             position_key: str, title: str) -> None:
-            canvas = self.canvases.get(canvas_key)
-            if canvas is None:
-                return
-            fig = results.get(figure_key)
-            if fig is not None:
-                self._embed_figure(canvas, fig)
-                return
-            pos_data = positions.get(position_key)
-            if pos_data is not None:
-                self._plot_positions(canvas, pos_data, title=title)
-
-        def _render_figure(canvas_key: str, figure_key: str) -> None:
-            canvas = self.canvases.get(canvas_key)
-            fig = results.get(figure_key)
-            if canvas is not None and fig is not None:
-                self._embed_figure(canvas, fig)
-
-        position_specs = [
-            ("xbpm_raw_pairwise", "xbpm_raw_pairwise_figure",
-             "xbpm_raw", "XBPM Raw Pairwise Positions"),
-            ("xbpm_scaled_pairwise", "xbpm_scaled_pairwise_figure",
-             "xbpm_scaled", "XBPM Scaled Pairwise Positions"),
-            ("bpm", "bpm_figure", "bpm", "BPM Positions"),
-        ]
-
-        figure_specs = [
-            ("xbpm_raw_cross", "xbpm_raw_cross_figure"),
-            ("xbpm_scaled_cross", "xbpm_scaled_cross_figure"),
-            ("blade", "blade_figure"),
-            ("sweeps", "sweeps_figure"),
-            ("blades_center", "blades_center_figure"),
-        ]
-
-        for canvas_key, fig_key, pos_key, title in position_specs:
-            _render_position(canvas_key, fig_key, pos_key, title)
-
-        for canvas_key, fig_key in figure_specs:
-            _render_figure(canvas_key, fig_key)
-
-    def _extract_sweeps_meta(self, sweeps_data: list) -> dict:
-        """Extract sweep metadata: positions fits and per-blade fits."""
-        if not sweeps_data or len(sweeps_data) < 8:
-            return {}
-
-        try:
-            (range_h, range_v, blades_h, blades_v, fit_h,
-             fit_v) = sweeps_data[0:2] + sweeps_data[2:4] + sweeps_data[6:8]
-        except Exception:
-            return {}
-
-        meta = {}
-
-        positions = self._extract_sweeps_positions(fit_h, fit_v)
-        if positions:
-            meta['positions'] = positions
-
-        blades = self._extract_sweeps_blades(blades_h, blades_v,
-                                             range_h, range_v)
-        if blades:
-            meta['blades'] = blades
-
-        return meta
-
-    def _extract_sweeps_positions(self, fit_h, fit_v) -> dict:
-        """Extract global fit positions from horizontal and vertical fits."""
-        positions = {}
-        h_meta = self._parse_fit(fit_h)
-        if h_meta:
-            positions['horizontal'] = h_meta
-        v_meta = self._parse_fit(fit_v)
-        if v_meta:
-            positions['vertical'] = v_meta
-        return positions
-
-    def _parse_fit(self, fit: np.ndarray) -> dict:
-        """Parse fit parameters into k and delta values."""
-        try:
-            # Fit can be either [k, delta] or [[k, s_k], [delta, s_delta]].
-            if hasattr(fit, "shape") and fit.shape == (2, 2):
-                return {
-                    'k': float(fit[0][0]),
-                    'delta': float(fit[1][0]),
-                    's_k': float(fit[0][1]),
-                    's_delta': float(fit[1][1]),
-                }
-
-            k_val = (float(fit[0][0])
-                     if hasattr(fit, "__len__") else float(fit[0]))
-            delta_val = (float(fit[1][0])
-                         if hasattr(fit, "__len__") else float(fit[1]))
-            return {'k': k_val, 'delta': delta_val}
-        except Exception:
-            return None
-
-    def _extract_sweeps_blades(self, blades_h, blades_v, range_h,
-                              range_v) -> dict:
-        """Extract per-blade fits from blade data."""
-        blades = {}
-        h_blades = self._fit_blades(blades_h, range_h)
-        if h_blades:
-            blades['horizontal'] = h_blades
-        v_blades = self._fit_blades(blades_v, range_v)
-        if v_blades:
-            blades['vertical'] = v_blades
-        return blades
-
-    def _fit_blades(self, blades_dict: dict,
-                    axis_range: np.ndarray) -> dict:
-        """Fit blade data to extract k and delta for each blade."""
-        if not isinstance(blades_dict, dict) or axis_range is None:
-            return None
-        fits = {}
-        for blade in ('to', 'ti', 'bi', 'bo'):
-            arr = blades_dict.get(blade)
-            if arr is None:
-                continue
-            y = arr[:, 0] if hasattr(arr, 'ndim') and arr.ndim == 2 else arr
-            try:
-                coef = np.polyfit(axis_range, y, deg=1)
-                fits[blade] = {
-                    'k': float(coef[0]),
-                    'delta': float(coef[1])
-                    }
-            except Exception as exc:
-                logger.debug("Failed to fit blade %s: %s", blade, exc)
-                continue
-        return fits or None
 
     def _tab_to_section(self, tab_text: str) -> str:
         text = (tab_text or "").lower()
@@ -1831,49 +1193,6 @@ class XBPMMainWindow(QMainWindow):
         """Update analysis info when the active tab changes."""
         self._refresh_analysis_info(index)
 
-    def _plot_positions(self, canvas: MatplotlibCanvas, data, title: str):
-        """Plot x/y positions; support optional nominal overlay."""
-        try:
-            if isinstance(data, dict):
-                measured = data.get('measured')
-                nominal = data.get('nominal')
-            else:
-                measured = data
-                nominal = None
-
-            if measured is not None:
-                arr = np.array(measured)
-            else:
-                arr = None
-
-            if arr is not None and arr.ndim == 2 and arr.shape[1] >= 2:
-                canvas.ax.scatter(arr[:, 0], arr[:, 1], s=12,
-                                  alpha=0.8, label='Measured')
-                if nominal is not None:
-                    nom = np.array(nominal)
-                    if nom.ndim == 2 and nom.shape[1] >= 2:
-                        canvas.ax.scatter(
-                            nom[:, 0], nom[:, 1], s=24, marker='+',
-                            color='red', label='Nominal'
-                        )
-                canvas.ax.set_xlabel('X')
-                canvas.ax.set_ylabel('Y')
-                canvas.ax.set_title(title)
-                canvas.ax.grid(True, alpha=0.3)
-                if nominal is not None:
-                    canvas.ax.legend()
-            else:
-                canvas.ax.text(
-                    0.5, 0.5, "Unsupported data shape",
-                    ha='center', va='center',
-                    transform=canvas.ax.transAxes)
-        except Exception as exc:  # pragma: no cover - defensive
-            canvas.ax.text(
-                0.5, 0.5, f"Plot error: {exc}",
-                ha='center', va='center',
-                transform=canvas.ax.transAxes)
-        canvas.canvas.draw_idle()
-
     def _embed_figure(self, canvas: MatplotlibCanvas, source_fig):
         """Embed entire figure by replacing canvas figure.
 
@@ -1948,35 +1267,6 @@ class XBPMMainWindow(QMainWindow):
             except Exception:  # noqa: BLE001
                 # Log fallback failure for debugging
                 logger.exception("Fallback figure embed failed")
-
-    def _show_detail_figures(self, results: dict):
-        """Display detailed XBPM position figures in popup windows.
-
-        Opens auxiliary windows for pairwise and cross-blade calculations
-        if available.
-        """
-        figures_to_show = [
-            ('xbpm_raw_pairwise_figure',
-             'XBPM Raw - Δ/Σ Positions'),
-            ('xbpm_raw_cross_figure',
-             'XBPM Raw - Partial Δ/Σ Positions'),
-            ('xbpm_scaled_pairwise_figure',
-             'XBPM Scaled - Δ/Σ Positions'),
-            ('xbpm_scaled_cross_figure',
-             'XBPM Scaled - Partial Δ/Σ Positions'),
-        ]
-
-        found_any = False
-        for fig_key, title in figures_to_show:
-            if fig_key in results and results[fig_key] is not None:
-                self.log_message(f"Opening detail figure: {title}")
-                self._show_figure_in_window(results[fig_key], title)
-                found_any = True
-            else:
-                logger.debug("Figure not found or None: %s", fig_key)
-
-        if not found_any:
-            logger.debug("No detail figures available in results")
 
     def _show_figure_in_window(self, fig, title: str):
         """Display matplotlib figure in a separate popup window.
