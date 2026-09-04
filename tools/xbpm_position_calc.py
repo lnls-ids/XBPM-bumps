@@ -12,7 +12,11 @@ from epics import caget
 from matplotlib.patches import Ellipse
 from siriuspy.clientarch import PVDataSet, Time
 
-EPICS_CA_ADDR_LIST = ["10.0.38.59:62000", "10.30.13.22:62000", "10.30.14.19:62000"]
+EPICS_CA_ADDR_LIST = [
+     "10.0.38.59:62000",
+     "10.30.13.22:62000",
+     "10.30.14.19:62000"
+     ]
 os.environ["EPICS_CA_ADDR_LIST"] = " ".join(EPICS_CA_ADDR_LIST)
 
 BLADES = ["AmplA-Mon", "AmplB-Mon", "AmplC-Mon", "AmplD-Mon"]
@@ -26,33 +30,36 @@ BEAMLINES = {
     "MGN": ["SI-10BCFE", 5.930],
 }
 
-def get_beamline_data(name):
+def get_beamline_data(name: str) -> list:
     for bl_name, bl in BEAMLINES.items():
         if name == bl_name:
             return bl
 
 
-def set_pv_names(prefix, xbpm_number):
+def set_pv_names(prefix: str,
+                 xbpm_number: int
+                 ) -> dict:
     """Set PV names for the specified XBPM number with the given prefix"""
     if xbpm_number not in [1, 2]:
         raise ValueError("XBPM number must be either 1 or 2.")
     
     xbpm_prefix = prefix + ":DI-PBPM-" + str(xbpm_number)
 
-    pvnames = {
-        "BLADES": [],
-        "ADJUST": [],
-        "MATRIX": [],
-    }
-
-    pvnames["BLADES"] = [f"{xbpm_prefix}:{blade}" for blade in BLADES]
-    pvnames["ADJUST"] = [f"{xbpm_prefix}:{adj}" for adj in ADJUST]
+    pvnames = {}
+    pvnames["BLADES"] = [
+        f"{xbpm_prefix}:{blade}"
+        for blade in BLADES
+        ]
+    pvnames["ADJUST"] = [
+        f"{xbpm_prefix}:{adj}"
+        for adj in ADJUST
+        ]
     pvnames["MATRIX"] = xbpm_prefix + ":" + MATRIX
 
     return pvnames
 
 
-def _parse_dates(dt):
+def _parse_dates(dt: datetime) -> list:
     """Parse dates from date string."""
     year, month, day = dt.year, dt.month, dt.day
     hour, minute = dt.hour, dt.minute
@@ -60,7 +67,10 @@ def _parse_dates(dt):
     return [year, month, day, hour, minute]
 
 
-def get_pvdata(pvnames, initdate, enddate, timeout):
+def get_pvdata(pvnames: list,
+               initdate: datetime,
+               enddate: datetime,
+               timeout: int) -> tuple:
     """Fetch data from the EPICS archiver for the given PV names and time range."""
     if isinstance(pvnames, str):
         pvnames = [pvnames]
@@ -79,7 +89,11 @@ def get_pvdata(pvnames, initdate, enddate, timeout):
     return pvs_data, t0, pvs_data[pvnames[0]].timestamp
 
 
-def calculate_positions(blades, adj, matrix, xbpm_number):
+def calculate_positions(blades: list,
+                        adj: list,
+                        matrix: list,
+                        xbpm_number: int
+                        ) -> list:
     ampA = blades[0].value
     ampB = blades[1].value
     ampC = blades[2].value
@@ -116,7 +130,10 @@ def calculate_positions(blades, adj, matrix, xbpm_number):
     return positions
 
 
-def _calculate_angle(xbpm1_pos, xbpm2_pos, xbpms_dist):
+def _calculate_angle(xbpm1_pos: float,
+                     xbpm2_pos: float,
+                     xbpms_dist: float
+                     ) -> float:
     diff = (xbpm2_pos - xbpm1_pos)
 
     if xbpms_dist == 0:
@@ -124,7 +141,11 @@ def _calculate_angle(xbpm1_pos, xbpm2_pos, xbpms_dist):
     
     return diff / xbpms_dist
 
-def plot_simple_data(result, idt, edt, beamline, xnum):
+def plot_simple_data(result: list,
+                     idt: datetime,
+                     edt: datetime,
+                     beamline: str,
+                     xnum: int) -> None:
     x_data, y_data, time = [], [], []
 
     ndots  = len(result)
@@ -138,7 +159,8 @@ def plot_simple_data(result, idt, edt, beamline, xnum):
         count += ninterval
 
     fig, (ax_x, ax_y) = plt.subplots(2, 1, figsize=(8, 5))
-    fig.suptitle(f"{beamline} XBPM{xnum} X and Y calculated positions - {idt.date()}")
+    fig.suptitle(f"{beamline} XBPM{xnum} X and Y"
+                 f" calculated positions - {idt.date()}")
 
     ax_x.plot(time, x_data, color='red',label='X position')
     ax_x.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
@@ -158,7 +180,12 @@ def plot_simple_data(result, idt, edt, beamline, xnum):
     plt.show()
     
 
-def plot_comparison_data(xbpm1_pos, xbpm2_pos, idt, edt, beamline, xbpms_dist):
+def plot_comparison_data(xbpm1_pos: list,
+                         xbpm2_pos: list,
+                         idt: datetime,
+                         edt: datetime,
+                         beamline: str,
+                         xbpms_dist: float) -> None:
     x1_data, y1_data = [], []
     x2_data, y2_data = [], []
     angle_x, angle_y = [], []
@@ -316,9 +343,12 @@ def plot_comparison_data(xbpm1_pos, xbpm2_pos, idt, edt, beamline, xbpms_dist):
     plt.tight_layout()  
     plt.show()
 
-def cmd_args():
+
+def cmd_args() -> argparse.Namespace:
     """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description="Read XBPMs positions PVs from EPICS archiver")
+    parser = argparse.ArgumentParser(
+        description="Read XBPMs positions PVs from EPICS archiver"
+        )
 
     parser.add_argument(
         '-b', '--beamline', type=str, required=True,
@@ -348,7 +378,7 @@ def cmd_args():
     return args
 
 
-def main():
+def main() -> None:
     args = cmd_args()
     prefix, xbpms_dist = get_beamline_data(args.beamline)
 
@@ -357,8 +387,19 @@ def main():
         xbpm2_pvnames = set_pv_names(prefix, 2)
 
         # Fetch data for both XBPMs
-        xbpm1_data, _, _ = get_pvdata(xbpm1_pvnames["BLADES"], args.init_date, args.end_date, timeout=10)
-        xbpm2_data, _, _ = get_pvdata(xbpm2_pvnames["BLADES"], args.init_date, args.end_date, timeout=10)
+        xbpm1_data, _, _ = get_pvdata(
+            xbpm1_pvnames["BLADES"],
+            args.init_date,
+            args.end_date,
+            timeout=10
+            )
+
+        xbpm2_data, _, _ = get_pvdata(
+            xbpm2_pvnames["BLADES"],
+            args.init_date,
+            args.end_date,
+            timeout=10
+            )
 
         # Calculate positions for both XBPMs
         xbpm1_pos = calculate_positions(
@@ -375,7 +416,14 @@ def main():
             2
         )
 
-        plot_comparison_data(xbpm1_pos, xbpm2_pos, args.init_date, args.end_date, args.beamline, xbpms_dist)
+        plot_comparison_data(
+            xbpm1_pos,
+            xbpm2_pos,
+            args.init_date,
+            args.end_date,
+            args.beamline,
+            xbpms_dist
+            )
 
     else:
         pvnames = set_pv_names(prefix, args.xbpm_number)
@@ -385,8 +433,20 @@ def main():
         # Fetch data from the EPICS archiver for the specified time range
         data, _, _ = get_pvdata(pvnames["BLADES"], args.init_date, args.end_date, timeout=10)
 
-        positions = calculate_positions(data, adj_data, matrix, args.xbpm_number)
-        plot_simple_data(positions, args.init_date, args.end_date, args.beamline, args.xbpm_number)
+        positions = calculate_positions(
+            data,
+            adj_data,
+            matrix,
+            args.xbpm_number
+            )
+        plot_simple_data(
+            positions,
+            args.init_date,
+            args.end_date,
+            args.beamline,
+            args.xbpm_number
+            )
+
 
 if __name__ == "__main__":
     main()
