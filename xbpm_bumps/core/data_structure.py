@@ -492,6 +492,16 @@ class BeamlineRawData:
 
         return cls(**kwargs)
 
+    @classmethod
+    def to_hdf5(cls,
+                raw_grp  : h5py.Group,
+                beamline : str,
+                bldata  : "BeamlineData" = None) -> int:
+        """Write beamline data to an HDF5 group."""
+        if bldata is not None:
+            bldata.to_hdf5(raw_grp)
+        return 0
+
 
 #
 # Structures for data analysis.
@@ -516,6 +526,39 @@ class RMSStatistics:
     mean_v   : float
     mean_tot : float
 
+    @classmethod
+    def from_hdf5(cls, rms_grp) -> "RMSStatistics":
+        """Create an RMSStatistics instance from an HDF5 group."""
+        return cls(
+            h        = rms_grp['h'][()],
+            v        = rms_grp['v'][()],
+            tot      = rms_grp['tot'][()],
+            min_h    = rms_grp['min_h'][()],
+            max_h    = rms_grp['max_h'][()],
+            min_v    = rms_grp['min_v'][()],
+            max_v    = rms_grp['max_v'][()],
+            mean_h   = rms_grp['mean_h'][()],
+            mean_v   = rms_grp['mean_v'][()],
+            mean_tot = rms_grp['mean_tot'][()]
+        )
+
+    @classmethod
+    def to_hdf5(cls,
+                rms_grp  : h5py.Group,
+                rms  : "RMSStatistics" = None) -> int:
+        """Write RMSStatistics to an HDF5 group."""
+        if rms is not None:
+            rms_grp.require_group('h')[()]        = rms.h
+            rms_grp.require_group('v')[()]        = rms.v
+            rms_grp.require_group('tot')[()]      = rms.tot
+            rms_grp.require_group('min_h')[()]    = rms.min_h
+            rms_grp.require_group('max_h')[()]    = rms.max_h
+            rms_grp.require_group('min_v')[()]    = rms.min_v
+            rms_grp.require_group('max_v')[()]    = rms.max_v
+            rms_grp.require_group('mean_h')[()]   = rms.mean_h
+            rms_grp.require_group('mean_v')[()]   = rms.mean_v
+            rms_grp.require_group('mean_tot')[()] = rms.mean_tot
+        return 0
 
 @dataclass
 class RMSGridStatistics:
@@ -523,6 +566,26 @@ class RMSGridStatistics:
     all      : RMSStatistics   # Full grid statistics.
     roi      : RMSStatistics   # ROI statistics.
     roislice : ROISlice        # ROI slice object.
+
+    @classmethod
+    def from_hdf5(cls, rmsgrid_grp) -> "RMSGridStatistics":
+        """Create an RMSGridStatistics instance from an HDF5 group."""
+        return cls(
+            all      = RMSStatistics.from_hdf5(rmsgrid_grp['all']),
+            roi      = RMSStatistics.from_hdf5(rmsgrid_grp['roi']),
+            roislice = ROISlice.from_hdf5(rmsgrid_grp['roislice'])
+        )
+
+    @classmethod
+    def to_hdf5(cls,
+                rmsgrid_grp  : h5py.Group,
+                rmsgrid  : "RMSGridStatistics" = None) -> int:
+        """Write RMSGridStatistics to an HDF5 group."""
+        if rmsgrid is not None:
+            rmsgrid.all.to_hdf5(rmsgrid_grp.require_group('all'))
+            rmsgrid.roi.to_hdf5(rmsgrid_grp.require_group('roi'))
+            rmsgrid.roislice.to_hdf5(rmsgrid_grp.require_group('roislice'))
+        return 0
 
 
 @dataclass
@@ -534,47 +597,40 @@ class BPMAnalysis:
         bpm : BPM positions (x, y) calculated from measurements.
         nom : Nominal positions at XBPM site extrapolated from bump-angles.
         rms : RMS values of the differences between bpm and nom positions.
-        roi_diffs : estimated standard deviations of the differences between bpm
-            and nom positions.
+        roi_diffs : estimated standard deviations of the differences between
+            bpm and nom positions.
     """
     prm      : BeamlinePrm
     pos_meas : Positions
     rms_diff : RMSGridStatistics
 
     @classmethod
-    def compute(cls, bl_data: "BeamlineData") -> "BPMAnalysis":
-        """Create a BPMAnalysis instance from calculated BPM analysis data.
-        
-        Args:
-            bl_data: BeamlineData instance containing the measured BPM
-                positions and metadata.
-
-        Returns:
-            BPMAnalysis instance with calculated BPM positions and metadata.
-        """
-        # Link to beamline parameters.
-        prm = bl_data.prm
-
-        # Instantiate BPMProcessor to calculate BPM positions.
-        from .processors import BPMProcessor as BPMP
-        bpm_proc = BPMP(
-            raw_data=bl_data.raw_data,
-            prm_bml=bl_data.prm,
-        )
-
-        rms_diff = RMSGridStatistics(
-            bpm_proc.nom_x,
-            bpm_proc.nom_y,
-            bpm_proc.meas_x,
-            bpm_proc.meas_y,
-            prm.roi
-            )
-
+    def from_hdf5(cls, bpm_grp) -> "BPMAnalysis":
+        """Create a BPMAnalysis instance from an HDF5 group."""
+        prm = {key: val for key, val in bpm_grp.attrs.items()}
+        pos_meas = Positions.from_hdf5(bpm_grp)
+        rms_diff = RMSGridStatistics.from_hdf5(bpm_grp['rms_diff'])
         return cls(
-            prm=prm,
-            pos_meas=bpm_proc.measured,
-            rms_diff=rms_diff,
+            prm = prm,
+            pos_meas = pos_meas,
+            rms_diff = rms_diff
             )
+
+    @classmethod
+    def to_hdf5(cls,
+                bpm_grp : h5py.Group,
+                bpm     : "BPMAnalysis" = None
+                ) -> int:
+        """Write BPMAnalysis to an HDF5 group."""
+        if bpm is not None:
+            for key, val in bpm.prm.items():
+                bpm_grp.attrs[key] = val
+            Positions.to_hdf5(bpm_grp, bpm.pos_meas)
+            RMSGridStatistics.to_hdf5(
+                bpm_grp.require_group('rms_diff'),
+                bpm.rms_diff
+                )
+        return 0
 
 
 @dataclass
@@ -683,6 +739,16 @@ class BladeCenterAnalysis:
     bo : BladeLineFit
     pos_nom : Positions
 
+    @classmethod
+    def from_hdf5(cls, bca_grp) -> "BladeCenterAnalysis":
+        """Create a BladeCenterAnalysis instance from an HDF5 group."""
+        return cls(
+            to = BladeLineFit.from_hdf5(bca_grp['to']),
+            ti = BladeLineFit.from_hdf5(bca_grp['ti']),
+            bi = BladeLineFit.from_hdf5(bca_grp['bi']),
+            bo = BladeLineFit.from_hdf5(bca_grp['bo']),
+            pos_nom = Positions.from_hdf5(bca_grp['pos_nom'])
+        )
 
 @dataclass
 class CentralSweepLine:
@@ -835,14 +901,15 @@ class SuppressionMatrix:
         return cls(**kwargs)
 
 
+@dataclass
 class GL2RMatrix:
     """Container for partial delta/sigma transformation matrices.
     
     std   : identity matrix.
     rt_st : rotation plus stretching matrix.
     """
-    std  : np.ndarray = np.identity(2)
-    calc : np.ndarray = np.array([])
+    std  : np.ndarray = field(default_factory=lambda: np.identity(2))
+    calc : np.ndarray = field(default_factory=lambda: np.array([]))
 
 
 @dataclass
@@ -998,6 +1065,29 @@ class DataAnalysis:
             supmat        = supmat,
         )
 
+    @classmethod
+    def to_hdf5(cls, datanl: "DataAnalysis", h5file: h5py.File) -> int:
+        """Serialize a DataAnalysis instance to an HDF5 group."""
+        datanl.attrs['beamline_prm']  = cls.beamline_prm
+        datanl.attrs['bpm']           = cls.bpm
+        datanl.attrs['blademap']      = cls.blademap
+        datanl.attrs['bladecenter']   = cls.bladecenter
+        datanl.attrs['positions']     = cls.positions
+        datanl.attrs['centralsweeps'] = cls.centralsweeps
+        datanl.attrs['scales']        = cls.scales
+        datanl.attrs['supmat']        = cls.supmat
+        try:
+            with h5file as h5f:
+                h5f.create_group(datanl.name)
+        except Exception as e:
+            logging.error("Failed to create HDF5 group"
+                          f" '{datanl.name}': {e}")
+        finally:
+            # Ensure that the HDF5 file is closed properly.
+            if 'h5f' in locals() and h5f:
+                h5f.close()
+        return 0
+
 
 @dataclass
 class BeamlineData:
@@ -1037,7 +1127,7 @@ class BeamlineData:
             kwargs["analysis"] = DataAnalysis()
         return cls(**kwargs)
 
-    def to_hdf5(self, raw: bool = False) -> int:
+    def to_hdf5(self, raw : bool = False) -> int:
         """Serialize the BeamlineData instance to an HDF5 file.
 
         Args:
