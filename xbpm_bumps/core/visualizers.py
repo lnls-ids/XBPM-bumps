@@ -76,7 +76,9 @@ class BPMVisualizer:
                       min(self.bana.rms_diff_roi.shape) == 1))
         gridspec = {'width_ratios': [1, 1, 0.1]} if is_1d else None
         self.fig, bpm_axes = plt.subplots(
-            1, 3, figsize=(18, 6), constrained_layout=True,
+            1, 3,
+            figsize=(18, 6),
+            constrained_layout=True,
             gridspec_kw=gridspec
         )
         # The plotting axes for BPM: all points, roi closeup,
@@ -111,7 +113,8 @@ class BPMVisualizer:
         self.nom_roi_x = self.nom_x[sl_v, sl_h]
         self.nom_roi_y = self.nom_y[sl_v, sl_h]
         self._plot_position_scatter(
-            self.ax_roi, _Title('bpm', 'roi', beamline=self.beamline)
+            self.ax_roi,
+            _Title('bpm', 'roi', beamline=self.beamline)
         )
 
         # Plot differences heatmap with extent mapping

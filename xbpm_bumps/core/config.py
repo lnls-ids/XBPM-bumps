@@ -157,7 +157,8 @@ class Config:
                        graph: str,
                        beamline: Optional[str] = None,
                        rort: str = "",
-                       calc_type: str = "") -> str:
+                       calc_type: str = ""
+                       ) -> str:
         """Return a graph title from the central registry.
 
         Args:
@@ -194,7 +195,10 @@ class Config:
         )
 
     @classmethod
-    def get_position_subject(cls, scope: str, calc_type: str) -> str:
+    def get_position_subject(cls,
+                             scope: str,
+                             calc_type: str
+                             ) -> str:
         """Return normalized subject label for XBPM position metadata.
 
         Examples:
