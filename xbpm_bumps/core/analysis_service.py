@@ -30,7 +30,7 @@ class AnalysisService:
                 raw_data=workdata.raw_data,
                 prm_bml=workdata.prm,
                 )
-            analysis.bpm = bprocessor.calculate_positions()
+            analysis.bpm = bprocessor.bpmanalysis
 
         # Blade map.
         if runtime_prm.show_blademap:

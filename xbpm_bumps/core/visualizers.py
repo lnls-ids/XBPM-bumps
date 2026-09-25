@@ -3,6 +3,7 @@
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import logging
 import os
 
@@ -14,6 +15,7 @@ from .config import Config
 from .data_structure import BPMAnalysis
 from .data_structure import BeamlinePrm
 from .data_structure import CentralSweepLine
+from .data_structure import DataAnalysis
 
 _Title = Config.get_plot_title   # shorthand used throughout this module
 
@@ -39,6 +41,62 @@ matplotlib.rcParams['legend.handletextpad'] = 0.8
 
 # Module logger
 logger = logging.getLogger(__name__)
+
+
+def render_data_analysis(
+        analysis: DataAnalysis,
+        prm: BeamlinePrm
+        ) -> dict[str, Figure]:
+    """Return one Figure per tab key for every populated analysis field."""
+    figures: dict[str, Figure] = {}
+
+    if analysis.bpm is not None:
+        figures["bpm"] = (
+            BPMVisualizer(analysis.bpm).plot_bpm_positions()
+            )
+
+    if analysis.blademap is not None:
+        figures["blade"] = (
+            BladeMapVisualizer(analysis.blademap).show()
+            )
+
+    cs = analysis.centralsweeps
+    if cs is not None:
+        if cs.h is not None or cs.v is not None:
+            figures["blades_center"] = (
+                BladeCurrentVisualizer.plot_blade_center_from_centralsweeps(
+                    cs, beamline=prm.beamline))
+        figures["sweeps"] = SweepVisualizer.plot_from_arrays(
+            cs.h, cs.v, None, xbpm_dist=prm.xbpmdist)
+
+    pos = analysis.positions
+    if pos is not None:
+        figures["xbpm_raw_pairwise"]    = (
+            PositionVisualizer(prm).show_from_calc(
+                pos.nom,
+                pos.pairw.pos_std
+                )
+            )
+        figures["xbpm_scaled_pairwise"] = (
+            PositionVisualizer(prm).show_from_calc(
+                pos.nom,
+                pos.pairw.pos_trn
+                )
+            )
+        figures["xbpm_raw_cross"]       = (
+            PositionVisualizer(prm).show_from_calc(
+                pos.nom,
+                pos.cross.pos_std
+                )
+            )
+        figures["xbpm_scaled_cross"]    = (
+            PositionVisualizer(prm).show_from_calc(
+                pos.nom,
+                pos.cross.pos_trn
+                )
+            )
+
+    return figures
 
 
 class BPMVisualizer:
@@ -463,9 +521,12 @@ class BladeCurrentVisualizer:
         return fig
 
     @staticmethod
-    def plot_blade_center_from_dicts(blades_h: dict, blades_v: dict,
-                                     range_h: np.ndarray, range_v: np.ndarray,
-                                     beamline: str = ""):
+    def plot_blade_center_from_dicts(blades_h: dict,
+                                     blades_v: dict,
+                                     range_h: np.ndarray,
+                                     range_v: np.ndarray,
+                                     beamline: str = ""
+                                     ) -> Optional[Figure]:
         """Generate blade currents at center plots (canonical version).
 
         This is the tuned plotting implementation used by both live analysis
@@ -671,7 +732,6 @@ class SweepVisualizer:
     def plot_from_arrays(
         sweepline_h: CentralSweepLine,
         sweepline_v: CentralSweepLine,
-        nom_pos_h: np.ndarray,
         xbpm_dist: float = 1.0,
         figsize: tuple = (12, 5)
         ) -> "matplotlib.figure.Figure":
@@ -681,14 +741,10 @@ class SweepVisualizer:
         (HDF5 or other sources). Formatting matches canonical plot_central_sweeps.
 
         Args:
-            range_h: Horizontal sweep range
-            range_v: Vertical sweep range
-            pos_h: Calculated vertical positions at horizontal sweep (y_calc)
-            pos_v: Calculated horizontal positions at vertical sweep (x_calc)
-            fit_h: Fit coefficients for horizontal sweep [k, delta] or None
-            fit_v: Fit coefficients for vertical sweep [k, delta] or None
-            xbpm_dist: Distance scaling factor
-            figsize: Figure size tuple
+            sweepline_h : CentralSweepLine object for horizontal sweep
+            sweepline_v : CentralSweepLine object for vertical sweep
+            xbpm_dist   : Distance scaling factor
+            figsize     : Figure size tuple
 
         Returns:
             matplotlib.figure.Figure
@@ -750,7 +806,11 @@ class PositionVisualizer:
              current visualization.
     """
 
-    def __init__(self, prm: BeamlinePrm, title: str = "", titles: dict = None):
+    def __init__(self,
+                 prm: BeamlinePrm,
+                 title: str = "",
+                 titles: dict = None
+                 ) -> None:
         """Initialize visualizer with parameters.
 
         Args:
@@ -767,10 +827,14 @@ class PositionVisualizer:
         # Module logger
         self._logger = logging.getLogger(__name__)
 
-    def show_position_results(self, pos_nom_h, pos_nom_v,
-                              pos_h, pos_v, pos_roi_h, pos_roi_v,
+    def show_position_results(self,
+                              pos_nom_h, pos_nom_v,
+                              pos_h, pos_v,
+                              pos_roi_h, pos_roi_v,
                               pos_nom_h_roi, pos_nom_v_roi,
-                              diff_roi, figsize=(18, 6)) -> None:
+                              diff_roi,
+                              figsize=(18, 6)
+                              ) -> None:
         """Display full position results in 1x3 subplot layout.
 
         Args:
@@ -831,20 +895,30 @@ class PositionVisualizer:
 
         # Full grid view
         self._plot_scaled_positions(
-            ax_all, pos_nom_h, pos_nom_v, pos_h, pos_v,
+            ax_all,
+            pos_nom_h,
+            pos_nom_v,
+            pos_h,
+            pos_v,
             title_total
         )
 
         # ROI closeup
         self._plot_scaled_positions(
-            ax_close, pos_nom_h_roi, pos_nom_v_roi,
-            pos_roi_h, pos_roi_v,
+            ax_close,
+            pos_nom_h_roi,
+            pos_nom_v_roi,
+            pos_roi_h,
+            pos_roi_v,
             title_roi
         )
 
         # Difference heatmap
         self._plot_position_differences(
-            ax_color, diff_roi, pos_nom_h_roi, pos_nom_v_roi,
+            ax_color,
+            diff_roi,
+            pos_nom_h_roi,
+            pos_nom_v_roi,
             title_heatmap
         )
 

@@ -706,13 +706,13 @@ class BPMProcessor:
                  prm_bml  : DStr.BeamlinePrm,
                  ) -> None:
         """Store raw BPM/XBPM dataset and parameters for later processing."""
-        self.raw_data   = raw_data
-        self.sweeps_bpm = raw_data.sweeps_bpm
-        self.meta       = raw_data.meta
-        self.prm_bml    = prm_bml
-        self.roi        = prm_bml.roi
+        self.raw_data    = raw_data
+        self.sweeps_bpm  = raw_data.sweeps_bpm
+        self.meta        = raw_data.meta
+        self.prm_bml     = prm_bml
+        self.roi         = prm_bml.roi
         self._print_bpm_info()
-        self.calculate_positions()
+        self.bpmanalysis = self.calculate_positions()
 
     def _print_bpm_info(self) -> None:
         """Print BPM position information."""

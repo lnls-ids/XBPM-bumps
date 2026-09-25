@@ -1,6 +1,6 @@
 """Main window for XBPM analysis application."""
 
-from typing import Callable
+from typing import Callable, Optional
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTextEdit, QSplitter, QTabWidget,
@@ -10,21 +10,27 @@ from PyQt5.QtCore import Qt, pyqtSlot
 from PyQt5.QtGui  import QFont
 from PyQt5.QtGui  import QCloseEvent
 
+import matplotlib
+import matplotlib.pyplot as plt
+# from matplotlib.figure import Figure
+
 import numpy as np
 import logging
 import os
+
 # import traceback
 
 from .widgets.parameter_panel import ParameterPanel
 from .widgets.mpl_canvas      import MatplotlibCanvas
 from .dialogs.beamline_dialog import BeamlineSelectionDialog
 from .dialogs.help_dialog     import HelpDialog
+from ..core                   import data_structure as DStr
 from ..core.config            import Config
 from ..core.constants         import FIGDPI
 from ..core.reader_hdf5       import read_hdf5
 from ..core.analysis_service  import AnalysisService
-from ..core import data_structure as DStr
-
+from ..core.visualizers       import render_data_analysis
+    
 logger = logging.getLogger(__name__)
 
 
@@ -92,6 +98,13 @@ class XBPMMainWindow(QMainWindow):
 
         self.analysis = analysis
         self.log_message("Analysis completed.")
+
+        # Render every populated tab via the single orchestrator.
+        figures = render_data_analysis(analysis, self.beamline_prm)
+        for key, fig in figures.items():
+            self._embed_figure(self.canvases[key], fig)
+
+        self._refresh_analysis_info()
 
     def setup_ui(self) -> None:
         """Initialize the main window layout."""
@@ -1193,7 +1206,10 @@ class XBPMMainWindow(QMainWindow):
         """Update analysis info when the active tab changes."""
         self._refresh_analysis_info(index)
 
-    def _embed_figure(self, canvas: MatplotlibCanvas, source_fig):
+    def _embed_figure(self,
+                      canvas: MatplotlibCanvas,
+                      source_fig: "matplotlib.figure.Figure"
+                      ) -> None:
         """Embed entire figure by replacing canvas figure.
 
         Args:
@@ -1201,8 +1217,6 @@ class XBPMMainWindow(QMainWindow):
             source_fig: Source matplotlib figure with content.
         """
         try:
-            import matplotlib.pyplot as plt
-
             # Properly close old figure to prevent matplotlib state leaks
             if canvas.figure and canvas.figure != source_fig:
                 try:
