@@ -85,7 +85,7 @@ class XBPMProcessor:
         bld_avg   = self.blade_avg
         blades    = bld_avg.blades
 
-        # Select blades at y ~ 0 (central horizontal line).
+        # Select blades at the central horizontal line (y ~ 0).
         pos_nom_x = bld_avg.pos_nom.x
         pos_nom_y = bld_avg.pos_nom.y
 
@@ -117,10 +117,10 @@ class XBPMProcessor:
             pos_calc_v = (v1 + v2)
 
         # Fit a linear model to the position data and calculate uncertainties.
-        fit, cov   = np.polyfit(self.range_h, pos_calc_v, deg=1, cov=True)
-        fit_pos_v  = np.polyval(fit, self.range_h)
-        sa, sb     = np.sqrt(np.diag(cov))
-        fit_v_err  = np.sqrt((self.range_h * sa)**2 + sb**2)
+        fit, cov = np.polyfit(self.range_h, pos_calc_v, deg=1, cov=True)
+        pos_fit  = np.polyval(fit, self.range_h)
+        sk, sd   = np.sqrt(np.diag(cov))
+        fit_err  = np.sqrt((self.range_h * sk)**2 + sd**2)
 
         # Build the SweepLine data structure for horizontal sweep.
         blades = DStr.Blades(
@@ -133,8 +133,8 @@ class XBPMProcessor:
             pos_index=self.range_h,
             pos_fixed=pos_nom_y[mask][idx],
             pos_calc=pos_calc_v,
-            pos_fit=fit_pos_v,
-            pos_fit_err=fit_v_err,
+            pos_fit=pos_fit,
+            pos_fit_err=fit_err,
             coeffs=fit,
             sigmas=np.sqrt(np.diag(cov))
         )
@@ -145,6 +145,8 @@ class XBPMProcessor:
         # Select blades at x ~ 0 (central vertical line).
         bld_avg   = self.blade_avg
         blades    = bld_avg.blades
+
+        # Select blades at the central vertical line (x ~ 0).
         pos_nom_x = bld_avg.pos_nom.x.reshape(self.grid_shape)
         pos_nom_y = bld_avg.pos_nom.y.reshape(self.grid_shape)
 
@@ -174,10 +176,10 @@ class XBPMProcessor:
             pos_calc_h = (h1 + h2)
 
         # Fit a linear model to the position data and calculate uncertainties.
-        fit, cov   = np.polyfit(self.range_v, pos_calc_h, deg=1, cov=True)
-        pos_fit_h  = np.polyval(fit, self.range_v)
-        sa, sb     = np.sqrt(np.diag(cov))
-        fit_h_err  = np.sqrt((self.range_v * sa)**2 + sb**2)
+        fit, cov = np.polyfit(self.range_v, pos_calc_h, deg=1, cov=True)
+        pos_fit  = np.polyval(fit, self.range_v)
+        sa, sb   = np.sqrt(np.diag(cov))
+        fit_err  = np.sqrt((self.range_v * sa)**2 + sb**2)
 
         # Build the SweepLine data structure for vertical sweep.
         blades = DStr.Blades(
@@ -190,8 +192,8 @@ class XBPMProcessor:
             pos_index=self.range_v,
             pos_fixed=pos_nom_x[mask][idx],
             pos_calc=pos_calc_h,
-            pos_fit=pos_fit_h,
-            pos_fit_err=fit_h_err,
+            pos_fit=pos_fit,
+            pos_fit_err=fit_err,
             coeffs=fit,
             sigmas=np.sqrt(np.diag(cov))
             )
@@ -362,24 +364,12 @@ class XBPMProcessor:
 
         # Perform central line fit for horizontal and vertical blade analysis.
         hrange = self.range_h[self.roi.sl_h]
-        horz = self.blade_central_line_fit(
-            hblades,
-            hrange,
-            )
-        horz["pos_nom"] = DStr.Positions(
-            x=hrange,
-            y=np.zeros_like(hrange)
-        )
+        horz = self.blade_central_line_fit(hblades, hrange)
+        horz["pos_nom"] = DStr.Positions(x=hrange, y=np.zeros_like(hrange))
 
         vrange = self.range_v[self.roi.sl_v]
-        vert = self.blade_central_line_fit(
-            vblades,
-            vrange,
-            )
-        vert["pos_nom"] = DStr.Positions(
-            x=np.zeros_like(vrange),
-            y=vrange,
-        )
+        vert = self.blade_central_line_fit(vblades, vrange)
+        vert["pos_nom"] = DStr.Positions(x=np.zeros_like(vrange), y=vrange)
 
         return {
             "h": DStr.BladeCenterAnalysis(**horz),
