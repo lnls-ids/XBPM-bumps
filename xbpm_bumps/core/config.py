@@ -22,26 +22,16 @@ class Config:
     # TO, TI, BO, BI : top/bottom, in/out, relative to the storage ring;
     # A, B, C, D : names of respective P.V.s
     #
-    # CAVEAT: the map is based on the current configuration of the beamlines, 
-    # based on the the machine studies. The aim is to reassign the cables in
-    # the XBPMs so the blades sequence correspond directly to the
-    # PVs (A, B, C, D). The following map corrects the configuration and helps 
-    # in finding the correct wiring.
-    #
+    # OBS.: the current blade map is based on machine studies, in which the
+    # blades were identified by bumping the beam. Cables were reconnected 
+    # accordingly.
     BLADEMAP = {
+        "CAT"  : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+        "CNB"  : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         "MNC1" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         "MNC2" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
-
-        "CNB" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
-
-        "MGN2" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
-        # Still to be checked.
         "MGN1" : {"TO": 'A', "TI": 'C', "BI": 'B', "BO": 'D'},
-        # "MGN1" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
-
-        # ## Still to be fixed: ## #
-        "CAT1" : {"TO": 'B', "TI": 'A', "BI": 'D', "BO": 'C'},
-        # "CAT1"  : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+        "MGN2" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
 
         # Set for simulation.
         "SIMUL": {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
@@ -67,10 +57,10 @@ class Config:
     # Distance from source (its center) to XBPM at each beamline.
     # Obtained from comissioning reports.
     XBPMDISTS = {
-        "CAT":  15.740,
+        "CAT" : 15.740,
         "CAT1": 15.740,
         "CAT2": 19.590,
-        "CNB": 15.740,
+        "CNB" : 15.740,
         "CNB1": 15.740,
         "CNB2": 19.590,
         "MGN1": 10.237,

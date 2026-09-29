@@ -156,14 +156,14 @@ class DataReader:
 
             except Exception as err:
                 print("\n WARNING: when fetching blades' values and averaging:"
-                      f" {err}\n")
+                      f"\n\t {err}\n")
         self._blades_cache[beamline] = data
         self._rawblades_cache[beamline] = rawblades
         return data, rawblades
 
-    def _blade_average(self, blade):
+    def _blade_average(self, blade: list) -> tuple:
         """Calculate the average of blades' values for current beamline."""
-        if self.prm.beamline in ["MGN", "MNC"]:
+        if self.prm.beamline[:3] in ["MGN", "MNC"]:
             return np.average(blade), np.std(blade), blade
 
         vals = np.array([
