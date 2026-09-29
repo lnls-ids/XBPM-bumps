@@ -254,6 +254,10 @@ def _matrix_print(lines: list[str],
         title : str
     """
     lines.append(f"\n### {title} :\n")
+    if mat is None:
+        lines.append(f"### WARNING: Matrix {title} is not defined.\n")
+        return
+
     mm, nn = mat.shape
     for ii in range(mm):
         for jj in range(nn):

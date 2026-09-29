@@ -396,17 +396,26 @@ class XBPMProcessor:
 
         # Check for the vertical and horizontal cases.
         if len(self.range_h) > 1:
-            sdv_h = sdv_h * sw_h.to.k / (pc_h[:]**2)
-            # Normalize the suppression coefficients by TO blade.
-            pc_h  = sw_h.to.k / np.abs(pc_h)
+            # Calculate suppresions (1/Gain), normalized by TO blade.
+            pc_h  = sw_h.to.k  / np.abs(pc_h)
+            sto   = sw_h.to.sk / sw_h.to.k
+            sdv_h = (
+                (sw_h.to.k / pc_h[:]) * ((sdv_h / pc_h[:])**2 + sto**2)**0.5
+                )
         else:
             pc_h  = np.ones(8).reshape(4, 2)
             sdv_h = np.zeros(4)
 
         if len(self.range_v) > 1:
-            sdv_v = sdv_v * sw_v.to.k / (pc_v[:]**2)
-            # Normalize the suppression coefficients by TO blade.
+            # Calculate suppresions (1/Gain), normalized by TO blade.
             pc_v  = sw_v.to.k / np.abs(pc_v)
+  
+            sdv_v = sdv_v * sw_v.to.k / (pc_v[:]**2)
+            sto   = sw_v.to.sk / sw_v.to.k
+            sdv_v = (
+                (sw_v.to.k / pc_v[:]) * ((sdv_v / pc_v[:])**2 + sto**2)**0.5
+                )
+
         else:
             pc_v  = np.ones(8).reshape(4, 2)
             sdv_v = np.zeros(4)
@@ -420,7 +429,12 @@ class XBPMProcessor:
         ])
 
         # Assemble the standard deviation matrix.
-        stddev = np.array([sdv_v, sdv_h])
+        stddev = np.array([
+            sdv_v,
+            sdv_v,
+            sdv_h,
+            sdv_h
+            ])
 
         # Get the standard matrix (gains == 1).
         std, _ = Config.standard_suppression_matrix()

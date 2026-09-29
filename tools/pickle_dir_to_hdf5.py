@@ -2,6 +2,7 @@
 
 import argparse
 from datetime import datetime
+from pathlib import Path
 import h5py
 import numpy as np
 import os
@@ -9,7 +10,7 @@ import pickle  # noqa: S403
 import sys
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(script_dir, ".."))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from xbpm_bumps.core.config import Config      #noqa: E402
 
@@ -180,10 +181,13 @@ def blade_average(blade: list) -> tuple:
         std  : float, Standard deviation of the blades.
         vals : np.ndarray, Array of processed blade values.
     """
-    vals = np.array([
-        vv * Config.AMPSUB[un] for vv, un in blade
-    ])
-    return np.average(vals), np.std(vals), vals
+    try:
+        vals = np.array([
+            vv * Config.AMPSUB[un] for vv, un in blade
+        ])
+        return np.average(vals), np.std(vals), vals
+    except:  # noqa: E722
+        return np.average(blade), np.std(blade), np.array(blade)
 
 
 def extract_and_average_blade_data(rawdata0: dict, beamline: str) -> dict:
@@ -232,10 +236,12 @@ def parse_rawdata(rawdata: list, beamline: str) -> list:
     """Parse rawdata to extract beamline-specific data.
 
     Args:
-        rawdata: List of (meta, grid, bpm_dict) tuples for the selected beamline.
+        rawdata: List of (meta, grid, bpm_dict) tuples for the selected
+            beamline.
 
     Returns:
-        blade_data: List of (meta, grid, bpm_dict) tuples for the selected beamline.
+        blade_data: List of (meta, grid, bpm_dict) tuples for the selected 
+            beamline.
     """
     # Electronics PV.
     pv_meter = rawdata[0][0][beamline].get('prefix', None)
@@ -370,6 +376,7 @@ def export_rawdata_to_hdf5(
                 "HDF5 updated on"  : (
                     datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     ),
+                "Source dist. (m)" : Config.XBPMDISTS[beamline]
                 }
             mastergrp.attrs.update(mastermeta)
 
@@ -457,11 +464,11 @@ def export_rawdata_to_hdf5(
                 )
 
 
-def hdf5_handler(filepath: str, init_time: str) -> tuple:
+def hdf5_handler(blines: str, init_time: str) -> tuple:
     """Determine HDF5 output file name and handle overwrite/append.
     
     Args:
-        filepath: str,  Input directory path.
+        blines: str,  Selected beamlines concatenated with underscores.
     
     Returns:
         outfile : str,  Output HDF5 file name.
@@ -469,7 +476,7 @@ def hdf5_handler(filepath: str, init_time: str) -> tuple:
     """
     # Set file name.
     outfile = (
-        "xbpm_bumps_" + filepath + "_" +
+        "xbpm_bumps_" + blines + "_" +
         init_time.replace(":", "-").replace(" ", "_") + ".h5"
         )
     print(f"\n### Exporting data to HDF5 file:\n '{outfile}'")
@@ -514,7 +521,8 @@ def main() -> None:
     # Set file name and handle overwrite/append.
     # Set initial timestamp from the first record of the first beamline.
     init_time = str(dataset[beamlines[0]][0][1].get('Timestamp', "N/A"))
-    outfile, append = hdf5_handler(args.dir, init_time)
+    blines = '_'.join(beamlines)
+    outfile, append = hdf5_handler(blines, init_time)
 
     export_rawdata_to_hdf5(dataset, outfile, append)
     print("###  done.")
