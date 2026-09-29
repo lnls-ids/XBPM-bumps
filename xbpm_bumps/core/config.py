@@ -30,7 +30,7 @@ class Config:
         "CNB"  : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         "MNC1" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         "MNC2" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
-        "MGN1" : {"TO": 'A', "TI": 'C', "BI": 'B', "BO": 'D'},
+        "MGN1" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         "MGN2" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
 
         # Set for simulation.
