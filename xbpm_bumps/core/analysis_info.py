@@ -156,8 +156,8 @@ def _stat_block(lines: list[str],
     """
     lines.append(
         "\n*  ROI Slice :"
-        f" H = {_f(stat.roislice.sz_h)},\t"
-        f" V = {_f(stat.roislice.sz_v)}\n"
+        f" H = {_f(stat.roislice.size_h)},\t"
+        f" V = {_f(stat.roislice.size_v)}\n"
     )
     for case, allroi in [("All", stat.all),
                          ("ROI", stat.roi)]:

@@ -100,7 +100,11 @@ class XBPMMainWindow(QMainWindow):
         self.log_message("Analysis completed.")
 
         # Render every populated tab via the single orchestrator.
-        figures = render_data_analysis(analysis, self.beamline_prm)
+        figures = render_data_analysis(
+            analysis,
+            self.beamline_prm,
+            self._last_inputfile
+            )
         for key, fig in figures.items():
             self._embed_figure(self.canvases[key], fig)
 
@@ -975,7 +979,7 @@ class XBPMMainWindow(QMainWindow):
         if isinstance(bpm_stats, dict):
             bpm_lines.append(
                 "  ROI size [lines x columns points] ="
-                f" {self.beamline_prm.roi.sz_v} x {self.beamline_prm.roi.sz_h}"
+                f" {self.beamline_prm.roi.size_v} x {self.beamline_prm.roi.size_h}"
             )
             bpm_lines.append("\n  Sigmas (all sites):")
             for key in ('sigma_h', 'sigma_v', 'sigma_total'):

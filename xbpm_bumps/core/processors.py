@@ -24,7 +24,7 @@ class XBPMProcessor:
     def __init__(self,
                  beamlinedata : DStr.BeamlineData,
                  beamline_prm : DStr.BeamlinePrm,
-                 runtime_prm  : DStr.Prm,
+                 runtime_prm  : DStr.GenPrm,
                  analysis     : DStr.DataAnalysis,
                  ) -> None:
         """Initialize processor with data and parameters.
@@ -331,20 +331,20 @@ class XBPMProcessor:
         # Define blades values according to ROI for slope calculation.
         blades = {
             'to' : (
-                self.blades.to[self.roi.sl_v, self.roi.sl_h],
-                self.blades.sto[self.roi.sl_v, self.roi.sl_h]
+                self.blades.to[self.roi.slice_v, self.roi.slice_h],
+                self.blades.sto[self.roi.slice_v, self.roi.slice_h]
                 ),
             'ti' : (
-                self.blades.ti[self.roi.sl_v, self.roi.sl_h],
-                self.blades.sti[self.roi.sl_v, self.roi.sl_h]
+                self.blades.ti[self.roi.slice_v, self.roi.slice_h],
+                self.blades.sti[self.roi.slice_v, self.roi.slice_h]
                 ),
             'bi' : (
-                self.blades.bi[self.roi.sl_v, self.roi.sl_h],
-                self.blades.sbi[self.roi.sl_v, self.roi.sl_h]
+                self.blades.bi[self.roi.slice_v, self.roi.slice_h],
+                self.blades.sbi[self.roi.slice_v, self.roi.slice_h]
                 ),
             'bo' : (
-                self.blades.bo[self.roi.sl_v, self.roi.sl_h],
-                self.blades.sbo[self.roi.sl_v, self.roi.sl_h]
+                self.blades.bo[self.roi.slice_v, self.roi.slice_h],
+                self.blades.sbo[self.roi.slice_v, self.roi.slice_h]
                 ),
         }
 
@@ -363,11 +363,11 @@ class XBPMProcessor:
         }
 
         # Perform central line fit for horizontal and vertical blade analysis.
-        hrange = self.range_h[self.roi.sl_h]
+        hrange = self.range_h[self.roi.slice_h]
         horz = self.blade_central_line_fit(hblades, hrange)
         horz["pos_nom"] = DStr.Positions(x=hrange, y=np.zeros_like(hrange))
 
-        vrange = self.range_v[self.roi.sl_v]
+        vrange = self.range_v[self.roi.slice_v]
         vert = self.blade_central_line_fit(vblades, vrange)
         vert["pos_nom"] = DStr.Positions(x=np.zeros_like(vrange), y=vrange)
 
@@ -579,10 +579,10 @@ class XBPMProcessor:
         Returns:
             Tuple with scales and all scaled positions.
         """
-        nom_roi_x = pos_nom.x[self.roi.sl_v, self.roi.sl_h]
-        nom_roi_y = pos_nom.y[self.roi.sl_v, self.roi.sl_h]
-        calc_roi_x = pos_calc.x[self.roi.sl_v, self.roi.sl_h]
-        calc_roi_y = pos_calc.y[self.roi.sl_v, self.roi.sl_h]
+        nom_roi_x = pos_nom.x[self.roi.slice_v, self.roi.slice_h]
+        nom_roi_y = pos_nom.y[self.roi.slice_v, self.roi.slice_h]
+        calc_roi_x = pos_calc.x[self.roi.slice_v, self.roi.slice_h]
+        calc_roi_y = pos_calc.y[self.roi.slice_v, self.roi.slice_h]
 
         # Perform scaling fit
         # label = "Δ/Σ" if calc_type == "pairwise" else "Partial Δ/Σ"
@@ -993,7 +993,7 @@ def grid_statistics(nom_x: np.ndarray,
     rms_all = calculate_grid_stats(nom_x, nom_y, meas_x, meas_y)
 
     # Statistics at ROI.
-    sl_v, sl_h = roislice.sl_v, roislice.sl_h
+    sl_v, sl_h = roislice.slice_v, roislice.slice_h
     rms_roi = calculate_grid_stats(
         nom_x[sl_v, sl_h],
         nom_y[sl_v, sl_h],

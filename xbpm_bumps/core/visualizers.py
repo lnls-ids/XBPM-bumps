@@ -12,10 +12,16 @@ from typing import Optional
 
 from .constants import FIGDPI
 from .config import Config
-from .data_structure import BPMAnalysis
-from .data_structure import BeamlinePrm
-from .data_structure import CentralSweepLine
-from .data_structure import DataAnalysis
+from .data_structure import (
+    BPMAnalysis,
+    CentralSweeps,
+    Positions,
+    BeamlinePrm,
+    CentralSweepLine,
+    DataAnalysis,
+    BladeMap
+    )
+
 
 _Title = Config.get_plot_title   # shorthand used throughout this module
 
@@ -45,29 +51,43 @@ logger = logging.getLogger(__name__)
 
 def render_data_analysis(
         analysis: DataAnalysis,
-        prm: BeamlinePrm
+        prm: BeamlinePrm,
+        outputfile: Optional[str] = None,
         ) -> dict[str, Figure]:
     """Return one Figure per tab key for every populated analysis field."""
     figures: dict[str, Figure] = {}
 
     if analysis.bpm is not None:
         figures["bpm"] = (
-            BPMVisualizer(analysis.bpm).plot_bpm_positions()
+            BPMVisualizer(
+                analysis.bpm,
+                analysis.positions.nom
+                ).plot_bpm_positions()
             )
 
     if analysis.blademap is not None:
         figures["blade"] = (
-            BladeMapVisualizer(analysis.blademap).show()
+            BladeMapVisualizer(
+                analysis.blademap,
+                outputfile
+                ).plot_blade_map()
             )
 
     cs = analysis.centralsweeps
     if cs is not None:
         if cs.h is not None or cs.v is not None:
             figures["blades_center"] = (
-                BladeCurrentVisualizer.plot_blade_center_from_centralsweeps(
-                    cs, beamline=prm.beamline))
-        figures["sweeps"] = SweepVisualizer.plot_from_arrays(
-            cs.h, cs.v, None, xbpm_dist=prm.xbpmdist)
+                BladeCurrentVisualizer.plot_central_sweeps(
+                    cs,
+                    beamline=prm.beamline
+                    ))
+        figures["sweeps"] = (
+            SweepVisualizer.plot_central_sweeps(
+                cs.h,
+                cs.v,
+                None,
+                xbpm_dist=prm.xbpmdist
+            ))
 
     pos = analysis.positions
     if pos is not None:
@@ -109,11 +129,15 @@ class BPMVisualizer:
     This eliminates redundancy between processors.show_bpm_at_center()
     and readers._reconstruct_bpm_center().
     """
-    def __init__(self, bpm_ana: BPMAnalysis):
+    def __init__(self,
+                 bpm_ana: BPMAnalysis,
+                 pos_nom: Positions,
+                 ) -> None:
         self.bana     = bpm_ana
         self.beamline = bpm_ana.prm.beamline
         self.pos_meas = bpm_ana.pos_meas
-        self.pos_nom  = bpm_ana.pos_nom
+        self.pos_nom  = pos_nom
+        self.rms_diff = bpm_ana.rms_diff
 
         # Abbreviated names for plotting convenience.
         self.nom_x  = self.pos_nom.x
@@ -125,13 +149,13 @@ class BPMVisualizer:
         """Plot BPM positions and differences in a 1x3 subplot figure."""
         # Initialize figure with 1x3 subplots:
         # full grid, roi closeup, differences
-        if self.bana.rms_diff_roi is None:
+        if self.rms_diff.roi is None:
             # ROI can be unavailable for sparse/incomplete scans.
             is_1d = True
         else:
-            is_1d = (self.bana.rms_diff_roi.ndim == 1 or
-                     (self.bana.rms_diff_roi.ndim == 2 and
-                      min(self.bana.rms_diff_roi.shape) == 1))
+            is_1d = (self.rms_diff.roi.tot.ndim == 1 or
+                     (self.rms_diff.roi.tot.ndim == 2 and
+                      min(self.rms_diff.roi.tot.shape) == 1))
         gridspec = {'width_ratios': [1, 1, 0.1]} if is_1d else None
         self.fig, bpm_axes = plt.subplots(
             1, 3,
@@ -167,11 +191,16 @@ class BPMVisualizer:
         )
 
         # Plot ROI closeup
-        sl_h, sl_v = self.bana.prm.roi.sl_h, self.bana.prm.roi.sl_v
-        self.nom_roi_x = self.nom_x[sl_v, sl_h]
-        self.nom_roi_y = self.nom_y[sl_v, sl_h]
+        slice_h = self.bana.prm.roi.slice_h
+        slice_v = self.bana.prm.roi.slice_v
+        self.nom_roi_x = self.nom_x[slice_v, slice_h]
+        self.nom_roi_y = self.nom_y[slice_v, slice_h]
         self._plot_position_scatter(
             self.ax_roi,
+            self.meas_x[slice_v, slice_h],
+            self.nom_roi_x,
+            self.meas_y[slice_v, slice_h],
+            self.nom_roi_y,
             _Title('bpm', 'roi', beamline=self.beamline)
         )
 
@@ -345,17 +374,19 @@ class BladeMapVisualizer:
         prm (BeamlinePrm): Parameters dataclass.
     """
 
-    def __init__(self, data: dict, prm: BeamlinePrm):
+    def __init__(self,
+                 bmap : BladeMap,
+                 outputfile : str = None,
+                 ) -> None:
         """Initialize visualizer with data and parameters.
 
         Args:
-            data: Measurement data dictionary.
-            prm: Parameters dataclass instance.
+            bmap: BladeMap instance.
         """
-        self.data = data
-        self.prm = prm
+        self.bm_ana = bmap
+        self.outputfile = outputfile
 
-    def show(self) -> "matplotlib.figure.Figure":
+    def plot_blade_map(self) -> "matplotlib.figure.Figure":
         """Display blade intensity maps for all four blades.
 
         Creates a 2x2 subplot figure showing heatmaps for:
@@ -370,12 +401,12 @@ class BladeMapVisualizer:
             matplotlib.figure.Figure: The generated figure.
         """
         # Import here to avoid circular dependency
-        from .processors import XBPMProcessor
-
-        # Create temporary processor to parse blade data
-        processor = XBPMProcessor(self.data, self.prm)
-        blades, stddevs = processor.data_parse()
-        to, ti, bi, bo = blades
+        to, ti, bi, bo = (
+            self.bm_ana.blades.to,
+            self.bm_ana.blades.ti,
+            self.bm_ana.blades.bi,
+            self.bm_ana.blades.bo
+        )
 
         fig, rx = plt.subplots(2, 2, figsize=(8, 5))
 
@@ -383,20 +414,10 @@ class BladeMapVisualizer:
         if (to.ndim < 2 or to.shape[0] <= 1 or to.shape[1] <= 1):
             extent = None
         else:
-            alist = np.array(list(self.data.keys()))
-            try:
-                klist = np.unique(alist[:, 0])
-                mlist = np.unique(alist[:, 1])
-            except:  # noqa: E722
-                # Some data are 1-D only
-                mlist = np.unique(alist)
-                klist = np.zeros(len(mlist))
-            if klist.size == 0 or mlist.size == 0:
-                extent = None
-            else:
-                minvalx, maxvalx = np.min(klist), np.max(klist)
-                minvaly, maxvaly = np.min(mlist), np.max(mlist)
-                extent = (minvalx, maxvalx, minvaly, maxvaly)
+            x, y = self.bm_ana.pos.x, self.bm_ana.pos.y
+            minvalx, maxvalx = np.min(x), np.max(x)
+            minvaly, maxvaly = np.min(y), np.max(y)
+            extent = (minvalx, maxvalx, minvaly, maxvaly)
 
         quad = [[ti, to], [bi, bo]]
         names = [["TI", "TO"], ["BI", "BO"]]
@@ -414,8 +435,8 @@ class BladeMapVisualizer:
 
         fig.tight_layout(pad=0., w_pad=-17., h_pad=2.)
 
-        if self.prm.outputfile:
-            outfile = f"blade_map_{self.prm.beamline}.png"
+        if self.outputfile:
+            outfile = self.outputfile + "_blade_map.png"
             fig.savefig(outfile, dpi=FIGDPI)
             logger.info("Figure of blades' map saved to file %s", outfile)
 
@@ -433,92 +454,50 @@ class BladeCurrentVisualizer:
     and readers._reconstruct_blades_center().
     """
 
-    @staticmethod
-    def plot_central_sweeps(range_h: np.ndarray, range_v: np.ndarray,
-                            blades_h: dict, blades_v: dict, xbpmdist: float):
-        """Generate central sweep position plots (canonical version).
+    # @staticmethod
+    # def plot_central_sweeps(csweep : CentralSweeps
+    #                         ) -> matplotlib.figure.Figure:
+    #     """Generate central sweep position plots (canonical version).
 
-        This is the tuned plotting implementation used by both live analysis
-        and HDF5 reconstruction. It encapsulates the exact visualization
-        semantics for the "Positions along sweeps" tab.
+    #     This is the tuned plotting implementation used by both live analysis
+    #     and HDF5 reconstruction. It encapsulates the exact visualization
+    #     semantics for the "Positions along sweeps" tab.
 
-        Args:
-            range_h: Horizontal sweep range array.
-            range_v: Vertical sweep range array.
-            blades_h: Horizontal blades dict with 'to', 'ti', 'bi', 'bo' keys.
-            blades_v: Vertical blades dict with 'to', 'ti', 'bi', 'bo' keys.
-            xbpmdist: Scaling distance for physical units conversion.
+    #     Args:
+    #         csweep: CentralSweeps object containing horizontal and vertical sweeps.
 
-        Returns:
-            matplotlib.figure.Figure
-        """
-        # Calculate positions from blade data
-        pos_ch_v = None
-        fit_ch_v = None
-        if blades_h is not None and len(range_h) > 1:
-            to_ch = blades_h["to"]
-            ti_ch = blades_h["ti"]
-            bi_ch = blades_h["bi"]
-            bo_ch = blades_h["bo"]
+    #     Returns:
+    #         matplotlib.figure.Figure
+    #     """
+    #     # Create figure
+    #     fig, (axh, axv) = plt.subplots(1, 2, figsize=(12, 5))
 
-            pos_to_ti_v = (to_ch + ti_ch)
-            pos_bi_bo_v = (bo_ch + bi_ch)
-            pos_ch_v = ((pos_to_ti_v - pos_bi_bo_v) /
-                        (pos_to_ti_v + pos_bi_bo_v))
-            fit_ch_v = np.polyfit(range_h, pos_ch_v, deg=1)
+    #     ch = csweep.h
+    #     if ch.pos_fit is not None:
+    #         axh.plot(ch.pos_index, ch.pos_calc, 'o-', label="H fit")
+    #         axh.plot(ch.pos_index, ch.pos_fit, '^-', label="H fit")
+    #         axh.set_xlabel("$x$ [$\\mu$m]")
+    #         axh.set_ylabel("$y$ [$\\mu$m]")
+    #         axh.set_title(_Title('sweeps', 'H'))
+    #         ylim = (np.max(np.abs(ch.pos_fit)) * 1.1)
+    #         axh.set_ylim(-ylim, ylim)
+    #         axh.grid(True)
+    #         axh.legend()
 
-        pos_cv_h = None
-        fit_cv_h = None
-        if blades_v is not None and len(range_v) > 1:
-            to_cv = blades_v["to"]
-            ti_cv = blades_v["ti"]
-            bi_cv = blades_v["bi"]
-            bo_cv = blades_v["bo"]
+    #     cv = csweep.v
+    #     if cv.pos_fit is not None:
+    #         axv.plot(cv.pos_index, cv.pos_calc, 'o-', label="V fit")
+    #         axv.plot(cv.pos_index, cv.pos_fit, '^-', label="V fit")
+    #         axv.set_xlabel("$x$ [$\\mu$m]")
+    #         axv.set_ylabel("$y$ [$\\mu$m]")
+    #         axv.set_title(_Title('sweeps', 'V'))
+    #         ylim = (np.max(np.abs(cv.pos_fit)) * 1.1)
+    #         axv.set_ylim(-ylim, ylim)
+    #         axv.grid(True)
+    #         axv.legend()
 
-            pos_to_bo_h = (to_cv + bo_cv)
-            pos_ti_bi_h = (ti_cv + bi_cv)
-            pos_cv_h = ((pos_to_bo_h - pos_ti_bi_h) /
-                        (pos_to_bo_h + pos_ti_bi_h))
-            fit_cv_h = np.polyfit(range_v, pos_cv_h, deg=1)
-
-        # Create figure
-        fig, (axh, axv) = plt.subplots(1, 2, figsize=(12, 5))
-
-        if fit_ch_v is not None:
-            hline = ((fit_ch_v[0, 0] * range_h + fit_ch_v[1, 0])
-                    * xbpmdist)
-            axh.plot(range_h * xbpmdist, pos_ch_v[:, 0] * xbpmdist, 'o-',
-                    label="H sweep")
-            axh.plot(range_h * xbpmdist, hline, '^-', label="H fit")
-            axh.set_xlabel("$x$ [$\\mu$m]")
-            axh.set_ylabel("$y$ [$\\mu$m]")
-            axh.set_title(_Title('sweeps', 'h'))
-            ylim = (np.max(np.abs(hline + pos_ch_v[:, 0]
-                                * xbpmdist)) * 1.1)
-            axh.set_ylim(-ylim, ylim)
-            axh.grid(True)
-            axh.legend()
-
-        if fit_cv_h is not None:
-            vline = ((fit_cv_h[0, 0] * range_v + fit_cv_h[1, 0])
-                    * xbpmdist)
-            axv.plot(pos_cv_h[:, 0] * xbpmdist,
-                    range_v * xbpmdist,
-                    'o-', label="V sweep")
-            axv.plot(vline, range_v * xbpmdist,
-                    '^-', label="V fit")
-            axv.set_xlabel("$x$ [$\\mu$m]")
-            axv.set_ylabel("$y$ [$\\mu$m]")
-            axv.set_title(_Title('sweeps', 'v'))
-            axv.set_xlim((np.min(range_v) * 0.005 + fit_cv_h[1, 0])
-                        * xbpmdist,
-                        (np.max(range_v) * 0.005 + fit_cv_h[1, 0])
-                        * xbpmdist)
-            axv.grid(True)
-            axv.legend()
-
-        fig.tight_layout()
-        return fig
+    #     fig.tight_layout()
+    #     return fig
 
     @staticmethod
     def plot_blade_center_from_dicts(blades_h: dict,
@@ -729,10 +708,8 @@ class SweepVisualizer:
     and readers._reconstruct_sweeps().
     """
     @staticmethod
-    def plot_from_arrays(
-        sweepline_h: CentralSweepLine,
-        sweepline_v: CentralSweepLine,
-        xbpm_dist: float = 1.0,
+    def plot_central_sweeps(
+        csweep : CentralSweeps,
         figsize: tuple = (12, 5)
         ) -> "matplotlib.figure.Figure":
         """Create sweep figure from numpy arrays (position reconstruction path).
@@ -741,10 +718,9 @@ class SweepVisualizer:
         (HDF5 or other sources). Formatting matches canonical plot_central_sweeps.
 
         Args:
-            sweepline_h : CentralSweepLine object for horizontal sweep
-            sweepline_v : CentralSweepLine object for vertical sweep
-            xbpm_dist   : Distance scaling factor
-            figsize     : Figure size tuple
+            csweep   : CentralSweeps object containing horizontal and
+                        vertical sweeps
+            figsize  : Figure size tuple
 
         Returns:
             matplotlib.figure.Figure
@@ -752,32 +728,26 @@ class SweepVisualizer:
         # Scale for the beamline (source-XBPM distance).
         fig, (axh, axv) = plt.subplots(nrows=1, ncols=2, figsize=figsize)
 
-        if sweepline_h is not None:
-            nom_pos_h   = xbpm_dist * sweepline_h.pos_index
-            calc_pos_v  = xbpm_dist * sweepline_h.pos_calc
-            fit_pos_v   = xbpm_dist * sweepline_h.pos_fit
-            # fit_pos_err = xbpm_dist * sweepline_h.fit_pos_err
+        if csweep.h is not None:
+            nom_pos_h   = csweep.h.pos_index
+            calc_pos_v  = csweep.h.pos_calc
+            fit_pos_v   = csweep.h.pos_fit
 
             axh.plot(nom_pos_h, calc_pos_v, 'o-', label="H calc", zorder=2)
             axh.plot(nom_pos_h, fit_pos_v,  '^-', label="H fit", zorder=3)
-            # axh.errorbar(nom_pos_h, fit_pos_v, fit_pos_err,
-            #              '^-', label="H fit")
             axh.set_xlabel("$x$ [$\\mu$m]")
             axh.set_ylabel("$y$ [$\\mu$m]")
             axh.set_title(_Title('sweeps', 'H'))
             axh.grid(True)
             axh.legend()
 
-        if sweepline_v is not None:
-            nom_pos_v   = xbpm_dist * sweepline_v.pos_index
-            calc_pos_h  = xbpm_dist * sweepline_v.pos_calc
-            fit_pos_h   = xbpm_dist * sweepline_v.pos_fit
-            # fit_pos_err = xbpm_dist * sweepline_v.fit_pos_err
+        if csweep.v is not None:
+            nom_pos_v   = csweep.v.pos_index
+            calc_pos_h  = csweep.v.pos_calc
+            fit_pos_h   = csweep.v.pos_fit
 
             axv.plot(nom_pos_v, calc_pos_h, 'o-', label="V calc", zorder=2)
             axv.plot(nom_pos_v, fit_pos_h,  '^-', label="V fit", zorder=3)
-            # axv.errorbar(nom_pos_h, fit_pos_v, fit_pos_err,
-            #              '^-', label="V fit")
             axv.set_xlabel("$x$ [$\\mu$m]")
             axv.set_ylabel("$y$ [$\\mu$m]")
             axv.set_title(_Title('sweeps', 'V'))
@@ -935,7 +905,7 @@ class PositionVisualizer:
         # From analyze_central_sweeps.
         #
         if show:
-            fig = SweepVisualizer.plot_from_arrays(
+            fig = SweepVisualizer.plot_central_sweeps(
                 self.range_h,
                 self.range_v,
                 self.sweepline_h,

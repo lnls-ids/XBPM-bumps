@@ -14,7 +14,7 @@ from . import data_structure as DStr
 def read_hdf5(filepath: str) -> dict[str, DStr.BeamlineData]:
     beamlinedata ={}
     with h5py.File(filepath, 'r') as hf:
-        runtime_prm = DStr.Prm.from_hdf5(
+        runtime_prm = DStr.GenPrm.from_hdf5(
             dset_grp=hf,
             inputfile=filepath
         )

@@ -2,7 +2,7 @@
 
 from .config import Config
 from .processors import XBPMProcessor, BPMProcessor
-from .data_structure import Prm, BeamlinePrm, DataAnalysis, BeamlineData
+from .data_structure import GenPrm, BeamlinePrm, DataAnalysis, BeamlineData
 from .visualizers import (
     BladeMapVisualizer,
     PositionVisualizer,
@@ -20,7 +20,7 @@ __all__ = [
     "SweepVisualizer",
     "BladeCurrentVisualizer",
     "Exporter",
-    "Prm",
+    "GenPrm",
     "BeamlinePrm",
     "DataAnalysis",
     "BeamlineData",

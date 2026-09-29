@@ -16,7 +16,7 @@ from .constants import ROI_SIZE_H, ROI_SIZE_V, MAX_RAD_ANGLE
 
 
 @dataclass
-class Prm:
+class GenPrm:
     """Typed container for command-line and runtime parameters.
 
     This class implements __getitem__/__setitem__ so existing code that
@@ -26,10 +26,10 @@ class Prm:
     sr_current       : float | None = None      # Synchrotron current
 
     # File names and analysis parameters.
-    inputfile        : str   | None = None      # HDF5 input file name.
-    outputfile       : str   | None = None      # HDF5 output file name. 
-    phaseorgap       : dict  | None = None      # Phase/gap for the IDs.
-    maxradangle      : float = MAX_RAD_ANGLE    # Max. angle of bumps in mrad.
+    inputfile             : str   | None = None     # HDF5 input file name.
+    outputfile            : str   | None = None     # HDF5 output file prefix. 
+    phaseorgap            : dict  | None = None     # Phase/gap for the IDs.
+    maxradangle           : float = MAX_RAD_ANGLE   # Max. bump angle (mrad).
 
     # What to calculate and show.
     show_bpmpositions     : bool = False
@@ -51,7 +51,7 @@ class Prm:
     def from_hdf5(cls,
                   dset_grp: h5py.Group,
                   inputfile: str
-                  ) -> "Prm":
+                  ) -> "GenPrm":
         """Create a Prm instance from an HDF5 group."""
         # Extract attributes from the HDF5 group.
         try:
@@ -63,16 +63,24 @@ class Prm:
                 f" {err}"
             )
 
+        # Define the output file name based on the input file.
+        attrs["outputfile"] = cls._set_outputfile_name(inputfile)
+
         # Create a Prm instance with the extracted attributes.
         return cls(**attrs)
+
+    @classmethod
+    def _set_outputfile_name(inputfile: str) -> str:
+        """Set the output file prefix for the analysis."""
+        return inputfile.rsplit('.', 1)[0]
 
 
 @dataclass
 class ROISlice:
-    sl_v: slice
-    sl_h: slice
-    sz_v : int = ROI_SIZE_V
-    sz_h : int = ROI_SIZE_H
+    slice_v : slice
+    slice_h : slice
+    size_v  : int = ROI_SIZE_V
+    size_h  : int = ROI_SIZE_H
 
     @classmethod
     def update(cls,
@@ -90,10 +98,10 @@ class ROISlice:
         uptoh  = min(nh, fromh + roi_h)
 
         return cls(
-            sz_v=roi_v,
-            sz_h=roi_h,
-            sl_v=slice(fromv, uptov),
-            sl_h=slice(fromh, uptoh)
+            size_v=roi_v,
+            size_h=roi_h,
+            slice_v=slice(fromv, uptov),
+            slice_h=slice(fromh, uptoh)
             )
 
 
@@ -163,6 +171,7 @@ class BeamlinePrm:
             )
 
         return cls(**attrs)
+
 
 #
 # Generic data structures.
@@ -639,7 +648,7 @@ class BladeMap:
 
     Attributes:
         prm    : Metadata parameters of the blade map.
-        coords : Horizontal and vertical positions which define the grid of
+        pos    : Horizontal and vertical positions which define the grid of
             measurements.
         blades : Blades (measured currents)
     """
@@ -749,6 +758,7 @@ class BladeCenterAnalysis:
             bo = BladeLineFit.from_hdf5(bca_grp['bo']),
             pos_nom = Positions.from_hdf5(bca_grp['pos_nom'])
         )
+
 
 @dataclass
 class CentralSweepLine:

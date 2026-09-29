@@ -13,7 +13,7 @@ from datetime    import datetime, timezone
 from io          import BytesIO
 from typing      import Optional
 
-from .data_structure import Prm
+from .data_structure import GenPrm
 from .config     import Config
 
 logger = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class Exporter:
     """Handles persistence of calc. artifacts (positions, blades, supmat)."""
 
-    def __init__(self, prm: Prm):
+    def __init__(self, prm: GenPrm):
         """Store parameters used during export."""
         self.prm = prm
 

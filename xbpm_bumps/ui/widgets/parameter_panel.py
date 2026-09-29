@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QLineEdit
 )
 from PyQt5.QtCore import QSignalBlocker, pyqtSignal
-from ...core.data_structure import Positions, Prm, BeamlinePrm
+from ...core.data_structure import Positions, GenPrm, BeamlinePrm
 from ...core.constants import ROI_SIZE_H, ROI_SIZE_V
 
 
@@ -262,7 +262,7 @@ class ParameterPanel(QWidget):
         return params
 
     def load_beamline_data(self,
-                           runtime_prm: Prm,
+                           runtime_prm: GenPrm,
                            beamline_prm: BeamlinePrm,
                            grid_shape: tuple[int, int]
                            ) -> None:
@@ -291,8 +291,8 @@ class ParameterPanel(QWidget):
         nv, nh = grid_shape
         self.roi_h_spin.setRange(1, nh)
         self.roi_v_spin.setRange(1, nv)
-        self.roi_h_spin.setValue(min(beamline_prm.roi.sz_h, nh))
-        self.roi_v_spin.setValue(min(beamline_prm.roi.sz_v, nv))
+        self.roi_h_spin.setValue(min(beamline_prm.roi.size_h, nh))
+        self.roi_v_spin.setValue(min(beamline_prm.roi.size_v, nv))
         self.xbpmdist_spin.setValue(beamline_prm.xbpmdist or 0.0)
         self.skip_spin.setValue(beamline_prm.skip)
         self.scalepolydeg.setValue(beamline_prm.scalepolydeg)

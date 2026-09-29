@@ -11,7 +11,7 @@ class AnalysisService:
     @staticmethod
     def run(
         workdata: DStr.BeamlineData,
-        runtime_prm: DStr.Prm,
+        runtime_prm: DStr.GenPrm,
         ) -> DStr.DataAnalysis:
         # Initialize the analysis result container.
         analysis = DStr.DataAnalysis(beamline_prm=workdata.prm)
