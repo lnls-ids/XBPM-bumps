@@ -68,7 +68,7 @@ class XBPMProcessor:
             len(self.range_h)
             )
 
-        # Select blades at the central vertical line (y ~ 0).
+        # Select blades at the central horizontal line (y ~ 0).
         # Find sites next to the zero position.
         mask_h = np.isclose(self.pos_nom.y, 0)
         # Guarantee the order of the indices along the horizontal direction.
@@ -335,7 +335,7 @@ class XBPMProcessor:
             cross=cross_res
             )
 
-    def analyze_central_sweep_blades(self) -> DStr.BladeCenterAnalysis:
+    def analyze_central_sweep_blades(self) -> dict:
         """Analyze the central positions of the blades."""
         # Define blade intervals according to ROI for slope calculation.
         blades_h = {

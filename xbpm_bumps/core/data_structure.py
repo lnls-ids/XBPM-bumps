@@ -156,7 +156,7 @@ class BeamlinePrm:
 
             # Initialize ROI data.
             rs = int(np.sqrt(attrs["sweeps"]))
-            attrs["roi"] = ROISlice.update(
+            attrs["roislice"] = ROISlice.update(
                 arrayshape=(rs, rs),
                 roisize=[ROI_SIZE_V, ROI_SIZE_H]
             )
