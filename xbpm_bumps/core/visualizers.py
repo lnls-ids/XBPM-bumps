@@ -76,40 +76,36 @@ def render_data_analysis(
     cs = analysis.centralsweeps
     if cs is not None:
         if cs.h is not None or cs.v is not None:
-            figures["blades_center"] = (
-                BladeCurrentVisualizer.plot_central_sweeps(
+            figures["blade_sweeps"] = (
+                CentralSweepVisualizer.plot_blade_central_sweeps(
                     cs,
                     beamline=prm.beamline
                     ))
-        figures["sweeps"] = (
-            SweepVisualizer.plot_central_sweeps(
-                cs.h,
-                cs.v,
-                None,
-                xbpm_dist=prm.xbpmdist
-            ))
+        figures["position_sweeps"] = (
+            CentralSweepVisualizer.plot_central_sweep_positions(cs)
+            )
 
     pos = analysis.positions
     if pos is not None:
-        figures["xbpm_raw_pairwise"]    = (
+        figures["xbpm_pairwise_raw"]    = (
             PositionVisualizer(prm).show_from_calc(
                 pos.nom,
                 pos.pairw.pos_std
                 )
             )
-        figures["xbpm_scaled_pairwise"] = (
+        figures["xbpm_pairwise_trn"] = (
             PositionVisualizer(prm).show_from_calc(
                 pos.nom,
                 pos.pairw.pos_trn
                 )
             )
-        figures["xbpm_raw_cross"]       = (
+        figures["xbpm_cross_raw"]       = (
             PositionVisualizer(prm).show_from_calc(
                 pos.nom,
                 pos.cross.pos_std
                 )
             )
-        figures["xbpm_scaled_cross"]    = (
+        figures["xbpm_cross_trn"]    = (
             PositionVisualizer(prm).show_from_calc(
                 pos.nom,
                 pos.cross.pos_trn
@@ -135,30 +131,27 @@ class BPMVisualizer:
                  ) -> None:
         self.bana     = bpm_ana
         self.beamline = bpm_ana.prm.beamline
-        self.pos_meas = bpm_ana.pos_meas
-        self.pos_nom  = pos_nom
         self.rms_diff = bpm_ana.rms_diff
 
         # Abbreviated names for plotting convenience.
-        self.nom_x  = self.pos_nom.x
-        self.nom_y  = self.pos_nom.y
-        self.meas_x = self.pos_meas.x
-        self.meas_y = self.pos_meas.y
+        self.nom_x  = pos_nom.x
+        self.nom_y  = pos_nom.y
+        self.meas_x = bpm_ana.pos_meas.x
+        self.meas_y = bpm_ana.pos_meas.y
 
     def plot_bpm_positions(self) -> None:
         """Plot BPM positions and differences in a 1x3 subplot figure."""
         # Initialize figure with 1x3 subplots:
         # full grid, roi closeup, differences
-        if self.rms_diff.roi is None:
-            # ROI can be unavailable for sparse/incomplete scans.
-            is_1d = True
-        else:
-            is_1d = (self.rms_diff.roi.tot.ndim == 1 or
-                     (self.rms_diff.roi.tot.ndim == 2 and
-                      min(self.rms_diff.roi.tot.shape) == 1))
+        is_1d = (
+            self.rms_diff.roi.tot.ndim == 1 or
+            (self.rms_diff.roi.tot.ndim == 2 and
+             min(self.rms_diff.roi.tot.shape) == 1)
+             )
         gridspec = {'width_ratios': [1, 1, 0.1]} if is_1d else None
         self.fig, bpm_axes = plt.subplots(
-            1, 3,
+            nrows=1,
+            ncols=3,
             figsize=(18, 6),
             constrained_layout=True,
             gridspec_kw=gridspec
@@ -191,42 +184,46 @@ class BPMVisualizer:
         )
 
         # Plot ROI closeup
-        slice_h = self.bana.prm.roi.slice_h
-        slice_v = self.bana.prm.roi.slice_v
+        slice_h = self.bana.prm.roislice.slice_h
+        slice_v = self.bana.prm.roislice.slice_v
         self.nom_roi_x = self.nom_x[slice_v, slice_h]
         self.nom_roi_y = self.nom_y[slice_v, slice_h]
         self._plot_position_scatter(
             self.ax_roi,
-            self.meas_x[slice_v, slice_h],
             self.nom_roi_x,
-            self.meas_y[slice_v, slice_h],
+            self.meas_x[slice_v, slice_h],
             self.nom_roi_y,
+            self.meas_y[slice_v, slice_h],
             _Title('bpm', 'roi', beamline=self.beamline)
         )
 
         # Plot differences heatmap with extent mapping
-        self._plot_roi_differences(
-            self.ax_diff, self.nom_roi_x, self.nom_roi_y
-            )
+        self._plot_roi_differences()
+
+        return self.fig
 
     def _plot_position_scatter(self,
-                               ax: 'matplotlib.axes.Axes',
-                               meas_x: np.array,
-                               nom_x: np.array,
-                               meas_y: np.array,
-                               nom_y: np.array,
-                               title: str
+                               ax     : 'matplotlib.axes.Axes',
+                               nom_x  : np.array,
+                               meas_x : np.array,
+                               nom_y  : np.array,
+                               meas_y : np.array,
+                               title  : str
                                ) -> None:
         """Plot measured vs nominal positions scatter plot.
 
         Args:
-            ax    : Matplotlib axis for plotting.
-            title : Plot title.
+            ax     : Matplotlib axis for plotting.
+            nom_x  : Nominal x positions.
+            meas_x : Measured x positions.
+            nom_y  : Nominal y positions.
+            meas_y : Measured y positions.
+            title  : Plot title.
         """
         ax.set_title(title, pad=2)
         pos = ax.plot(meas_x, meas_y, 'bo')
         nom = ax.plot(nom_x, nom_y, 'r+') 
-        ax.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)  # noqa: W605
+        ax.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)
         ax.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
 
         # Compute common limits to ensure equal aspect ratio with margin.
@@ -275,9 +272,7 @@ class BPMVisualizer:
             ax.legend(handles, labels)
         ax.grid()
 
-    def _plot_roi_differences(self, axdiff,
-                              pos_nom_h: np.ndarray,
-                              pos_nom_v: np.ndarray) -> None:
+    def _plot_roi_differences(self) -> None:
         """Plot ROI differences as scatter (1D) or heatmap (2D).
 
         Args:
@@ -285,27 +280,26 @@ class BPMVisualizer:
             pos_nom_h: Nominal horizontal positions for extent mapping.
             pos_nom_v: Nominal vertical positions for extent mapping.
         """
-        if self.bana.rms_diff_roi is None:
-            return
-
-        roi_diffs = self.bana.rms_diff_roi
+        roi_diffs = self.bana.rms_diff.roi
 
         # Treat as 1-D if truly 1-D (shape = (n,)) or effectively 1-D (one
         # dimension is 1, like (1, n) or (n, 1)), or if one nominal axis is
         # constant (single-line sweep).
-        h_const = np.nanmax(pos_nom_h) == np.nanmin(pos_nom_h)
-        v_const = np.nanmax(pos_nom_v) == np.nanmin(pos_nom_v)
-        is_1d = (roi_diffs.ndim == 1 or
-             (roi_diffs.ndim == 2 and min(roi_diffs.shape) == 1) or
-             h_const or v_const)
+        h_const = np.nanmax(self.nom_roi_x) == np.nanmin(self.nom_roi_x)
+        v_const = np.nanmax(self.nom_roi_y) == np.nanmin(self.nom_roi_y)
+        is_1d = (roi_diffs.h.ndim == 1 or
+             (roi_diffs.h.ndim == 2 and
+              min(roi_diffs.h.shape) == 1) or
+             h_const or v_const
+             )
 
         if is_1d:
             # 1D imshow: render as a thin band of square cells
-            h_min = np.nanmin(pos_nom_h)
-            h_max = np.nanmax(pos_nom_h)
+            h_min = np.nanmin(self.nom_roi_x)
+            h_max = np.nanmax(self.nom_roi_x)
 
-            color_vals = np.ravel(roi_diffs).reshape(-1, 1)
-            extent = [0, 1, pos_nom_v.min(), pos_nom_v.max()]
+            color_vals = np.ravel(roi_diffs.h).reshape(-1, 1)
+            extent = [0, 1, self.nom_roi_y.min(), self.nom_roi_y.max()]
             aspect = 'auto'
 
             # Make the single column visually wider
@@ -330,16 +324,16 @@ class BPMVisualizer:
             self.ax_diff.grid(False)
         else:
             # 2D heatmap with extent mapping
-            h_min = np.nanmin(pos_nom_h)
-            h_max = np.nanmax(pos_nom_h)
-            v_min = np.nanmin(pos_nom_v)
-            v_max = np.nanmax(pos_nom_v)
+            h_min = np.nanmin(self.nom_roi_x)
+            h_max = np.nanmax(self.nom_roi_x)
+            v_min = np.nanmin(self.nom_roi_y)
+            v_max = np.nanmax(self.nom_roi_y)
             extent = [h_min, h_max, v_min, v_max]
 
             # Calculate aspect ratio to maintain proper physical proportions.
             # Account for both physical extents and array shape to avoid
             # distortion when physical x and y ranges differ significantly.
-            n_v, n_h = roi_diffs.shape
+            n_v, n_h = roi_diffs.h.shape
             h_extent = h_max - h_min
             v_extent = v_max - v_min
             # aspect = (physical_y_per_pixel) / (physical_x_per_pixel)
@@ -443,7 +437,87 @@ class BladeMapVisualizer:
         return fig
 
 
-class BladeCurrentVisualizer:
+class CentralSweepVisualizer:
+    """Unified visualizer for central sweep analysis.
+./tests/chat-deepseek-2026-09-29.json
+    Creates sweep plots from either:
+    - Live analysis data (from processors)
+    - HDF5 stored data (from readers)
+
+    This eliminates redundancy between processors._central_sweeps_show()
+    and readers._reconstruct_sweeps().
+    """
+    @staticmethod
+    def plot_central_sweep_positions(
+        csweep : CentralSweeps,
+        ) -> "matplotlib.figure.Figure":
+        """Create sweep figure from numpy arrays (position reconstruction path).
+
+        This is used when sweeps data is stored as pre-calculated positions
+        (HDF5 or other sources). Formatting matches canonical plot_central_sweeps.
+
+        Args:
+            csweep   : CentralSweeps object containing horizontal and
+                        vertical sweeps
+            figsize  : Figure size tuple
+
+        Returns:
+            matplotlib.figure.Figure
+        """
+        # Scale for the beamline (source-XBPM distance).
+        fig, (axh, axv) = plt.subplots(
+            nrows=1,
+            ncols=2,
+            figsize=(12, 5)
+            )
+
+        ch = csweep.h
+        if csweep.h is not None:
+            axh.plot(
+                ch.pos_index,
+                ch.pos_calc,
+                'o-',
+                label="H calc",
+                zorder=2
+                )
+            axh.plot(
+                ch.pos_index,
+                ch.pos_fit,
+                '^-',
+                label="H fit",
+                zorder=3
+                )
+            axh.set_xlabel("$x$ [$\\mu$m]")
+            axh.set_ylabel("$y$ [$\\mu$m]")
+            axh.set_title(_Title('sweeps', 'H'))
+            axh.grid(True)
+            axh.legend()
+
+        cv = csweep.v
+        if csweep.v is not None:
+            axv.plot(
+                cv.pos_index,
+                cv.pos_calc,
+                'o-',
+                label="V calc",
+                zorder=2
+                )
+            axv.plot(
+                cv.pos_index,
+                cv.pos_fit,
+                  '^-',
+                  label="V fit",
+                  zorder=3
+                  )
+            axv.set_xlabel("$x$ [$\\mu$m]")
+            axv.set_ylabel("$y$ [$\\mu$m]")
+            axv.set_title(_Title('sweeps', 'V'))
+            axv.grid(True)
+            axv.legend()
+
+        fig.tight_layout()
+        return fig
+
     """Unified visualizer for blade current analysis.
 
     Creates blade current plots from either:
@@ -453,59 +527,16 @@ class BladeCurrentVisualizer:
     This eliminates redundancy between processors.show_blades_at_center()
     and readers._reconstruct_blades_center().
     """
-
-    # @staticmethod
-    # def plot_central_sweeps(csweep : CentralSweeps
-    #                         ) -> matplotlib.figure.Figure:
-    #     """Generate central sweep position plots (canonical version).
-
-    #     This is the tuned plotting implementation used by both live analysis
-    #     and HDF5 reconstruction. It encapsulates the exact visualization
-    #     semantics for the "Positions along sweeps" tab.
-
-    #     Args:
-    #         csweep: CentralSweeps object containing horizontal and vertical sweeps.
-
-    #     Returns:
-    #         matplotlib.figure.Figure
-    #     """
-    #     # Create figure
-    #     fig, (axh, axv) = plt.subplots(1, 2, figsize=(12, 5))
-
-    #     ch = csweep.h
-    #     if ch.pos_fit is not None:
-    #         axh.plot(ch.pos_index, ch.pos_calc, 'o-', label="H fit")
-    #         axh.plot(ch.pos_index, ch.pos_fit, '^-', label="H fit")
-    #         axh.set_xlabel("$x$ [$\\mu$m]")
-    #         axh.set_ylabel("$y$ [$\\mu$m]")
-    #         axh.set_title(_Title('sweeps', 'H'))
-    #         ylim = (np.max(np.abs(ch.pos_fit)) * 1.1)
-    #         axh.set_ylim(-ylim, ylim)
-    #         axh.grid(True)
-    #         axh.legend()
-
-    #     cv = csweep.v
-    #     if cv.pos_fit is not None:
-    #         axv.plot(cv.pos_index, cv.pos_calc, 'o-', label="V fit")
-    #         axv.plot(cv.pos_index, cv.pos_fit, '^-', label="V fit")
-    #         axv.set_xlabel("$x$ [$\\mu$m]")
-    #         axv.set_ylabel("$y$ [$\\mu$m]")
-    #         axv.set_title(_Title('sweeps', 'V'))
-    #         ylim = (np.max(np.abs(cv.pos_fit)) * 1.1)
-    #         axv.set_ylim(-ylim, ylim)
-    #         axv.grid(True)
-    #         axv.legend()
-
-    #     fig.tight_layout()
-    #     return fig
-
     @staticmethod
-    def plot_blade_center_from_dicts(blades_h: dict,
-                                     blades_v: dict,
-                                     range_h: np.ndarray,
-                                     range_v: np.ndarray,
-                                     beamline: str = ""
-                                     ) -> Optional[Figure]:
+    def plot_blade_central_sweeps(
+        csweep: CentralSweeps,
+
+        blades_h: dict,
+        blades_v: dict,
+        range_h: np.ndarray,
+        range_v: np.ndarray,
+        beamline: str = ""
+        ) -> Optional[Figure]:
         """Generate blade currents at center plots (canonical version).
 
         This is the tuned plotting implementation used by both live analysis
@@ -528,19 +559,35 @@ class BladeCurrentVisualizer:
 
         fig, (axh, axv) = plt.subplots(1, 2, figsize=(10, 5))
 
-        if blades_h is not None:
-            for key, blval in blades_h.items():
+        ch = csweep.h
+        cv = csweep.v
+
+        # If horizontal sweeps are available.
+        if ch.blades is not None:
+            hblades = {
+                "TO" : ch.blades.to,
+                "TI" : ch.blades.ti,
+                "BI" : ch.blades.bi,
+                "BO" : ch.blades.bo
+            }
+            for key, blval in hblades.items():
                 val = blval[:, 0]
                 wval = blval[:, 1]
-                weight = 1. / wval if not np.isinf(1. / wval).any() else None
-                (acoef, bcoef) = np.polyfit(range_h, val, deg=1, w=weight)
                 k = f"{key.upper()}"
-                axh.errorbar(range_h, val, wval, fmt='o-', label=k,
+                axh.errorbar(range_h,
+                             val,
+                             wval,
+                             fmt='o-',
+                             label=k,
                             zorder=1)
-                axh.plot(range_h, range_h * acoef + bcoef,
-                        "^-", label=f"{k} fit", zorder=2)
+                axh.plot(range_h,
+                         range_h * hblades[key][:, 0] + hblades[key][:, 1],
+                        "^-",
+                        label=f"{k} fit",
+                        zorder=2)
 
-        if blades_v is not None:
+        # If vertical sweeps are available.
+        if cv.blades is not None:
             for key, blval in blades_v.items():
                 val = blval[:, 0]
                 wval = blval[:, 1]
@@ -607,7 +654,7 @@ class BladeCurrentVisualizer:
                 y = arr
                 yerr = None
 
-            data_line = BladeCurrentVisualizer._plot_blade(
+            data_line = CentralSweepVisualizer._plot_blade(
                 ax, rng, y, yerr, marker, blade_name
             )
 
@@ -617,7 +664,7 @@ class BladeCurrentVisualizer:
                 len(rng) > 1):
                 try:
                     coef = (
-                        BladeCurrentVisualizer._fit_blade(rng, y, yerr,
+                        CentralSweepVisualizer._fit_blade(rng, y, yerr,
                                                         attrs, blade_name)
                     )
                     style = dict(fit_style)
@@ -672,12 +719,12 @@ class BladeCurrentVisualizer:
 
         fig, (axh, axv) = plt.subplots(1, 2, figsize=figsize)
 
-        BladeCurrentVisualizer._plot_side(
+        CentralSweepVisualizer._plot_side(
             axh, blades_h, range_h, attrs_h,
             [('to', 'o-'), ('ti', 's-'), ('bi', 'd-'), ('bo', '^-')],
             (attrs_h or {}).get('xlabel_blades', 'x [μrad]'),
             fit_style, 'horizontal')
-        BladeCurrentVisualizer._plot_side(
+        CentralSweepVisualizer._plot_side(
             axv, blades_v, range_v, attrs_v,
             [('to', 'o-'), ('ti', 's-'), ('bi', 'd-'), ('bo', 'v-')],
             (attrs_v or {}).get('xlabel_blades', 'y [μrad]'),
@@ -693,67 +740,6 @@ class BladeCurrentVisualizer:
         fig.suptitle(
             _Title('blades_at_sweeps', 'suptitle'), fontsize=12, fontweight='bold'
         )
-        fig.tight_layout()
-        return fig
-
-
-class SweepVisualizer:
-    """Unified visualizer for central sweep analysis.
-
-    Creates sweep plots from either:
-    - Live analysis data (from processors)
-    - HDF5 stored data (from readers)
-
-    This eliminates redundancy between processors._central_sweeps_show()
-    and readers._reconstruct_sweeps().
-    """
-    @staticmethod
-    def plot_central_sweeps(
-        csweep : CentralSweeps,
-        figsize: tuple = (12, 5)
-        ) -> "matplotlib.figure.Figure":
-        """Create sweep figure from numpy arrays (position reconstruction path).
-
-        This is used when sweeps data is stored as pre-calculated positions
-        (HDF5 or other sources). Formatting matches canonical plot_central_sweeps.
-
-        Args:
-            csweep   : CentralSweeps object containing horizontal and
-                        vertical sweeps
-            figsize  : Figure size tuple
-
-        Returns:
-            matplotlib.figure.Figure
-        """
-        # Scale for the beamline (source-XBPM distance).
-        fig, (axh, axv) = plt.subplots(nrows=1, ncols=2, figsize=figsize)
-
-        if csweep.h is not None:
-            nom_pos_h   = csweep.h.pos_index
-            calc_pos_v  = csweep.h.pos_calc
-            fit_pos_v   = csweep.h.pos_fit
-
-            axh.plot(nom_pos_h, calc_pos_v, 'o-', label="H calc", zorder=2)
-            axh.plot(nom_pos_h, fit_pos_v,  '^-', label="H fit", zorder=3)
-            axh.set_xlabel("$x$ [$\\mu$m]")
-            axh.set_ylabel("$y$ [$\\mu$m]")
-            axh.set_title(_Title('sweeps', 'H'))
-            axh.grid(True)
-            axh.legend()
-
-        if csweep.v is not None:
-            nom_pos_v   = csweep.v.pos_index
-            calc_pos_h  = csweep.v.pos_calc
-            fit_pos_h   = csweep.v.pos_fit
-
-            axv.plot(nom_pos_v, calc_pos_h, 'o-', label="V calc", zorder=2)
-            axv.plot(nom_pos_v, fit_pos_h,  '^-', label="V fit", zorder=3)
-            axv.set_xlabel("$x$ [$\\mu$m]")
-            axv.set_ylabel("$y$ [$\\mu$m]")
-            axv.set_title(_Title('sweeps', 'V'))
-            axv.grid(True)
-            axv.legend()
-
         fig.tight_layout()
         return fig
 
@@ -902,10 +888,10 @@ class PositionVisualizer:
             cross_result: dict) -> None:
         """Legacy structures to be transferred to visualizers."""
         #
-        # From analyze_central_sweeps.
+        # From analyze_central_sweep_positions.
         #
         if show:
-            fig = SweepVisualizer.plot_central_sweeps(
+            fig = CentralSweepVisualizer.plot_central_sweep_positions(
                 self.range_h,
                 self.range_v,
                 self.sweepline_h,

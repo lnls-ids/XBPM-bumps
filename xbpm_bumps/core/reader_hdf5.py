@@ -197,7 +197,7 @@ class HDF5FigureReconstructor:
     def _reconstruct_sweeps(
         analysis_grp: h5py.Group) -> "matplotlib.figure.Figure":
         """Reconstruct sweeps figure from analysis group."""
-        from .visualizers import SweepVisualizer
+        from .visualizers import CentralSweepVisualizer
         sweeps_grp = (
             analysis_grp.get('sweeps') or
             analysis_grp.get('sweep') or
@@ -225,7 +225,7 @@ class HDF5FigureReconstructor:
                     break
         if h_data is None and v_data is None:
             raise ValueError("No sweeps datasets found in sweeps group")
-        return SweepVisualizer.plot_from_hdf5(h_data, v_data)
+        return CentralSweepVisualizer.plot_from_hdf5(h_data, v_data)
 
     @staticmethod
     def _reconstruct_blades_center(
@@ -235,7 +235,7 @@ class HDF5FigureReconstructor:
         Uses the canonical plotting function with blade data extracted
         from HDF5, ensuring consistency with live analysis.
         """
-        from .visualizers import BladeCurrentVisualizer
+        from .visualizers import CentralSweepVisualizer
 
         sweeps_grp = (analysis_grp.get('sweeps')
                       or analysis_grp.get('central_sweeps'))
@@ -244,7 +244,7 @@ class HDF5FigureReconstructor:
         h_data = sweeps_grp.get('blades_h')
         v_data = sweeps_grp.get('blades_v')
 
-        return BladeCurrentVisualizer.plot_from_hdf5(h_data, v_data)
+        return CentralSweepVisualizer.plot_from_hdf5(h_data, v_data)
 
     @staticmethod
     def _reconstruct_positions(h5_file: h5py.File,

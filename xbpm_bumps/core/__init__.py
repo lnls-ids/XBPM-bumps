@@ -6,8 +6,8 @@ from .data_structure import GenPrm, BeamlinePrm, DataAnalysis, BeamlineData
 from .visualizers import (
     BladeMapVisualizer,
     PositionVisualizer,
-    SweepVisualizer,
-    BladeCurrentVisualizer,
+    CentralSweepVisualizer,
+    CentralSweepVisualizer,
 )
 from .exporters import Exporter
 
@@ -17,8 +17,8 @@ __all__ = [
     "BPMProcessor",
     "BladeMapVisualizer",
     "PositionVisualizer",
-    "SweepVisualizer",
-    "BladeCurrentVisualizer",
+    "CentralSweepVisualizer",
+    "CentralSweepVisualizer",
     "Exporter",
     "GenPrm",
     "BeamlinePrm",

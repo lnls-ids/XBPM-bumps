@@ -291,8 +291,8 @@ class ParameterPanel(QWidget):
         nv, nh = grid_shape
         self.roi_h_spin.setRange(1, nh)
         self.roi_v_spin.setRange(1, nv)
-        self.roi_h_spin.setValue(min(beamline_prm.roi.size_h, nh))
-        self.roi_v_spin.setValue(min(beamline_prm.roi.size_v, nv))
+        self.roi_h_spin.setValue(min(beamline_prm.roislice.size_h, nh))
+        self.roi_v_spin.setValue(min(beamline_prm.roislice.size_v, nv))
         self.xbpmdist_spin.setValue(beamline_prm.xbpmdist or 0.0)
         self.skip_spin.setValue(beamline_prm.skip)
         self.scalepolydeg.setValue(beamline_prm.scalepolydeg)

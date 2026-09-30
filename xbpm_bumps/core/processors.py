@@ -41,22 +41,25 @@ class XBPMProcessor:
         self.blades     = self.blade_avg.blades
         self.prm_avg    = self.blade_avg.prm
         self.prm_gen    = runtime_prm
-
         # Analysis data.
-        self.analysis = analysis
+        self.analysis   = analysis
 
         # Beamline parameters.
         self.prm_bml    = beamline_prm
         self.beamline   = self.prm_bml.beamline
         # ROI defines V and H sizes (sz_h/v), and respective slices (sl_h/v).
-        self.roi        = self.prm_bml.roi
+        self.roi        = self.prm_bml.roislice
  
         # Nominal positions.
-        self.pos_nom = DStr.Positions(
+        self.pos_nom    = DStr.Positions(
             x=self.blade_avg.pos_nom.x,
             y=self.blade_avg.pos_nom.y
             )
 
+        self._central_sweep_slices()
+
+    def _central_sweep_slices(self) -> None:
+        """Extract central sweep blade values for both h, v directions."""
         # Calculate ranges.
         self.range_h    = np.unique(self.pos_nom.x)
         self.range_v    = np.unique(self.pos_nom.y)
@@ -65,7 +68,47 @@ class XBPMProcessor:
             len(self.range_h)
             )
 
-    def analyze_central_sweeps(self,
+        # Select blades at the central vertical line (y ~ 0).
+        # Find sites next to the zero position.
+        mask_h = np.isclose(self.pos_nom.y, 0)
+        # Guarantee the order of the indices along the horizontal direction.
+        idx_h  = np.argsort(self.pos_nom.x[mask_h])
+
+        blades = self.blade_avg.blades
+        self.cs_bld_h = DStr.Blades(
+            to      = blades.to[mask_h][idx_h],
+            ti      = blades.ti[mask_h][idx_h],
+            bi      = blades.bi[mask_h][idx_h],
+            bo      = blades.bo[mask_h][idx_h],
+            sto     = blades.sto[mask_h][idx_h],
+            sti     = blades.sti[mask_h][idx_h],
+            sbi     = blades.sbi[mask_h][idx_h],
+            sbo     = blades.sbo[mask_h][idx_h],
+            pos_nom = DStr.Positions(
+                  x = self.pos_nom.x[mask_h][idx_h],
+                  y = self.pos_nom.y[mask_h][idx_h]
+            )
+        )
+
+        # Select blades at the central vertical line (x ~ 0).
+        mask_v  = np.isclose(self.pos_nom.x, 0)
+        idx_v   = np.argsort(self.pos_nom.y[mask_v])
+        self.cs_bld_v = DStr.Blades(
+            to      = blades.to[mask_v][idx_v],
+            ti      = blades.ti[mask_v][idx_v],
+            bi      = blades.bi[mask_v][idx_v],
+            bo      = blades.bo[mask_v][idx_v],
+            sto     = blades.sto[mask_v][idx_v],
+            sti     = blades.sti[mask_v][idx_v],
+            sbi     = blades.sbi[mask_v][idx_v],
+            sbo     = blades.sbo[mask_v][idx_v],
+            pos_nom = DStr.Positions(
+                  x = self.pos_nom.x[mask_v][idx_v],
+                  y = self.pos_nom.y[mask_v][idx_v]
+            )
+        )
+    
+    def analyze_central_sweep_positions(self,
                                pairw: bool = False
                                ) -> DStr.CentralSweeps:
         """Assemble the central sweep analysis.
@@ -74,38 +117,30 @@ class XBPMProcessor:
             CentralSweeps instance containing horizontal and vertical central sweeps.
         """
         # Run through central lines if data is not just a point.
-        h = (self.central_sweep_h(pairw) if len(self.range_h) > 1 else None)
-        v = (self.central_sweep_v(pairw) if len(self.range_v) > 1 else None)
+        h = (
+            self._central_sweep_h(pairw)
+            if len(self.range_h) > 1
+            else None
+            )
+        v = (
+            self._central_sweep_v(pairw)
+            if len(self.range_v) > 1
+            else None
+            )
         return DStr.CentralSweeps(h=h, v=v)
 
-    def central_sweep_h(self,
+    def _central_sweep_h(self,
                         pairw: bool = False
                         ) -> DStr.CentralSweepLine:
         """Analyze position calculation along the central horizontal line."""
-        bld_avg   = self.blade_avg
-        blades    = bld_avg.blades
-
-        # Select blades at the central horizontal line (y ~ 0).
-        pos_nom_x = bld_avg.pos_nom.x
-        pos_nom_y = bld_avg.pos_nom.y
-
-        # Find sites next to the zero position.
-        mask  = np.isclose(pos_nom_y, 0)
-        idx   = np.argsort(pos_nom_x[mask])
-        to    = blades.to[mask][idx]
-        ti    = blades.ti[mask][idx]
-        bi    = blades.bi[mask][idx]
-        bo    = blades.bo[mask][idx]
-        sto   = blades.sto[mask][idx]
-        sti   = blades.sti[mask][idx]
-        sbi   = blades.sbi[mask][idx]
-        sbo   = blades.sbo[mask][idx]
-
-        nom_x = pos_nom_x[mask][idx]
-        nom_y = pos_nom_y[mask][idx]
+        # Shortcuts for the central horizontal blades.
+        to = self.cs_bld_h.to
+        ti = self.cs_bld_h.ti
+        bi = self.cs_bld_h.bi
+        bo = self.cs_bld_h.bo
 
         # Calculate positions using pairwise Δ/Σ or cross-blades formula.
-        # calc_pos_v is the calculated set of positions at central line
+        # pos_calc_v is the calculated set of positions at central line
         # along h direction (fixed nominal y at 0), expected to be zero.
         if pairw:
             s_top = to + ti
@@ -122,16 +157,10 @@ class XBPMProcessor:
         sk, sd   = np.sqrt(np.diag(cov))
         fit_err  = np.sqrt((self.range_h * sk)**2 + sd**2)
 
-        # Build the SweepLine data structure for horizontal sweep.
-        blades = DStr.Blades(
-            to, ti, bi, bo,
-            sto, sti, sbi, sbo,
-            pos_nom = DStr.Positions(x=nom_x, y=nom_y)
-            )
         return DStr.CentralSweepLine(
-            blades=blades,
+            blades=self.cs_bld_h,
             pos_index=self.range_h,
-            pos_fixed=pos_nom_y[mask][idx],
+            pos_fixed=self.cs_bld_h.pos_nom.y,
             pos_calc=pos_calc_v,
             pos_fit=pos_fit,
             pos_fit_err=fit_err,
@@ -139,33 +168,19 @@ class XBPMProcessor:
             sigmas=np.sqrt(np.diag(cov))
         )
 
-    def central_sweep_v(self,
-                        pairw: bool = False) -> DStr.CentralSweepLine:
+    def _central_sweep_v(self,
+                        pairw: bool = False
+                        ) -> DStr.CentralSweepLine:
         """Analyze position calculation along the central vertical line."""
-        # Select blades at x ~ 0 (central vertical line).
-        bld_avg   = self.blade_avg
-        blades    = bld_avg.blades
-
-        # Select blades at the central vertical line (x ~ 0).
-        pos_nom_x = bld_avg.pos_nom.x.reshape(self.grid_shape)
-        pos_nom_y = bld_avg.pos_nom.y.reshape(self.grid_shape)
-
-        # Find sites next to the zero position.
-        mask  = np.isclose(pos_nom_x, 0)
-        idx   = np.argsort(pos_nom_y[mask])
-
-        to    = blades.to[mask][idx]
-        ti    = blades.ti[mask][idx]
-        bi    = blades.bi[mask][idx]
-        bo    = blades.bo[mask][idx]
-        sto   = blades.sto[mask][idx]
-        sti   = blades.sti[mask][idx]
-        sbi   = blades.sbi[mask][idx]
-        sbo   = blades.sbo[mask][idx]
-        nom_x = pos_nom_x[mask][idx]
-        nom_y = pos_nom_y[mask][idx]
+        # Shortcuts for the central vertical blades.
+        to = self.cs_bld_v.to
+        ti = self.cs_bld_v.ti
+        bi = self.cs_bld_v.bi
+        bo = self.cs_bld_v.bo
 
         # Calculate positions using pairwise Δ/Σ or cross-blades formula.
+        # pos_calc_h is the calculated set of positions at central line
+        # along v direction (fixed nominal x at 0), expected to be zero.
         if pairw:
             s_left     = to + bo
             s_right    = ti + bi
@@ -181,16 +196,10 @@ class XBPMProcessor:
         sa, sb   = np.sqrt(np.diag(cov))
         fit_err  = np.sqrt((self.range_v * sa)**2 + sb**2)
 
-        # Build the SweepLine data structure for vertical sweep.
-        blades = DStr.Blades(
-            to, ti, bi, bo,
-            sto, sti, sbi, sbo,
-            pos_nom = DStr.Positions(x=nom_x, y=nom_y)
-            )
         return DStr.CentralSweepLine(
-            blades=blades,
+            blades=self.cs_bld_v,
             pos_index=self.range_v,
-            pos_fixed=pos_nom_x[mask][idx],
+            pos_fixed=self.cs_bld_v.pos_nom.x,
             pos_calc=pos_calc_h,
             pos_fit=pos_fit,
             pos_fit_err=fit_err,
@@ -326,55 +335,117 @@ class XBPMProcessor:
             cross=cross_res
             )
 
-    def analyze_blade_centers(self) -> DStr.BladeCenterAnalysis:
+    def analyze_central_sweep_blades(self) -> DStr.BladeCenterAnalysis:
         """Analyze the central positions of the blades."""
-        # Define blades values according to ROI for slope calculation.
-        blades = {
+        # Define blade intervals according to ROI for slope calculation.
+        blades_h = {
             'to' : (
-                self.blades.to[self.roi.slice_v, self.roi.slice_h],
-                self.blades.sto[self.roi.slice_v, self.roi.slice_h]
-                ),
-            'ti' : (
-                self.blades.ti[self.roi.slice_v, self.roi.slice_h],
-                self.blades.sti[self.roi.slice_v, self.roi.slice_h]
+                self.cs_bld_h.to[self.roi.slice_h],
+                self.cs_bld_h.sto[self.roi.slice_h]),
+            'ti' : ( 
+                self.cs_bld_h.ti[self.roi.slice_h],
+                self.cs_bld_h.sti[self.roi.slice_h]
                 ),
             'bi' : (
-                self.blades.bi[self.roi.slice_v, self.roi.slice_h],
-                self.blades.sbi[self.roi.slice_v, self.roi.slice_h]
+                self.cs_bld_h.bi[self.roi.slice_h],
+                self.cs_bld_h.sbi[self.roi.slice_h]
                 ),
             'bo' : (
-                self.blades.bo[self.roi.slice_v, self.roi.slice_h],
-                self.blades.sbo[self.roi.slice_v, self.roi.slice_h]
+                self.cs_bld_h.bo[self.roi.slice_h],
+                self.cs_bld_h.sbo[self.roi.slice_h]
+                ),
+        }
+
+        blades_v = {
+            'to' : (
+                self.cs_bld_v.to[self.roi.slice_v],
+                self.cs_bld_v.sto[self.roi.slice_v]),
+            'ti' : ( 
+                self.cs_bld_v.ti[self.roi.slice_v],
+                self.cs_bld_v.sti[self.roi.slice_v]
+                ),
+            'bi' : (
+                self.cs_bld_v.bi[self.roi.slice_v],
+                self.cs_bld_v.sbi[self.roi.slice_v]
+                ),
+            'bo' : (
+                self.cs_bld_v.bo[self.roi.slice_v],
+                self.cs_bld_v.sbo[self.roi.slice_v]
                 ),
         }
 
         # Get central indices for vertical and horizontal directions.
-        nv, nh = blades['to'][0].shape
-        vc, hc = int(nv / 2), int(nh / 2)
-
-        # Cut blades at central lines for horizontal and vertical analysis.
-        hblades = {
-            k : (bld[0][vc, :], bld[1][vc, :])
-            for k, bld in blades.items()
-        }
-        vblades = {
-            k : (bld[0][:, hc], bld[1][:, hc])
-            for k, bld in blades.items()
-        }
+        # nv, nh = blades_h['to'][0].shape
+        # vc, hc = int(nv / 2), int(nh / 2)
 
         # Perform central line fit for horizontal and vertical blade analysis.
         hrange = self.range_h[self.roi.slice_h]
-        horz = self.blade_central_line_fit(hblades, hrange)
-        horz["pos_nom"] = DStr.Positions(x=hrange, y=np.zeros_like(hrange))
+        horz   = self._blade_central_line_fit(blades_h, hrange)
+        horz["blades"]  = DStr.Blades(**blades_h)
+        horz["pos_nom"] = DStr.Positions(
+            x = hrange,
+            y = np.zeros_like(hrange)
+            )
 
         vrange = self.range_v[self.roi.slice_v]
-        vert = self.blade_central_line_fit(vblades, vrange)
-        vert["pos_nom"] = DStr.Positions(x=np.zeros_like(vrange), y=vrange)
+        vert   = self._blade_central_line_fit(blades_v, vrange)
+        vert["blades"]  = DStr.Blades(**blades_v)
+        vert["pos_nom"] = DStr.Positions(
+            x = np.zeros_like(vrange),
+            y = vrange
+            )
 
         return {
             "h": DStr.BladeCenterAnalysis(**horz),
             "v": DStr.BladeCenterAnalysis(**vert),
         }
+
+    def _blade_central_line_fit(self,
+                               blades: dict,
+                               range_vals: np.ndarray
+                               ) -> dict:
+        """Linear fittings to each blade's data through central line.
+        
+        Args:
+            blades     : dictionary containing blade data and associated
+                         errors within the ROI.
+            range_vals : range values corresponding to the ROI.
+
+        Returns:
+            Dictionary containing the fit coefficients and standard deviations for each blade.
+        """
+        # Loop over each blade and perform linear fitting.
+        results = {}
+        for bl, (blade, err) in blades.items():
+            # Calculate weights as the inverse of the errors, if possible.
+            weight = 1. / err[:]
+            if np.isinf(weight).any():
+                weight = None
+
+            # Fit a linear polynomial to the blade data with weights.
+            coefs, cov = np.polyfit(range_vals,
+                                    blade,
+                                    deg=1,
+                                    w=weight,
+                                    cov=True)
+
+            # Coefficient errors.
+            sigmas = np.sqrt(np.diag(cov))
+            # Nominal values.
+            nom  = DStr.Positions(x=range_vals, y=blade)
+            yfit = np.polyval(coefs, range_vals)
+            # Fitted values.
+            fit_val = DStr.Positions(x=range_vals, y=yfit)
+            # Store results in the dataclass for each blade.
+            results[bl] = DStr.BladeLineFit(
+                k=coefs[0],
+                d=coefs[1],
+                sk=sigmas[0],
+                sd=sigmas[1],
+                nom=nom,
+                fit=fit_val,
+            )
+        return results
 
     def _calculate_suppression_matrix(self) -> DStr.SuppressionMatrix:
         """Calculate the suppression matrix from blade behavior.
@@ -444,53 +515,6 @@ class XBPMProcessor:
             stddev=stddev,
             optimized=deepcopy(calculated)
             )
-
-    def blade_central_line_fit(self,
-                               blades: dict,
-                               range_vals: np.ndarray
-                               ) -> dict:
-        """Linear fittings to each blade's data through central line.
-        
-        Args:
-            blades     : dictionary containing blade data and associated
-                         errors within the ROI.
-            range_vals : range values corresponding to the ROI.
-
-        Returns:
-            Dictionary containing the fit coefficients and standard deviations for each blade.
-        """
-        # Loop over each blade and perform linear fitting.
-        results = {}
-        for bl, (blade, err) in blades.items():
-            # Calculate weights as the inverse of the errors, if possible.
-            weight = 1. / err[:]
-            if np.isinf(weight).any():
-                weight = None
-
-            # Fit a linear polynomial to the blade data with weights.
-            coefs, cov = np.polyfit(range_vals,
-                                    blade,
-                                    deg=1,
-                                    w=weight,
-                                    cov=True)
-
-            # Coefficient errors.
-            sigmas = np.sqrt(np.diag(cov))
-            # Nominal values.
-            nom  = DStr.Positions(x=range_vals, y=blade)
-            yfit = np.polyval(coefs, range_vals)
-            # Fitted values.
-            fit_val = DStr.Positions(x=range_vals, y=yfit)
-            # Store results in the dataclass for each blade.
-            results[bl] = DStr.BladeLineFit(
-                k=coefs[0],
-                d=coefs[1],
-                sk=sigmas[0],
-                sd=sigmas[1],
-                nom=nom,
-                fit=fit_val,
-            )
-        return results
 
     def beam_position_pair(self, supmat: np.ndarray) -> DStr.Positions:
         """Calculate beam position from blades' currents (pairwise).
@@ -714,7 +738,7 @@ class BPMProcessor:
         self.sweeps_bpm  = raw_data.sweeps_bpm
         self.meta        = raw_data.meta
         self.prm_bml     = prm_bml
-        self.roi         = prm_bml.roi
+        self.roi         = prm_bml.roislice
         self._print_bpm_info()
         self.bpmanalysis = self.calculate_positions()
 
@@ -741,7 +765,7 @@ class BPMProcessor:
             self.nom_y,
             self.meas_x,
             self.meas_y,
-            self.prm_bml.roi
+            self.prm_bml.roislice
         )
 
         # Build structures for BPM analysis results.

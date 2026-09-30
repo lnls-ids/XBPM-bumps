@@ -398,7 +398,7 @@ class XBPMMainWindow(QMainWindow):
         bl_prm.skip         = params["skip"]
         bl_prm.scalepolydeg = params["scalepolydeg"]
         bl_prm.usebpmref    = params["usebpmref"]
-        bl_prm.roi          = DStr.ROISlice.update(
+        bl_prm.roislice          = DStr.ROISlice.update(
             self.grid_shape,
             params["roisize"]
             )
@@ -979,7 +979,7 @@ class XBPMMainWindow(QMainWindow):
         if isinstance(bpm_stats, dict):
             bpm_lines.append(
                 "  ROI size [lines x columns points] ="
-                f" {self.beamline_prm.roi.size_v} x {self.beamline_prm.roi.size_h}"
+                f" {self.beamline_prm.roislice.size_v} x {self.beamline_prm.roislice.size_h}"
             )
             bpm_lines.append("\n  Sigmas (all sites):")
             for key in ('sigma_h', 'sigma_v', 'sigma_total'):

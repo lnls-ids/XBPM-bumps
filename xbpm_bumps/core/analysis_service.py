@@ -42,7 +42,7 @@ class AnalysisService:
 
         # Blades at center are necessary for the suppression matrix.
         if runtime_prm.show_bladecenter:
-            analysis.bladecenter = xprocessor.analyze_blade_centers()
+            analysis.bladecenter = xprocessor.analyze_central_sweep_blades()
 
         # Central sweeps are needed for linear transformation of
         # partial Delta/Sigma calculations.
@@ -53,7 +53,9 @@ class AnalysisService:
             or runtime_prm.show_xbpmpositions
         )
         if needs_sweeps:
-            analysis.centralsweeps = xprocessor.analyze_central_sweeps()
+            analysis.centralsweeps = (
+                xprocessor.analyze_central_sweep_positions()
+                )
 
         # XBPM positions calculation.
         if (

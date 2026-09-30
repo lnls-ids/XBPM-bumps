@@ -127,7 +127,7 @@ class BeamlinePrm:
     sector       : list  | None = None
     usebpmref    : bool = False
     grid_shape   : tuple[int, int] | None = None
-    roi          : ROISlice = field(default_factory=ROISlice)
+    roislice     : ROISlice = field(default_factory=ROISlice)
     updated      : str  | None = None
 
     @classmethod
@@ -245,8 +245,10 @@ class Blades:
         datanames = avg_grp.dtype.names
 
         # Check for required datasets in the HDF5 group.
-        blade_titles = ['to_mean', 'ti_mean', 'bi_mean', 'bo_mean',
-                  'to_err',  'ti_err',  'bi_err',  'bo_err']
+        blade_titles = [
+            'to_mean', 'ti_mean', 'bi_mean', 'bo_mean',
+            'to_err',  'ti_err',  'bi_err',  'bo_err'
+            ]
         for blade in blade_titles:
             if blade not in datanames:
                 raise ValueError(
@@ -310,29 +312,26 @@ class BladeAvgData:
     nom_shape : shape of the nominal positions grid
     blades    : averaged blade currents and their standard deviations
     """
-    prm        : dict
-    pos_nom    : Positions
-    pos_nom_sh : tuple
-    blades     : Blades
+    prm     : dict
+    pos_nom : Positions
+    blades  : Blades
 
     @classmethod
     def from_hdf5(cls, avg_grp) -> "BladeAvgData":
         """Create a BladeAvgData instance from an HDF5 group."""
         # Extract metadata attributes.
-        prm         = {key : val for key, val in avg_grp.attrs.items()}
-        blades      = Blades.from_hdf5(avg_grp)
-        pos_nom     = blades.pos_nom
-        pos_nom_sh  = pos_nom.x.shape
+        prm     = {key : val for key, val in avg_grp.attrs.items()}
+        blades  = Blades.from_hdf5(avg_grp)
+        pos_nom = blades.pos_nom
         return cls(
-            prm=prm,
-            pos_nom=pos_nom,
-            pos_nom_sh=pos_nom_sh,
-            blades=blades
+            prm     = prm,
+            pos_nom = pos_nom,
+            blades  = blades
             )
 
 
 @dataclass
-class BladeVals:
+class BladeRawVals:
     """Container for one blade raw data and associated metadata.
     
     val        : measured currents for the blade
@@ -344,9 +343,16 @@ class BladeVals:
     saturation : np.ndarray
 
     @classmethod
-    def from_hdf5(cls, bld_grp: h5py.Group, blade: str) -> "BladeVals":
+    def from_hdf5(cls,
+                  bld_grp: h5py.Group,
+                  blade: str
+                  ) -> "BladeRawVals":
         """Create a BladeVals instance from an HDF5 group."""
-        required_fields = ['val', 'range', 'saturation']
+        required_fields = [
+            'val',
+            'range',
+            'saturation'
+            ]
         for fld in required_fields:
             if f"{blade}_{fld}" not in bld_grp.dtype.names:
                 raise ValueError(
@@ -393,10 +399,10 @@ class BladeRawData:
     
     TO, TI, BI, BO: BladeVals for each blade
     """
-    TO : BladeVals
-    TI : BladeVals
-    BI : BladeVals
-    BO : BladeVals
+    TO : BladeRawVals
+    TI : BladeRawVals
+    BI : BladeRawVals
+    BO : BladeRawVals
 
     @classmethod
     def from_hdf5(cls, raw_grp: h5py.Group, beamline: str) -> "BladeRawData":
@@ -404,10 +410,10 @@ class BladeRawData:
         # Use the checked beamline map to extract data.
         bmap = Config.BLADEMAP.get(beamline, None)
         return cls(
-            TO = BladeVals.from_hdf5(raw_grp, bmap["TO"]),
-            TI = BladeVals.from_hdf5(raw_grp, bmap["TI"]),
-            BI = BladeVals.from_hdf5(raw_grp, bmap["BI"]),
-            BO = BladeVals.from_hdf5(raw_grp, bmap["BO"])
+            TO = BladeRawVals.from_hdf5(raw_grp, bmap["TO"]),
+            TI = BladeRawVals.from_hdf5(raw_grp, bmap["TI"]),
+            BI = BladeRawVals.from_hdf5(raw_grp, bmap["BI"]),
+            BO = BladeRawVals.from_hdf5(raw_grp, bmap["BO"])
         )
 
 
@@ -746,6 +752,7 @@ class BladeCenterAnalysis:
     ti : BladeLineFit
     bi : BladeLineFit
     bo : BladeLineFit
+    blades  : Blades
     pos_nom : Positions
 
     @classmethod
@@ -756,6 +763,7 @@ class BladeCenterAnalysis:
             ti = BladeLineFit.from_hdf5(bca_grp['ti']),
             bi = BladeLineFit.from_hdf5(bca_grp['bi']),
             bo = BladeLineFit.from_hdf5(bca_grp['bo']),
+            blades  = Blades.from_hdf5(bca_grp['blades']),
             pos_nom = Positions.from_hdf5(bca_grp['pos_nom'])
         )
 
