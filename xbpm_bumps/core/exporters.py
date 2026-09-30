@@ -315,9 +315,11 @@ class Exporter:
 
                 # Convert avg_table to structured array for HDF5
                 grid_x, grid_y = self._build_grid_arrays(avg_table)
+
                 avg_struct = self._build_nominal_index_table(
                     avg_table, grid_x, grid_y
                     )
+
                 ds = raw_grp.create_dataset(f'avg_{beamline}',
                                             data=avg_struct)
                 ds.attrs['description'] = (
@@ -329,19 +331,18 @@ class Exporter:
             # Only write analysis if results are provided and non-empty
             if results:
                 self._write_derived(h5, results)
+
             if include_figures and results:
                 self._write_figures(h5, results, data)
 
         print(f"HDF5 export written to {filepath}")
 
-    def _average_blade_values(self, data: list, blademap: dict) -> tuple:
+    def _average_blade_values(self, data: dict, blademap: dict) -> tuple:
         """Compute average and standard deviation of blade values.
 
         Args:
-            data: List of (mantissa, unit) tuples.
-            pos_index: Tuple of (agx, agy) nominal positions.
+            data: Dictionary with keys as (agx, agy) nominal positions and values as lists of (mantissa, unit) tuples.
             blademap: Blade mapping dictionary for the beamline.
-            avg_table: Dictionary to store results.
 
         Returns:
             Tuple of (average, standard deviation) in Amperes.
@@ -349,12 +350,15 @@ class Exporter:
         avg = {}
         for key, val in data.items():
             if key.endswith('_val'):
-                bladename = next((k for k, v in
-                                  blademap.items() if v == key[0]), None
+                bladename = next((k for k, v in blademap.items()
+                                  if v == key[0]), None
                                   )
                 blade_vals = []
-                for mant, unit in val:
-                    blade_vals.append(mant * Config.AMPSUB[unit])
+                try:
+                    for mant, unit in val:
+                        blade_vals.append(mant * Config.AMPSUB[unit])
+                except:   # noqa: E722
+                    blade_vals = np.array(val)
                 avg[bladename] = np.average(blade_vals)
                 avg[bladename + '_std'] = np.std(blade_vals)
         return avg
