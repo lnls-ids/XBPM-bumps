@@ -739,6 +739,18 @@ class BladeLineFit:
     nom : Positions
     fit : Positions
 
+    @classmethod
+    def from_hdf5(cls, blf_grp) -> "BladeLineFit":
+        """Create a BladeLineFit instance from an HDF5 group."""
+        return cls(
+            k   = blf_grp.attrs['k'],
+            sk  = blf_grp.attrs['sk'],
+            d   = blf_grp.attrs['d'],
+            sd  = blf_grp.attrs['sd'],
+            nom = Positions.from_hdf5(blf_grp['nom']),
+            fit = Positions.from_hdf5(blf_grp['fit'])
+        )
+
 
 @dataclass
 class BladeCenterAnalysis:
