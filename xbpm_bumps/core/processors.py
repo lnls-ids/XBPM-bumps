@@ -339,61 +339,51 @@ class XBPMProcessor:
         """Analyze the central positions of the blades."""
         # Define blade intervals according to ROI for slope calculation.
         blades_h = {
-            'to' : (
-                self.cs_bld_h.to[self.roi.slice_h],
-                self.cs_bld_h.sto[self.roi.slice_h]),
-            'ti' : ( 
-                self.cs_bld_h.ti[self.roi.slice_h],
-                self.cs_bld_h.sti[self.roi.slice_h]
-                ),
-            'bi' : (
-                self.cs_bld_h.bi[self.roi.slice_h],
-                self.cs_bld_h.sbi[self.roi.slice_h]
-                ),
-            'bo' : (
-                self.cs_bld_h.bo[self.roi.slice_h],
-                self.cs_bld_h.sbo[self.roi.slice_h]
-                ),
+            'to'  : self.cs_bld_h.to[self.roi.slice_h],
+            'ti'  : self.cs_bld_h.ti[self.roi.slice_h],
+            'bi'  : self.cs_bld_h.bi[self.roi.slice_h],
+            'bo'  : self.cs_bld_h.bo[self.roi.slice_h],
+            'sto' : self.cs_bld_h.sto[self.roi.slice_h],
+            'sti' : self.cs_bld_h.sti[self.roi.slice_h],
+            'sbi' : self.cs_bld_h.sbi[self.roi.slice_h],
+            'sbo' : self.cs_bld_h.sbo[self.roi.slice_h],
+        }
+        bld_fit_h = {
+            k: (blades_h[k], blades_h[f's{k}'])
+            for k in ['to', 'ti', 'bi', 'bo']
         }
 
         blades_v = {
-            'to' : (
-                self.cs_bld_v.to[self.roi.slice_v],
-                self.cs_bld_v.sto[self.roi.slice_v]),
-            'ti' : ( 
-                self.cs_bld_v.ti[self.roi.slice_v],
-                self.cs_bld_v.sti[self.roi.slice_v]
-                ),
-            'bi' : (
-                self.cs_bld_v.bi[self.roi.slice_v],
-                self.cs_bld_v.sbi[self.roi.slice_v]
-                ),
-            'bo' : (
-                self.cs_bld_v.bo[self.roi.slice_v],
-                self.cs_bld_v.sbo[self.roi.slice_v]
-                ),
+            'to'  : self.cs_bld_v.to[self.roi.slice_v],
+            'ti'  : self.cs_bld_v.ti[self.roi.slice_v],
+            'bi'  : self.cs_bld_v.bi[self.roi.slice_v],
+            'bo'  : self.cs_bld_v.bo[self.roi.slice_v],
+            'sto' : self.cs_bld_v.sto[self.roi.slice_v],
+            'sti' : self.cs_bld_v.sti[self.roi.slice_v],
+            'sbi' : self.cs_bld_v.sbi[self.roi.slice_v],
+            'sbo' : self.cs_bld_v.sbo[self.roi.slice_v],
         }
-
-        # Get central indices for vertical and horizontal directions.
-        # nv, nh = blades_h['to'][0].shape
-        # vc, hc = int(nv / 2), int(nh / 2)
+        bld_fit_v = {
+            k: (blades_v[k], blades_v[f's{k}'])
+            for k in ['to', 'ti', 'bi', 'bo']
+        }
 
         # Perform central line fit for horizontal and vertical blade analysis.
         hrange = self.range_h[self.roi.slice_h]
-        horz   = self._blade_central_line_fit(blades_h, hrange)
-        horz["blades"]  = DStr.Blades(**blades_h)
-        horz["pos_nom"] = DStr.Positions(
+        horz   = self._blade_central_line_fit(bld_fit_h, hrange)
+        blades_h["pos_nom"] = DStr.Positions(
             x = hrange,
             y = np.zeros_like(hrange)
             )
+        horz["blades"] = DStr.Blades(**blades_h)
 
         vrange = self.range_v[self.roi.slice_v]
-        vert   = self._blade_central_line_fit(blades_v, vrange)
-        vert["blades"]  = DStr.Blades(**blades_v)
-        vert["pos_nom"] = DStr.Positions(
+        vert   = self._blade_central_line_fit(bld_fit_v, vrange)
+        blades_v["pos_nom"] = DStr.Positions(
             x = np.zeros_like(vrange),
             y = vrange
             )
+        vert["blades"] = DStr.Blades(**blades_v)
 
         return {
             "h": DStr.BladeCenterAnalysis(**horz),
