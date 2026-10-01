@@ -68,45 +68,57 @@ class XBPMProcessor:
             len(self.range_h)
             )
 
+        # Shortcut to blade data.
+        blades = self.blade_avg.blades
+
         # Select blades at the central horizontal line (y ~ 0).
         # Find sites next to the zero position.
         mask_h = np.isclose(self.pos_nom.y, 0)
-        # Guarantee the order of the indices along the horizontal direction.
-        idx_h  = np.argsort(self.pos_nom.x[mask_h])
+        if not np.any(mask_h):
+            print("WARNING: no counts/currents found near the central"
+                  " horizontal line (y ~ 0).")
+            self.cs_bld_h = None
+        else:
+            # Guarantee the order of the indices along the horizontal direction.
+            idx_h  = np.argsort(self.pos_nom.x[mask_h])
 
-        blades = self.blade_avg.blades
-        self.cs_bld_h = DStr.Blades(
-            to      = blades.to[mask_h][idx_h],
-            ti      = blades.ti[mask_h][idx_h],
-            bi      = blades.bi[mask_h][idx_h],
-            bo      = blades.bo[mask_h][idx_h],
-            sto     = blades.sto[mask_h][idx_h],
-            sti     = blades.sti[mask_h][idx_h],
-            sbi     = blades.sbi[mask_h][idx_h],
-            sbo     = blades.sbo[mask_h][idx_h],
-            pos_nom = DStr.Positions(
-                  x = self.pos_nom.x[mask_h][idx_h],
-                  y = self.pos_nom.y[mask_h][idx_h]
+            self.cs_bld_h = DStr.Blades(
+                to      = blades.to[mask_h][idx_h],
+                ti      = blades.ti[mask_h][idx_h],
+                bi      = blades.bi[mask_h][idx_h],
+                bo      = blades.bo[mask_h][idx_h],
+                sto     = blades.sto[mask_h][idx_h],
+                sti     = blades.sti[mask_h][idx_h],
+                sbi     = blades.sbi[mask_h][idx_h],
+                sbo     = blades.sbo[mask_h][idx_h],
+                pos_nom = DStr.Positions(
+                    x = self.pos_nom.x[mask_h][idx_h],
+                    y = self.pos_nom.y[mask_h][idx_h]
+                )
             )
-        )
 
         # Select blades at the central vertical line (x ~ 0).
-        mask_v  = np.isclose(self.pos_nom.x, 0)
-        idx_v   = np.argsort(self.pos_nom.y[mask_v])
-        self.cs_bld_v = DStr.Blades(
-            to      = blades.to[mask_v][idx_v],
-            ti      = blades.ti[mask_v][idx_v],
-            bi      = blades.bi[mask_v][idx_v],
-            bo      = blades.bo[mask_v][idx_v],
-            sto     = blades.sto[mask_v][idx_v],
-            sti     = blades.sti[mask_v][idx_v],
-            sbi     = blades.sbi[mask_v][idx_v],
-            sbo     = blades.sbo[mask_v][idx_v],
-            pos_nom = DStr.Positions(
-                  x = self.pos_nom.x[mask_v][idx_v],
-                  y = self.pos_nom.y[mask_v][idx_v]
+        mask_v = np.isclose(self.pos_nom.x, 0)
+        if not np.any(mask_v):
+            print("WARNING: no counts/currents found near the central"
+                  " vertical line (x ~ 0).")
+            self.cs_bld_v = None
+        else:
+            idx_v   = np.argsort(self.pos_nom.y[mask_v])
+            self.cs_bld_v = DStr.Blades(
+                to      = blades.to[mask_v][idx_v],
+                ti      = blades.ti[mask_v][idx_v],
+                bi      = blades.bi[mask_v][idx_v],
+                bo      = blades.bo[mask_v][idx_v],
+                sto     = blades.sto[mask_v][idx_v],
+                sti     = blades.sti[mask_v][idx_v],
+                sbi     = blades.sbi[mask_v][idx_v],
+                sbo     = blades.sbo[mask_v][idx_v],
+                pos_nom = DStr.Positions(
+                    x = self.pos_nom.x[mask_v][idx_v],
+                    y = self.pos_nom.y[mask_v][idx_v]
+                )
             )
-        )
     
     def analyze_central_sweep_positions(self,
                                pairw: bool = False

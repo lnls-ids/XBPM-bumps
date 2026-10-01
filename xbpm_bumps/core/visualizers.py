@@ -17,9 +17,10 @@ from .data_structure import (
     CentralSweeps,
     Positions,
     BeamlinePrm,
-    CentralSweepLine,
     DataAnalysis,
-    BladeMap
+    BladeMap,
+    RMSStatistics,
+    ROISlice,
     )
 
 
@@ -85,30 +86,46 @@ def render_data_analysis(
             CentralSweepVisualizer.plot_central_sweep_positions(cs)
             )
 
+    # Position visualizations. For each tab, select the appropriate sets:
+    # ROI slice, nominal positions, calculated positions (raw or transformed),
+    # and RMS statistics at ROI.
     pos = analysis.positions
     if pos is not None:
+        prw = analysis.positions.pairw
         figures["xbpm_pairwise_raw"]    = (
-            PositionVisualizer(prm).show_from_calc(
-                pos.nom,
-                pos.pairw.pos_std
+            PositionVisualizer(prm).plot_position_results(
+                roi      = prw.roi,
+                pos_nom  = pos.nom,
+                pos_calc = prw.pos_std,
+                stat_roi = prw.stat_std.roi,
                 )
             )
+
         figures["xbpm_pairwise_trn"] = (
-            PositionVisualizer(prm).show_from_calc(
-                pos.nom,
-                pos.pairw.pos_trn
+            PositionVisualizer(prm).plot_position_results(
+                roi      = prw.roi,
+                pos_nom  = pos.nom,
+                pos_calc = prw.pos_trn,
+                stat_roi = prw.stat_trn.roi,
                 )
             )
+
+        crs = analysis.positions.cross
         figures["xbpm_cross_raw"]       = (
-            PositionVisualizer(prm).show_from_calc(
-                pos.nom,
-                pos.cross.pos_std
+            PositionVisualizer(prm).plot_position_results(
+                roi      = crs.roi,
+                pos_nom  = pos.nom,
+                pos_calc = crs.pos_std,
+                stat_roi = crs.stat_std.roi,
                 )
             )
+
         figures["xbpm_cross_trn"]    = (
-            PositionVisualizer(prm).show_from_calc(
-                pos.nom,
-                pos.cross.pos_trn
+            PositionVisualizer(prm).plot_position_results(
+                roi      = crs.roi,
+                pos_nom  = pos.nom,
+                pos_calc = crs.pos_trn,
+                stat_roi = crs.stat_trn.roi,
                 )
             )
 
@@ -770,55 +787,55 @@ class PositionVisualizer:
         """Initialize visualizer with parameters.
 
         Args:
-            prm: Parameters dataclass instance.
-            title: Legacy title prefix for plots.
-            titles: Optional dictionary with explicit titles for keys
+            prm    : Parameters dataclass instance.
+            title  : Legacy title prefix for plots.
+            titles : Optional dictionary with explicit titles for keys
                 'total', 'roi', and 'heatmap'.
         """
-        self.prm   = prm
-        self.title = title
+        self.prm    = prm
+        self.title  = title
         self.titles = titles or {}
-        self.fig   = None
+        self.fig    = None
 
         # Module logger
         self._logger = logging.getLogger(__name__)
 
-    def show_position_results(self,
-                              pos_nom_h, pos_nom_v,
-                              pos_h, pos_v,
-                              pos_roi_h, pos_roi_v,
-                              pos_nom_h_roi, pos_nom_v_roi,
-                              diff_roi,
-                              figsize=(18, 6)
+    def plot_position_results(self,
+                              roi      : ROISlice,
+                              pos_nom  : Positions,
+                              pos_calc : Positions,
+                              stat_roi : RMSStatistics,
+                              calc_type: str = "",
                               ) -> None:
         """Display full position results in 1x3 subplot layout.
 
         Args:
-            pos_nom_h     : Nominal horizontal positions (full grid).
-            pos_nom_v     : Nominal vertical positions (full grid).
-            pos_h         : Calculated horizontal positions (full grid).
-            pos_v         : Calculated vertical positions (full grid).
-            pos_roi_h     : Calculated horizontal positions in ROI.
-            pos_roi_v     : Calculated vertical positions in ROI.
-            pos_nom_h_roi : Nominal horizontal positions inside ROI.
-            pos_nom_v_roi : Nominal vertical positions inside ROI.
-            diff_roi      : RMS position differences in ROI.
-            figsize       : Figure size as (width, height) tuple.
+            roi      : Region of Interest slice.
+            pos_nom  : Nominal positions.
+            pos_calc : Calculated positions.
+            stat_roi : RMS statistics for the ROI.
+            figsize  : Figure size as (width, height) tuple.
         """
-        if diff_roi is None:
+        # Check dimensionality of the RMS statistics to determine layout.
+        if stat_roi.tot is None:
             is_1d = True
         else:
-            is_1d = (diff_roi.ndim == 1 or
-                     (diff_roi.ndim == 2 and min(diff_roi.shape) == 1))
+            is_1d = (stat_roi.tot.ndim == 1 or
+                     (stat_roi.tot.ndim == 2 and
+                      min(stat_roi.tot.shape) == 1))
         if is_1d:
             gridspec = {'width_ratios': [1, 1, 0.1]}
         else:
             gridspec = None
 
-        self.fig, (ax_all, ax_close, ax_color) = plt.subplots(
-            1, 3, figsize=figsize, constrained_layout=True,
+        self.fig, axes = plt.subplots(
+            nrows=1,
+            ncols=3,
+            figsize=(18,6),
+            constrained_layout=True,
             gridspec_kw=gridspec
         )
+        (ax_all, ax_roi, ax_heat) = axes
 
         # Reduce vertical/horizontal padding between subplots
         # and figure edges for a tighter layout.
@@ -840,135 +857,47 @@ class PositionVisualizer:
                 exc_info=True,
             )
 
-        if self.titles:
-            title_total   = self.titles.get('total', self.title)
-            title_roi     = self.titles.get('roi', self.title)
-            title_heatmap = self.titles.get('heatmap', self.title)
-        else:
-            title_total   = f"XBPM @ {self.prm.beamline} : {self.title}"
-            title_roi     = f"XBPM @ {self.prm.beamline} : {self.title} (ROI)"
-            title_heatmap = f"XBPM @ {self.prm.beamline} : {self.title}"
+        plot_titles = Config.PLOT_TITLES["xbpm_positions"]
+        # title_total   = _Title(
+        #     graph="total",
+        #     beamline=self.prm.beamline,
+        #     rort='R',
+        #     calc_type=calc_type
+        #     )
+        # title_roi     = plot_titles.get('roi')
+        # title_heatmap = plot_titles.get('heatmap')
 
+        roi_h, roi_v = roi.slice_h, roi.slice_v
         # Full grid view
         self._plot_scaled_positions(
             ax_all,
-            pos_nom_h,
-            pos_nom_v,
-            pos_h,
-            pos_v,
-            title_total
+            pos_nom.x,
+            pos_nom.y,
+            pos_calc.x,
+            pos_calc.y,
+            title = title_total
         )
 
         # ROI closeup
         self._plot_scaled_positions(
-            ax_close,
-            pos_nom_h_roi,
-            pos_nom_v_roi,
-            pos_roi_h,
-            pos_roi_v,
-            title_roi
+            ax_roi,
+            pos_nom.x[roi_v, roi_h],
+            pos_nom.y[roi_v, roi_h],
+            pos_calc.x[roi_v, roi_h],
+            pos_calc.y[roi_v, roi_h],
+            title = title_roi
         )
 
         # Difference heatmap
         self._plot_position_differences(
-            ax_color,
-            diff_roi,
-            pos_nom_h_roi,
-            pos_nom_v_roi,
-            title_heatmap
+            ax_heat,
+            pos_nom.x[roi_v, roi_h],
+            pos_nom.y[roi_v, roi_h],
+            stat_roi.tot,
+            title = title_heatmap
         )
 
-        # constrained_layout handles spacing; avoid mixing with tight_layout
-
-    def inheritance_from_processors(self,
-            show : bool,
-            calc_type: str,
-            nosuppress: bool,
-            pair_result: dict,
-            cross_result: dict) -> None:
-        """Legacy structures to be transferred to visualizers."""
-        #
-        # From analyze_central_sweep_positions.
-        #
-        if show:
-            fig = CentralSweepVisualizer.plot_central_sweep_positions(
-                self.range_h,
-                self.range_v,
-                self.sweepline_h,
-                self.sweepline_v,
-                xbpm_dist=self.prm_bml.xbpmdist
-            )
-
-            if self.prm_gen.outputfile:
-                outfile = f"xbpm_sweeps_{self.prm_bml.beamline}.png"
-                fig.savefig(outfile, dpi=FIGDPI)
-                print(f" Figure of central sweeps saved to file {outfile}.\n")
-
-        #
-        # From _scale_positions.
-        #
-        
-        # Set raw (R) or transformed (T) graph type.
-        transform = "R" if nosuppress else "T"
-
-        # Build title map for visualizer with formatted titles from registry.
-        title_map = {
-            'total'   : _Title('xbpm_positions', 'total',
-                               beamline=self.prm_bml.beamline,
-                               rort=transform,
-                               calc_type=calc_type),
-            'roi'     : _Title('xbpm_positions', 'roi',
-                               beamline=self.prm_bml.beamline,
-                               rort=transform,
-                               calc_type=calc_type),
-            'heatmap' : _Title('xbpm_positions', 'heatmap',
-                               beamline=self.prm_bml.beamline,
-                               rort=transform,
-                               calc_type=calc_type),
-        }
-
-        #
-        # From scaling fit.
-        #
-        qx, qy, sqx, sqy = 0, 0, 0, 0
-        kx, ky, skx, sky = 0, 0, 0, 0
-        deltax, sdeltax, deltay, sdeltay = 0, 0, 0, 0
-        qxtxt = f"qx = {qx:12.4f} ({sqx:4.1f}),\t"
-        qytxt = f"qy = {qy:12.4f} ({sqy:4.1f}),\t"
-
-        print(qxtxt, f"kx = {kx:12.4f} ({skx:4.1f}),"
-              f"   deltax = {deltax:12.4f} ({sdeltax:4.1f})")
-        print(qytxt, f"ky = {ky:12.4f} ({sky:4.1f}),"
-              f"   deltay = {deltay:12.4f} ({sdeltay:4.1f})\n")
-
-     
-        # Visualize
-        # visualizer = PositionVisualizer(self.prm_gen, titles=title_map)
-        # visualizer.show_position_results(
-        #     pos_nom_h, pos_nom_v,
-        #     pos_all_h_scaled, pos_all_v_scaled,
-        #     pos_roi_h_scaled, pos_roi_v_scaled,
-        #     pos_nom_h_roi, pos_nom_v_roi,
-        #     diffroi
-        # )
-
-        #
-        # From _compile_results.
-        #
-        pair_visualizer  = pair_result['visualizer']
-        cross_visualizer = cross_result['visualizer']
-
-        # Save figures if requested
-        if self.prm_gen.outputfile:
-            outdir = '.'
-            sup = "raw" if nosuppress else "scaled"
-            bl = self.prm_bml.beamline
-
-            outfile_p = os.path.join(outdir, f"xbpm_pair_pos_{sup}_{bl}.png")
-            pair_visualizer.save_figure(outfile_p)
-
-            outfile_c = os.path.join(outdir, f"xbpm_cross_pos_{sup}_{bl}.png")
-            cross_visualizer.save_figure(outfile_c)
+        return self.fig
 
     def save_figure(self, filename: str) -> None:
         """Save the figure to a file.
@@ -980,10 +909,14 @@ class PositionVisualizer:
             self.fig.savefig(filename, dpi=FIGDPI, bbox_inches='tight')
             logger.info("Figure saved to %s", filename)
 
-    def _plot_scaled_positions(self, ax: plt.Axes,
-                               pos_nom_h: np.ndarray, pos_nom_v: np.ndarray,
-                               pos_h: np.ndarray, pos_v: np.ndarray,
-                               title: str):
+    def _plot_scaled_positions(self,
+                               ax: plt.Axes,
+                               pos_nom_h: np.ndarray,
+                               pos_nom_v: np.ndarray,
+                               pos_h: np.ndarray,
+                               pos_v: np.ndarray,
+                               title: str
+                               ) -> None:
         """Plot nominal vs calculated positions on given axis."""
         ax.set_title(title, pad=2)
         pos = ax.plot(pos_h, pos_v, 'bo')
@@ -1037,13 +970,15 @@ class PositionVisualizer:
             ax.legend(handles, labels)
         ax.grid()
 
-    def _plot_position_differences(self, ax: plt.Axes,
-                                   diffroi: np.ndarray,
-                                   pos_nom_h: np.ndarray,
-                                   pos_nom_v: np.ndarray,
-                                   title: str = ""):
+    def _plot_position_differences(self,
+                                   ax: plt.Axes,
+                                   pos_nom_h : np.ndarray,
+                                   pos_nom_v : np.ndarray,
+                                   rmsroi    : np.ndarray,
+                                   title     : str = ""
+                                   ) -> None:
         """Plot position difference heatmap or scatter on given axis."""
-        if diffroi is None:
+        if rmsroi is None:
             ax.set_title(title, pad=2)
             ax.set_xlabel("")
             ax.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
@@ -1058,8 +993,8 @@ class PositionVisualizer:
 
         h_const = np.nanmax(pos_nom_h) == np.nanmin(pos_nom_h)
         v_const = np.nanmax(pos_nom_v) == np.nanmin(pos_nom_v)
-        is_1d = (diffroi.ndim == 1 or
-                 (diffroi.ndim == 2 and min(diffroi.shape) == 1) or
+        is_1d = (rmsroi.ndim == 1 or
+                 (rmsroi.ndim == 2 and min(rmsroi.shape) == 1) or
                  h_const or v_const)
 
         if is_1d:
@@ -1068,7 +1003,7 @@ class PositionVisualizer:
             h_max = np.nanmax(pos_nom_h)
             # h_center = (h_min + h_max) / 2
 
-            color_vals = np.ravel(diffroi).reshape(-1, 1)
+            color_vals = np.ravel(rmsroi).reshape(-1, 1)
             # extent = [h_center - 0.2, h_center + 0.2,
             extent = [0, 1, np.nanmin(pos_nom_v), np.nanmax(pos_nom_v)]
             aspect = 'auto'
@@ -1099,13 +1034,13 @@ class PositionVisualizer:
             # Calculate aspect ratio to maintain proper physical proportions.
             # Account for both physical extents and array shape to avoid
             # distortion when physical x and y ranges differ significantly.
-            n_v, n_h = diffroi.shape
+            n_v, n_h = rmsroi.shape
             h_extent = h_max - h_min
             v_extent = v_max - v_min
             # aspect = (physical_y_per_pixel) / (physical_x_per_pixel)
             aspect = ((v_extent / n_v) / (h_extent / n_h)
                       if (h_extent > 0 and v_extent > 0) else 1)
-            color_vals = diffroi
+            color_vals = rmsroi
             xlabel = u"$x$ [$\\mu$m]"
             fraction, pad = 0.04, 0.3
 

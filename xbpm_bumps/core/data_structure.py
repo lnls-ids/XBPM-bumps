@@ -949,11 +949,14 @@ class CalculatedPositions:
     These data were calculated, but not correct by the suppression matrix.
 
         roi        : ROI slice used in the analysis
+
         pos_std    : positions calculated from standard formulae
         scale_std  : scaling factors for standard positions
         stat_std   : RMS statistics of the differences between standard
                  positions and nominal or BPM-calculated positions.
-        pos_trn    : positions calculated from transformed formulae
+
+        pos_trn    : positions calculated from transformed formulae, through
+                 the suppression matrix.
         scale_trn  : scaling factors for transformed positions
         stat_trn   : RMS statistics of the differences between transformed
                  positions and nominal or BPM-calculated positions.
