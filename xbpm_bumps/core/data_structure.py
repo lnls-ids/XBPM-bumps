@@ -732,12 +732,14 @@ class BladeLineFit:
         coeffs : Coefficients of the linear fit (slope and intercept).
         sigmas : Standard deviations of the coefficients.
     """
-    k   : float
-    sk  : float
-    d   : float
-    sd  : float
-    nom : Positions
-    fit : Positions
+    k       : float
+    sk      : float
+    d       : float
+    sd      : float
+    pos     : np.ndarray
+    sig_pos : np.ndarray
+    raw     : np.ndarray
+    fit     : np.ndarray
 
     @classmethod
     def from_hdf5(cls, blf_grp) -> "BladeLineFit":
@@ -747,8 +749,10 @@ class BladeLineFit:
             sk  = blf_grp.attrs['sk'],
             d   = blf_grp.attrs['d'],
             sd  = blf_grp.attrs['sd'],
-            nom = Positions.from_hdf5(blf_grp['nom']),
-            fit = Positions.from_hdf5(blf_grp['fit'])
+            pos = blf_grp['pos'][:],
+            sig_pos = blf_grp['sig_pos'][:],
+            raw = blf_grp['raw'][:],
+            fit = blf_grp['fit'][:]
         )
 
 
@@ -757,8 +761,12 @@ class BladeCenterAnalysis:
     """Container for the analysis of blade central positions.
 
     Attributes:
-        sh   : Fitting results for horizontal sweep.
-        sv   : Fitting results for vertical sweep.
+        to   : Fitting results for the top outer blade.
+        ti   : Fitting results for the top inner blade.
+        bi   : Fitting results for the bottom inner blade.
+        bo   : Fitting results for the bottom outer blade.
+        blades : Blade measurements along the central sweep.
+        pos_nom : Nominal positions along the central sweep.
     """
     to : BladeLineFit
     ti : BladeLineFit

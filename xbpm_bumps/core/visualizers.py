@@ -14,6 +14,7 @@ from .constants import FIGDPI
 from .config import Config
 from .data_structure import (
     BPMAnalysis,
+    BladeCenterAnalysis,
     CentralSweeps,
     Positions,
     BeamlinePrm,
@@ -78,7 +79,7 @@ def render_data_analysis(
     if cs is not None:
         if cs.h is not None or cs.v is not None:
             figures["blade_sweeps"] = (
-                CentralSweepVisualizer.plot_blade_central_sweeps(
+                CentralSweepVisualizer.plot_central_sweep_blades(
                     cs,
                     beamline=prm.beamline
                     ))
@@ -92,42 +93,35 @@ def render_data_analysis(
     pos = analysis.positions
     if pos is not None:
         prw = analysis.positions.pairw
-        figures["xbpm_pairwise_raw"]    = (
-            PositionVisualizer(prm).plot_position_results(
-                roi      = prw.roi,
-                pos_nom  = pos.nom,
-                pos_calc = prw.pos_std,
-                stat_roi = prw.stat_std.roi,
-                )
-            )
-
-        figures["xbpm_pairwise_trn"] = (
-            PositionVisualizer(prm).plot_position_results(
-                roi      = prw.roi,
-                pos_nom  = pos.nom,
-                pos_calc = prw.pos_trn,
-                stat_roi = prw.stat_trn.roi,
-                )
-            )
-
         crs = analysis.positions.cross
-        figures["xbpm_cross_raw"]       = (
-            PositionVisualizer(prm).plot_position_results(
-                roi      = crs.roi,
-                pos_nom  = pos.nom,
-                pos_calc = crs.pos_std,
-                stat_roi = crs.stat_std.roi,
-                )
-            )
 
-        figures["xbpm_cross_trn"]    = (
-            PositionVisualizer(prm).plot_position_results(
-                roi      = crs.roi,
-                pos_nom  = pos.nom,
-                pos_calc = crs.pos_trn,
-                stat_roi = crs.stat_trn.roi,
+        tab_table = {
+            "xbpm_pairwise_raw" : (
+                prw.roi, pos.nom, prw.pos_std, prw.stat_std.roi
+                ),
+            "xbpm_pairwise_trn" : (
+                prw.roi, pos.nom, prw.pos_trn, prw.stat_trn.roi
+                ),
+            "xbpm_cross_raw"    : (
+                crs.roi, pos.nom, crs.pos_std, crs.stat_std.roi
+                ),
+            "xbpm_cross_trn"    : (
+                crs.roi, pos.nom, crs.pos_trn, crs.stat_trn.roi
+                ),
+        }
+
+        # Iterate over each tab and its corresponding data tuple,
+        # then generate the figure.
+        for tab, (roi, pos_nom, pos_calc, stat_roi) in tab_table.items():
+            figures[tab] = (
+                PositionVisualizer(prm).plot_position_results(
+                    roi        = roi,
+                    pos_nom    = pos_nom,
+                    pos_calc   = pos_calc,
+                    stat_roi   = stat_roi,
+                    graph_type = tab,
+                    )
                 )
-            )
 
     return figures
 
@@ -197,7 +191,11 @@ class BPMVisualizer:
             self.nom_x,
             self.meas_y,
             self.nom_y,
-            _Title('bpm', 'total', beamline=self.beamline)
+            _Title(
+                beamline   = self.beamline,
+                graph_type = 'bpm',
+                ax_type    = 'total',
+                )
         )
 
         # Plot ROI closeup
@@ -211,7 +209,11 @@ class BPMVisualizer:
             self.meas_x[slice_v, slice_h],
             self.nom_roi_y,
             self.meas_y[slice_v, slice_h],
-            _Title('bpm', 'roi', beamline=self.beamline)
+            _Title(
+                beamline   = self.beamline,
+                graph_type = 'bpm',
+                ax_type    = 'roi',
+                )
         )
 
         # Plot differences heatmap with extent mapping
@@ -336,7 +338,11 @@ class BPMVisualizer:
             self.ax_diff.set_xlabel("")
             self.ax_diff.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
             self.ax_diff.set_title(
-                _Title('bpm', 'heatmap', self.beamline), pad=2
+                _Title(
+                    beamline   = self.beamline,
+                    graph_type = 'bpm',
+                    ax_type    = 'heatmap',
+                    ), pad=2
                 )
             self.ax_diff.grid(False)
         else:
@@ -369,7 +375,11 @@ class BPMVisualizer:
             self.ax_diff.set_xlabel(u"$x$ [$\\mu$m]", fontsize=14)
             self.ax_diff.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
             self.ax_diff.set_title(
-                _Title('bpm', 'heatmap', self.beamline), pad=2
+                _Title(
+                    beamline   = self.beamline,
+                    graph_type = 'bpm',
+                    ax_type    = 'heatmap',
+                    ), pad=2
                 )
             self.ax_diff.grid(False)
 
@@ -466,7 +476,8 @@ class CentralSweepVisualizer:
     """
     @staticmethod
     def plot_central_sweep_positions(
-        csweep : CentralSweeps,
+        csweep   : CentralSweeps,
+        beamline : str = "",
         ) -> "matplotlib.figure.Figure":
         """Create sweep figure from numpy arrays (position reconstruction path).
 
@@ -506,7 +517,11 @@ class CentralSweepVisualizer:
                 )
             axh.set_xlabel("$x$ [$\\mu$m]")
             axh.set_ylabel("$y$ [$\\mu$m]")
-            axh.set_title(_Title('sweeps', 'H'))
+            axh.set_title(_Title(
+                beamline   = beamline,
+                graph_type = 'sweeps',
+                ax_type    = 'H')
+                )
             axh.grid(True)
             axh.legend()
 
@@ -528,7 +543,11 @@ class CentralSweepVisualizer:
                   )
             axv.set_xlabel("$x$ [$\\mu$m]")
             axv.set_ylabel("$y$ [$\\mu$m]")
-            axv.set_title(_Title('sweeps', 'V'))
+            axv.set_title(_Title(
+                beamline   = beamline,
+                graph_type = 'sweeps',
+                ax_type    = 'V')
+                )
             axv.grid(True)
             axv.legend()
 
@@ -544,14 +563,10 @@ class CentralSweepVisualizer:
     This eliminates redundancy between processors.show_blades_at_center()
     and readers._reconstruct_blades_center().
     """
-    @staticmethod
-    def plot_blade_central_sweeps(
-        csweep: CentralSweeps,
 
-        blades_h: dict,
-        blades_v: dict,
-        range_h: np.ndarray,
-        range_v: np.ndarray,
+    @staticmethod
+    def plot_central_sweep_blades(
+        bc_analysis: dict,
         beamline: str = ""
         ) -> Optional[Figure]:
         """Generate blade currents at center plots (canonical version).
@@ -561,63 +576,81 @@ class CentralSweepVisualizer:
         semantics for the "Blades at sweeps" tab.
 
         Args:
-            blades_h: Horizontal blades dict with 'to', 'ti', 'bi', 'bo' keys,
-                    each mapping to (value, weight) pairs.
-            blades_v: Vertical blades dict with 'to', 'ti', 'bi', 'bo' keys.
-            range_h: Horizontal sweep range array.
-            range_v: Vertical sweep range array.
-            beamline: Beamline name for ylabel determination.
+            bc_analysis : Dictionary containing BladeCenterAnalysis data for
+                             horizontal and vertical sweeps.
+            beamline    : Beamline name for ylabel determination.
 
         Returns:
             matplotlib.figure.Figure or None if no blade data.
         """
-        if blades_h is None and blades_v is None:
-            return None
-
         fig, (axh, axv) = plt.subplots(1, 2, figsize=(10, 5))
 
-        ch = csweep.h
-        cv = csweep.v
+        ch = bc_analysis['h']
+        cv = bc_analysis['v']
 
         # If horizontal sweeps are available.
         if ch.blades is not None:
             hblades = {
-                "TO" : ch.blades.to,
-                "TI" : ch.blades.ti,
-                "BI" : ch.blades.bi,
-                "BO" : ch.blades.bo
+                "TO" : ch.to,
+                "TI" : ch.ti,
+                "BI" : ch.bi,
+                "BO" : ch.bo, 
             }
-            for key, blval in hblades.items():
-                val = blval[:, 0]
-                wval = blval[:, 1]
+            for key, bld in hblades.items():
                 k = f"{key.upper()}"
-                axh.errorbar(range_h,
-                             val,
-                             wval,
-                             fmt='o-',
-                             label=k,
-                            zorder=1)
-                axh.plot(range_h,
-                         range_h * hblades[key][:, 0] + hblades[key][:, 1],
-                        "^-",
-                        label=f"{k} fit",
-                        zorder=2)
+                axh.errorbar(
+                    bld.pos,
+                    bld.raw,
+                    bld.sigma_pos,
+                    fmt='o-',
+                    label=k,
+                    zorder=1
+                    )
+                axh.plot(
+                    bld.pos,
+                    bld.fit,
+                    "^-",
+                    label=f"{k} fit",
+                    zorder=2
+                    )
 
         # If vertical sweeps are available.
         if cv.blades is not None:
-            for key, blval in blades_v.items():
-                val = blval[:, 0]
-                wval = blval[:, 1]
-                weight = 1. / wval if not np.isinf(1. / wval).any() else None
-                (acoef, bcoef) = np.polyfit(range_v, val, deg=1, w=weight)
+            vblades = {
+                "TO" : cv.to,
+                "TI" : cv.ti,
+                "BI" : cv.bi,
+                "BO" : cv.bo
+            }
+            for key, bld in vblades.items():
                 k = f"{key.upper()}"
-                axv.errorbar(range_v, val, wval, fmt='o-', label=k,
-                            zorder=1)
-                axv.plot(range_v, range_v * acoef + bcoef,
-                        "^-", label=f"{k} fit", zorder=2)
+                axv.errorbar(
+                    bld.pos,
+                    bld.raw,
+                    bld.sigma_pos,
+                    fmt='o-',
+                    label=k,
+                    zorder=1
+                    )
+                axv.plot(
+                    bld.pos,
+                    bld.fit,
+                    "^-",
+                    label=f"{k} fit",
+                    zorder=2
+                    )
 
-        axh.set_title(_Title('blades_at_sweeps', 'h'))
-        axv.set_title(_Title('blades_at_sweeps', 'v'))
+        axh.set_title(_Title(
+            beamline   = beamline,
+            graph_type = 'blades_at_sweeps',
+            ax_type    = 'h')
+        )
+        axv.set_title(_Title(
+            beamline   = beamline,
+            graph_type = 'blades_at_sweeps',
+            ax_type    = 'v'
+            )
+        )
         axh.legend()
         axv.legend()
         axh.grid()
@@ -801,11 +834,11 @@ class PositionVisualizer:
         self._logger = logging.getLogger(__name__)
 
     def plot_position_results(self,
-                              roi      : ROISlice,
-                              pos_nom  : Positions,
-                              pos_calc : Positions,
-                              stat_roi : RMSStatistics,
-                              calc_type: str = "",
+                              roi        : ROISlice,
+                              pos_nom    : Positions,
+                              pos_calc   : Positions,
+                              stat_roi   : RMSStatistics,
+                              graph_type : str = "",
                               ) -> None:
         """Display full position results in 1x3 subplot layout.
 
@@ -814,7 +847,7 @@ class PositionVisualizer:
             pos_nom  : Nominal positions.
             pos_calc : Calculated positions.
             stat_roi : RMS statistics for the ROI.
-            figsize  : Figure size as (width, height) tuple.
+            graph_type: Type of graph to display (e.g., 'xbpm_pairwise_raw').
         """
         # Check dimensionality of the RMS statistics to determine layout.
         if stat_roi.tot is None:
@@ -857,18 +890,20 @@ class PositionVisualizer:
                 exc_info=True,
             )
 
-        plot_titles = Config.PLOT_TITLES["xbpm_positions"]
-        # title_total   = _Title(
-        #     graph="total",
-        #     beamline=self.prm.beamline,
-        #     rort='R',
-        #     calc_type=calc_type
-        #     )
-        # title_roi     = plot_titles.get('roi')
-        # title_heatmap = plot_titles.get('heatmap')
+        # ROI slices.
+        roi_h, roi_v  = roi.slice_h, roi.slice_v
 
-        roi_h, roi_v = roi.slice_h, roi.slice_v
+        # Graph characteristics.
+        _, calc_type, rort = graph_type.split('_')[1:]
+
         # Full grid view
+        title_total    = _Title(
+            beamline   = self.prm.beamline,
+            graph_type = "xbpm_positions",
+            calc_type  = calc_type,
+            rort       = rort,
+            ax_type    = "total",
+            )
         self._plot_scaled_positions(
             ax_all,
             pos_nom.x,
@@ -879,6 +914,13 @@ class PositionVisualizer:
         )
 
         # ROI closeup
+        title_roi      = _Title(
+            beamline   = self.prm.beamline,
+            graph_type = "xbpm_positions",
+            calc_type  = calc_type,
+            rort       = rort,
+            ax_type    = "roi",
+        )
         self._plot_scaled_positions(
             ax_roi,
             pos_nom.x[roi_v, roi_h],
@@ -889,6 +931,13 @@ class PositionVisualizer:
         )
 
         # Difference heatmap
+        title_heatmap  = _Title(
+            beamline   = self.prm.beamline,
+            graph_type = "xbpm_positions",
+            calc_type  = calc_type,
+            rort       = rort,
+            ax_type    = "heatmap",
+        )
         self._plot_position_differences(
             ax_heat,
             pos_nom.x[roi_v, roi_h],
@@ -1057,101 +1106,3 @@ class PositionVisualizer:
         ax.set_title(title, pad=2)
         ax.set_xlabel(xlabel, fontsize=14)
         ax.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)
-
-    @staticmethod
-    def _build_roi_mask(nom_x: np.ndarray, nom_y: np.ndarray,
-                        roi_bounds: dict = None):
-        """Build ROI mask from saved bounds or central fallback."""
-        if isinstance(roi_bounds, dict):
-            try:
-                x_min = float(roi_bounds['x_min'])
-                x_max = float(roi_bounds['x_max'])
-                y_min = float(roi_bounds['y_min'])
-                y_max = float(roi_bounds['y_max'])
-                return ((nom_x >= x_min) & (nom_x <= x_max) &
-                        (nom_y >= y_min) & (nom_y <= y_max))
-            except Exception:
-                pass
-
-        h_center = (np.min(nom_x) + np.max(nom_x)) / 2
-        v_center = (np.min(nom_y) + np.max(nom_y)) / 2
-        h_range = (np.max(nom_x) - np.min(nom_x)) / 4
-        v_range = (np.max(nom_y) - np.min(nom_y)) / 4
-        return ((np.abs(nom_x - h_center) <= h_range) &
-                (np.abs(nom_y - v_center) <= v_range))
-
-    @staticmethod
-    def _apply_equal_limits(ax, pos_h: np.ndarray, pos_v: np.ndarray,
-                            nom_h: np.ndarray, nom_v: np.ndarray):
-        """Apply the same centered equal-aspect limits used in live plots."""
-        all_h = np.concatenate([np.ravel(pos_h), np.ravel(nom_h)])
-        all_v = np.concatenate([np.ravel(pos_v), np.ravel(nom_v)])
-        all_h = all_h[np.isfinite(all_h)]
-        all_v = all_v[np.isfinite(all_v)]
-        if all_h.size == 0 or all_v.size == 0:
-            ax.set_xlim(-1, 1)
-            ax.set_ylim(-1, 1)
-            ax.set_aspect('equal', adjustable='box')
-            return
-
-        h_min, h_max = np.min(all_h), np.max(all_h)
-        v_min, v_max = np.min(all_v), np.max(all_v)
-        h_range = h_max - h_min if h_max > h_min else 1
-        v_range = v_max - v_min if v_max > v_min else 1
-        total_range = max(h_range, v_range) * 1.3
-        h_center = (h_min + h_max) / 2
-        v_center = (v_min + v_max) / 2
-        ax.set_xlim(h_center - total_range / 2, h_center + total_range / 2)
-        ax.set_ylim(v_center - total_range / 2, v_center + total_range / 2)
-        ax.set_aspect('equal', adjustable='box')
-
-    @staticmethod
-    def _grid_from_points(nom_x: np.ndarray, nom_y: np.ndarray,
-                          values: np.ndarray, rounding_digits: int = 6):
-        """Create dense 2D grid from point cloud with float-stable binning."""
-        x_key = np.round(nom_x.astype(float), rounding_digits)
-        y_key = np.round(nom_y.astype(float), rounding_digits)
-        x_grid = np.unique(x_key)
-        y_grid = np.unique(y_key)
-
-        x_map = {val: idx for idx, val in enumerate(x_grid)}
-        y_map = {val: idx for idx, val in enumerate(y_grid)}
-        grid = np.full((len(y_grid), len(x_grid)), np.nan, dtype=float)
-
-        for xx, yy, vv in zip(x_key, y_key, values):
-            ix = x_map.get(xx)
-            iy = y_map.get(yy)
-            if ix is not None and iy is not None:
-                grid[iy, ix] = vv
-
-        return x_grid, y_grid, grid
-
-    @staticmethod
-    def _center_slice(n_side: int, roi_side: int) -> slice:
-        """Return central square slice of size roi_side within n_side."""
-        roi_side = int(max(1, min(roi_side, n_side)))
-        start = max(0, (n_side - roi_side) // 2)
-        end = min(n_side, start + roi_side)
-        return slice(start, end)
-
-    @staticmethod
-    def _infer_roi_side_from_bounds(nom_x_2d: np.ndarray,
-                                    nom_y_2d: np.ndarray,
-                                    roi_bounds: dict = None):
-        """Infer square ROI side length from bounds and structured grid."""
-        if not isinstance(roi_bounds, dict):
-            return None
-        try:
-            x_min = float(roi_bounds['x_min'])
-            x_max = float(roi_bounds['x_max'])
-            y_min = float(roi_bounds['y_min'])
-            y_max = float(roi_bounds['y_max'])
-        except Exception:
-            return None
-
-        x_line = np.nanmedian(np.asarray(nom_x_2d, dtype=float), axis=0)
-        y_line = np.nanmedian(np.asarray(nom_y_2d, dtype=float), axis=1)
-        nx = int(np.count_nonzero((x_line >= x_min) & (x_line <= x_max)))
-        ny = int(np.count_nonzero((y_line >= y_min) & (y_line <= y_max)))
-        roi_side = min(nx, ny)
-        return roi_side if roi_side > 0 else None

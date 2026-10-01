@@ -382,20 +382,10 @@ class XBPMProcessor:
 
         # Perform central line fit for horizontal and vertical blade analysis.
         hrange = self.range_h[self.roi.slice_h]
-        horz   = self._blade_central_line_fit(bld_fit_h, hrange)
-        blades_h["pos_nom"] = DStr.Positions(
-            x = hrange,
-            y = np.zeros_like(hrange)
-            )
-        horz["blades"] = DStr.Blades(**blades_h)
+        horz   = self._blade_central_line_fit(hrange, bld_fit_h)
 
         vrange = self.range_v[self.roi.slice_v]
-        vert   = self._blade_central_line_fit(bld_fit_v, vrange)
-        blades_v["pos_nom"] = DStr.Positions(
-            x = np.zeros_like(vrange),
-            y = vrange
-            )
-        vert["blades"] = DStr.Blades(**blades_v)
+        vert   = self._blade_central_line_fit(vrange, bld_fit_v)
 
         return {
             "h": DStr.BladeCenterAnalysis(**horz),
@@ -403,8 +393,8 @@ class XBPMProcessor:
         }
 
     def _blade_central_line_fit(self,
+                               range_vals: np.ndarray,
                                blades: dict,
-                               range_vals: np.ndarray
                                ) -> dict:
         """Linear fittings to each blade's data through central line.
         
@@ -433,19 +423,20 @@ class XBPMProcessor:
 
             # Coefficient errors.
             sigmas = np.sqrt(np.diag(cov))
-            # Nominal values.
-            nom  = DStr.Positions(x=range_vals, y=blade)
-            yfit = np.polyval(coefs, range_vals)
+
             # Fitted values.
-            fit_val = DStr.Positions(x=range_vals, y=yfit)
+            yfit = np.polyval(coefs, range_vals)
+
             # Store results in the dataclass for each blade.
             results[bl] = DStr.BladeLineFit(
-                k=coefs[0],
-                d=coefs[1],
-                sk=sigmas[0],
-                sd=sigmas[1],
-                nom=nom,
-                fit=fit_val,
+                k   = coefs[0],
+                sk  = sigmas[0],
+                d   = coefs[1],
+                sd  = sigmas[1],
+                pos = range_vals,
+                sig_pos = err,
+                raw = blade,
+                fit = yfit,
             )
         return results
 
@@ -928,7 +919,7 @@ def calculate_grid_stats(
         nom_y   : np.ndarray,
         meas_x  : np.ndarray,
         meas_y  : np.ndarray,
-    ) -> DStr.RMSStatistics:
+        ) -> DStr.RMSStatistics:
     """Calculate RMS statistics from squared position differences in ROI.
 
     Args:
@@ -950,35 +941,38 @@ def calculate_grid_stats(
     nsites = int(np.count_nonzero(valid))
     if nsites == 0:
         print("\n WARNING: no valid BPM points found for RMS estimation.")
-        rms_stats = DStr.RMSGridStatistics(
-            **{key: np.nan for key in [
-                'h', 'v', 'tot',
-                'min_h', 'max_h',
-                'min_v', 'max_v',
-                'mean_h', 'mean_v', 'mean_tot',
-                ]}
-        )
-        return rms_stats
+        rms_dict = {
+            key: np.nan for key in [
+            'min_h', 'max_h', 'min_v', 'max_v',
+            'mean_h', 'mean_v', 'mean_tot',
+            ]}
+        shape = nom_x.shape
+        rms_dict.update({
+            'h'   : np.full(shape, np.nan),
+            'v'   : np.full(shape, np.nan),
+            'tot' : np.full(shape, np.nan),
+        })
+        return DStr.RMSStatistics(**rms_dict)
 
     # Valid points only.
-    vld_diff_x2  = diff_x2[valid]
-    vld_diff_y2  = diff_y2[valid]
+    diff_x2 = np.where(valid, diff_x2, np.nan)
+    diff_y2 = np.where(valid, diff_y2, np.nan)
 
     # Absolute values of differences.
-    rms_h        = np.sqrt(vld_diff_x2)
-    rms_v        = np.sqrt(vld_diff_y2)
-    rms_tot      = np.sqrt(vld_diff_x2 + vld_diff_y2)
+    rms_h        = np.sqrt(diff_x2)
+    rms_v        = np.sqrt(diff_y2)
+    rms_tot      = np.sqrt(diff_x2 + diff_y2)
 
     # RMS minimum and maximum values.
-    rms_max_h    = np.max(rms_h)
-    rms_min_h    = np.min(rms_h)
-    rms_max_v    = np.max(rms_v)
-    rms_min_v    = np.min(rms_v)
+    rms_max_h    = np.nanmax(rms_h)
+    rms_min_h    = np.nanmin(rms_h)
+    rms_max_v    = np.nanmax(rms_v)
+    rms_min_v    = np.nanmin(rms_v)
 
     # RMS global estimates.
-    rms_mean_h   = np.sqrt(np.mean(vld_diff_x2))
-    rms_mean_v   = np.sqrt(np.mean(vld_diff_y2))
-    rms_mean_tot = np.sqrt(np.mean(vld_diff_x2 + vld_diff_y2))
+    rms_mean_h   = np.sqrt(np.nanmean(diff_x2))
+    rms_mean_v   = np.sqrt(np.nanmean(diff_y2))
+    rms_mean_tot = np.sqrt(np.nanmean(diff_x2 + diff_y2))
 
     nsites_total = int(diff_x2.size)
     if nsites < nsites_total:
@@ -1001,12 +995,13 @@ def calculate_grid_stats(
     return DStr.RMSStatistics(**rms)
 
 
-def grid_statistics(nom_x: np.ndarray,
-                    nom_y: np.ndarray,
-                    meas_x: np.ndarray,
-                    meas_y: np.ndarray,
-                    roislice: DStr.ROISlice,
-                    ) -> DStr.RMSGridStatistics:
+def grid_statistics(
+        nom_x    : np.ndarray,
+        nom_y    : np.ndarray,
+        meas_x   : np.ndarray,
+        meas_y   : np.ndarray,
+        roislice : DStr.ROISlice,
+        ) -> DStr.RMSGridStatistics:
     """Calculate grid statistics from measured and nominal positions.
 
     Args:

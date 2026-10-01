@@ -14,30 +14,30 @@ class AnalysisService:
         runtime_prm: DStr.GenPrm,
         ) -> DStr.DataAnalysis:
         # Initialize the analysis result container.
-        analysis = DStr.DataAnalysis(beamline_prm=workdata.prm)
+        analysis = DStr.DataAnalysis(beamline_prm = workdata.prm)
 
         # Create a processor instance to perform the calculations.
         xprocessor = XBPMProcessor(
-            beamlinedata=workdata,
-            beamline_prm=workdata.prm,
-            runtime_prm=runtime_prm,
-            analysis=analysis,
+            beamlinedata = workdata,
+            beamline_prm = workdata.prm,
+            runtime_prm  = runtime_prm,
+            analysis     = analysis,
         )
 
         # BPM tab.
         if runtime_prm.show_bpmpositions:
-            bprocessor = BPMProcessor(
-                raw_data=workdata.raw_data,
-                prm_bml=workdata.prm,
+            bprocessor   = BPMProcessor(
+                raw_data = workdata.raw_data,
+                prm_bml  = workdata.prm,
                 )
             analysis.bpm = bprocessor.bpmanalysis
 
         # Blade map.
         if runtime_prm.show_blademap:
             analysis.blademap = DStr.BladeMap(
-                prm=workdata.prm,
-                blades=workdata.raw_data.blade_avg.blades,
-                pos=workdata.raw_data.blade_avg.pos_nom
+                prm    = workdata.prm,
+                blades = workdata.raw_data.blade_avg.blades,
+                pos    = workdata.raw_data.blade_avg.pos_nom
             )
 
         # Blades at center are necessary for the suppression matrix.

@@ -142,21 +142,22 @@ class Config:
         return cls.BEAMLINENAME.get(code, "N/A")
 
     @classmethod
-    def get_plot_title(cls, tab: str,
-                       graph: str,
-                       beamline: Optional[str] = None,
-                       rort: str = "",
-                       calc_type: str = ""
+    def get_plot_title(cls,
+                       beamline   : str,
+                       graph_type : str,
+                       ax_type    : str,
+                       calc_type  : str = "",
+                       rort       : str = "",
                        ) -> str:
         """Return a graph title from the central registry.
-
+    
         Args:
-            tab:       Top-level key in PLOT_TITLES (e.g. 'sweeps').
-            graph:     Subplot role key
+            graph_type: Top-level key in PLOT_TITLES (e.g. 'sweeps').
+            ax_type:  Subplot role key
                        ('total', 'roi', 'heatmap', 'h', 'v', 'suptitle').
             beamline:  Beamline 3-letter code plus XBPM number (e.g. 'MNC1').
-            rort:      raw or transformed.
             calc_type: calculation type (e.g. 'pairwise' or 'cross').
+            rort:      raw or transformed.
 
         Returns:
             Formatted title string, or empty string if key not found.
@@ -167,20 +168,24 @@ class Config:
         else:
             bline, xbpmnum = "", ""
 
-        # Set raw / transformed string for title, if provided.
-        rort = "Raw" if rort == "R" else "Transf."
-
-        # Select cacl type name from pairwise / cross, if provided.
+        # Select calc type name from pairwise / cross, if provided.
         if calc_type:
-            calc_type = "" if calc_type == "pairwise" else "Part."
+            calc_type = "Δ/Σ" if calc_type == "pairwise" else "partial Δ/Σ"
+
+        # Set raw / transformed string for title, if provided.
+        rort = (
+            "Raw" if rort == "raw"
+            else "Transf." if rort == "trn"
+            else ""
+            )
 
         # Get template from registry and format it with provided values.
-        template = cls.PLOT_TITLES.get(tab, {}).get(graph, "")
+        template = cls.PLOT_TITLES.get(graph_type, {}).get(ax_type, "")
         return template.format(
-            beamline=bline,
-            xbpmnum=xbpmnum,
-            rort=rort,
-            ct=calc_type,
+            beamline = bline,
+            xbpmnum  = xbpmnum,
+            rort     = rort,
+            ct       = calc_type,
         )
 
     @classmethod
