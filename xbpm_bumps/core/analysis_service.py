@@ -1,6 +1,6 @@
 """Application-level orchestration of one XBPM analysis run."""
 
-from .            import data_structure as DStr
+from .           import data_structure as DStr
 from .processors import XBPMProcessor
 from .processors import BPMProcessor
 
@@ -59,8 +59,8 @@ class AnalysisService:
 
         # XBPM positions calculation.
         if (
-            runtime_prm.show_xbpmpositionsraw
-            or runtime_prm.show_xbpmpositions
+            runtime_prm.show_xbpmpositionsraw or
+            runtime_prm.show_xbpmpositions
             ):
             analysis.positions = xprocessor.xbpm_position_calculation()
 

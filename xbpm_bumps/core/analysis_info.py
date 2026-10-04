@@ -6,10 +6,11 @@ from xbpm_bumps.core.data_structure import (
     BPMAnalysis,
     DataAnalysis,
     AnalyzedPositions,
-    AllScales,
+    Scales,
     CentralSweeps,
     RMSGridStatistics,
     SuppressionMatrix,
+    GL2RMatrix
     )
 
 
@@ -45,115 +46,130 @@ def _err(value: float, err: float) -> str:
     return f"{_f(value)} ({_f(err, 2)})"
 
 
-def format_analysis_info(analysis: "DataAnalysis") -> str:
+def format_analysis_info(
+        analysis: "DataAnalysis",
+        ) -> dict[str, str]:
     """Format the analysis information for a given DataAnalysis object.
 
     Args:
-        analysis: The DataAnalysis object containing the results.
+        analysis : The DataAnalysis object containing the results.
 
     Returns:
-        A human-readable string summarizing the analysis for the specified tab.
+        A dictionary mapping tab names to human-readable strings summarizing
+        the analysis for each tab.
     """
     if analysis is None:
-        return "No analysis available yet."
+        return {}
 
-    lines: list[str] = []
-    if analysis.positions is not None:
-        _scales(lines, analysis.scales)
-        _xbpm_stats(lines, analysis.positions)
+    # BPM and central sweeps information.
+    tab_info = {
+        "bpm" : (
+            _bpm_stats(analysis.bpm)
+            if analysis.bpm is not None else ""
+            ),
+        "blade_central_sweeps": (
+            _blades(analysis.bladecenter)
+            if analysis.bladecenter is not None else ""
+            ),
+        "position_central_sweeps" : (
+            _sweeps(analysis.centralsweeps)
+            if analysis.centralsweeps is not None else ""
+            ),
+    }
 
-    if analysis.bpm is not None:
-        _bpm_stats(lines, analysis.bpm)
+    # Add position statistics to the tab information.
+    if analysis.positions is None:
+        return tab_info
 
-    if analysis.centralsweeps is not None:
-        _sweeps(lines, analysis.centralsweeps)
+    # Table for pairwise and cross position statistics.
+    stat_table = {
+        "xbpm_pairwise_raw" : (
+        "Pairwise Standard Deviation, not transformed",
+        analysis.positions.pairw.stat_std,
+        "std"
+        ),
+        "xbpm_pairwise_trn" : (
+        "Pairwise Standard Deviation, transformed",
+        analysis.positions.pairw.stat_trn,
+        "pw_tr"
+        ),
+        "xbpm_cross_raw" : (
+        "Cross Standard Deviation, not transformed",
+        analysis.positions.cross.stat_std,
+        "cr_std"
+        ),
+        "xbpm_cross_trn" : (
+        "Cross Standard Deviation, transformed",
+        analysis.positions.cross.stat_trn,
+        "cr_rot"
+        ),
+    }
 
-    if analysis.bladecenter is not None:
-        _blades(lines, analysis.bladecenter)
+    supmat_lines = _supmat(analysis.supmat, analysis.gl2r)
+    for tab_name, (description, stat, mat) in stat_table.items():
+        tab_info[tab_name] = (
+            description + '\n' +
+            _scales(stat) +
+            _xbpm_stats(stat) +
+            supmat_lines.get(mat, "")
+        )
 
-    if analysis.supmat is not None:
-        _supmat(lines, analysis.supmat)
-
-    return "\n".join(lines)
-
-
-def _scales(
-        lines: list[str],
-        scales: "AllScales"
-        ) -> None:
-    """Format the scale information for the positions and append to lines."""
-    scl_case = [
-        ("Raw Pairwise",         scales.raw_pw),
-        ("Transformed Pairwise", scales.trn_pw),
-        ("Raw Crossed",          scales.raw_cr),
-        ("Transformed Crossed",  scales.trn_cr),
-    ]
-    for name, scl in scl_case:
-        # Example implementation, replace with actual logic
-        sclset = [
-            ("kx", scl.kx, scl.skx),
-            ("dx", scl.dx, scl.sdx),
-            ("ky", scl.ky, scl.sky),
-            ("dy", scl.dy, scl.sdy),
-            ("qx", scl.qx, scl.sqx),
-            ("qy", scl.qy, scl.sqy)
-        ]
-        lines.append(f"\n### Scales, {name}:\n")
-        for name, value, error in sclset:
-            lines.append(f"  {name}  = {_f(value)}\t ({_f(error)})\n")
-        lines.append("\n")
+    return tab_info
 
 
 def _bpm_stats(
-        lines: list[str],
         bpm: "BPMAnalysis",
-        ) -> None:
-    """Format XBPM statistics for the given positions and append to lines.
+        ) -> str:
+    """Format XBPM statistics for the given positions.
     
     Args:
-        lines : list[str], string table to append the formatted statistics to
-        bpm   : "BPMAnalysis", the BPM analysis results to format
+        bpm : "BPMAnalysis", the BPM analysis results to format
+
+    Returns:
+        A string representing the formatted BPM statistics.
     """
+    lines = []
     lines.append("\n### BPM Statistics:\n")
-    _stat_block(lines, bpm.rms_diff)
-    return lines
+    lines.append(_xbpm_stats(bpm.rms_diff))
+    return ''.join(lines)
+
+
+def _scales(
+        scl: "Scales"
+        ) -> str:
+    """Format the scale information for the positions.
+    
+    Args:
+        scl : "Scales", the scale information to format
+
+    Returns:
+        A string representing the formatted scale information.
+    """
+    sclset = {
+        "kx" : (scl.kx, scl.skx),
+        "dx" : (scl.dx, scl.sdx),
+        "ky" : (scl.ky, scl.sky),
+        "dy" : (scl.dy, scl.sdy),
+        "qx" : (scl.qx, scl.sqx),
+        "qy" : (scl.qy, scl.sqy)
+    }
+    headline = f"\n### Scales:\n\n"
+    lines = [
+        f"  {name}  = {_err(value, error)}"
+        for name, (value, error) in sclset.items()
+        ]
+    return headline + '\n'.join(lines)
 
 
 def _xbpm_stats(
-        lines: list[str],
-        positions: "AnalyzedPositions",
-        ) -> None:
-    """Format XBPM statistics for the given positions and append to lines."""
-    lines.append("\n### XBPM Statistics:\n")
-
-    # Table for pairwise and cross statistics, with and without transformation
-    stat_table =[
-        ("Pairwise Standard Deviation, not transformed",
-         positions.pairw.stat_std),
-        ("Pairwise Standard Deviation, transformed",
-         positions.pairw.stat_trn),
-        ("Cross Standard Deviation, not transformed",
-         positions.cross.stat_std),
-        ("Cross Standard Deviation, transformed",
-         positions.cross.stat_trn),
-
-    ]
-    # Run through the statistics table and format each block.
-    for title, stat in stat_table:
-        lines.append(f"\n* {title}:\n")
-        _stat_block(lines, stat)
-    return lines
-
-
-def _stat_block(lines: list[str],
                 stat: "RMSGridStatistics",
-                ) -> None:
+                ) -> str:
     """Format a single block of RMS grid statistics and append to lines.
     
     Args:
-        lines : list[str], the string table
         stat  : "RMSGridStatistics", the RMS grid statistics to format
     """
+    lines = []
     lines.append(
         "\n*  ROI Slice :"
         f" H = {_f(stat.roislice.size_h)},\t"
@@ -170,44 +186,46 @@ def _stat_block(lines: list[str],
             f" {_f(allroi.mean_v)} / "
             f" {_f(allroi.max_v)}\n"
         )
+    return ''.join(lines)
 
 
 def _sweeps(
-        lines : list[str],
         sweeps: "CentralSweeps",
-        ) -> None:
-    """Format central sweeps for the given positions and append to lines.
-    
+        ) -> str:
+    """Format central sweeps for the given positions.
+
     Args:
-        lines  : list[str], string table to append the formatted statistics to
         sweeps : "CentralSweeps", the central sweeps to format
     """
+    lines = []
     lines.append("\n### Central Sweeps:\n")
     if sweeps.h is not None:
         lines.append("  H sweep:\n \t")
         coeffs_h = sweeps.h.coeffs
         sigmas_h = sweeps.h.sigmas
-        lines.append(f"kx : {_err(coeffs_h[0], sigmas_h[0])}\t")
-        lines.append(f"dx : {_err(coeffs_h[1], sigmas_h[1])}\n")
+        if coeffs_h is not None:
+            lines.append(f"kx : {_err(coeffs_h[0], sigmas_h[0])}\t")
+            lines.append(f"dx : {_err(coeffs_h[1], sigmas_h[1])}\n")
 
     if sweeps.v is not None:
         lines.append("  V sweep:\n \t")
         coeffs_v = sweeps.v.coeffs
         sigmas_v = sweeps.v.sigmas
-        lines.append(f"ky : {_err(coeffs_v[0], sigmas_v[0])}\t")
-        lines.append(f"dy : {_err(coeffs_v[1], sigmas_v[1])}\n")
+        if coeffs_v is not None:
+            lines.append(f"ky : {_err(coeffs_v[0], sigmas_v[0])}\t")
+            lines.append(f"dy : {_err(coeffs_v[1], sigmas_v[1])}\n")
+    return ''.join(lines)
 
 
 def _blades(
-        lines: list[str],
         blades: dict,
-        ) -> None:
-    """Format blade analysis for the given positions and append to lines.
+        ) -> str:
+    """Format blade analysis for the given positions.
     
     Args:
-        lines  : list[str], string table to append the formatted statistics to
         blades : dict, the blade central analysis coefficients to format
     """
+    lines = []
     lines.append("\n### Blade Analysis ###\n")
     for direction, bl in blades.items():
         lines.append(f"  {direction.capitalize()} sweep:\n")
@@ -221,49 +239,59 @@ def _blades(
                      f"   delta = {_err(bl.bo.d, bl.bo.sd)}\n\n"
                      )
     lines.append("###\n")
+    return ''.join(lines)
 
 
 def _supmat(
-        lines: list[str],
         supmat: "SuppressionMatrix",
-        ) -> None:
-    """Format suppression matrix.
+        rotmat: GL2RMatrix,
+        ) -> dict[str, str]:
+    """Format suppression matrix and return as a dictionary of strings.
     
     Args:
-        lines  : list[str], strings to append to output 
-        supmat : SuppressionMatrix, the suppression matrices to format
+        supmat : SuppressionMatrix, the suppression matrix to format
     """
-    lines.append("\n### Suppression Matrix:\n")
-    for mat, err, title in [
-        (supmat.standard,   None,          "Standard"),
-        (supmat.calculated, supmat.stddev, "Calculated"),
-        (supmat.optimized,  None,          "Optimized")
-        ]:
-        _matrix_print(lines, mat, err, title)
+    if supmat is None:
+        return {k : "" for k in ["std", "pw_tr", "cr_std", "cr_rot"]}
+
+    lines = {
+        "std":   _matrix_print("Standard",  supmat.standard,  None),
+        "pw_tr": _matrix_print("Calculated", supmat.calculated, supmat.stddev),
+    }
+    if rotmat is not None:
+        lines["cr_std"] = _matrix_print("Cross Standard", rotmat.std,  None)
+        lines["cr_rot"] = _matrix_print("Cross Rotation", rotmat.calc, None)
+    else:
+        lines["cr_std"] = ""
+        lines["cr_rot"] = ""
+    return lines
 
 
-def _matrix_print(lines: list[str],
-                  mat: "np.ndarray",
-                  err: "np.ndarray | None",
-                  title: str):
+def _matrix_print(
+        title: str,
+        mat: "np.ndarray",
+        err: "np.ndarray | None",
+        ) -> str:
     """Print the given matrix with optional error matrix and title.
     
     Args:
+        title : str
         mat : numpy.ndarray
         err : numpy.ndarray or None
-        title : str
     """
-    lines.append(f"\n### {title} :\n")
     if mat is None:
-        lines.append(f"### WARNING: Matrix {title} is not defined.\n")
-        return
+        return f"### WARNING: Matrix {title} is not defined.\n"
 
+    lines = [f"### Suppression matrix - {title}:\n"]
     mm, nn = mat.shape
     for ii in range(mm):
+        row = []
         for jj in range(nn):
-            if err is not None:
-                lines.append(_err(mat[ii, jj], err[ii, jj]))
-            else:
-                lines.append(_f(mat[ii, jj]))
-        lines.append("\n")
+            row.append(
+                _err(mat[ii, jj], err[ii, jj])
+                if err is not None
+                else _f(mat[ii, jj])
+                )
+        lines.append("\t" + "  ".join(row) + "\n")
+    return ''.join(lines)
 

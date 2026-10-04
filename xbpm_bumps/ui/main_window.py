@@ -25,12 +25,13 @@ from .widgets.mpl_canvas      import MatplotlibCanvas
 from .dialogs.beamline_dialog import BeamlineSelectionDialog
 from .dialogs.help_dialog     import HelpDialog
 from ..core                   import data_structure as DStr
+from ..core.analysis_info     import format_analysis_info
 from ..core.config            import Config
 from ..core.constants         import FIGDPI
-from ..core.reader_hdf5       import read_hdf5
 from ..core.analysis_service  import AnalysisService
+from ..core.reader_hdf5       import read_hdf5
 from ..core.visualizers       import render_data_analysis
-    
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,20 +44,6 @@ class XBPMMainWindow(QMainWindow):
     - Progress monitoring
     - Result visualization
     """
-    ANALYSIS_SECTION_TITLES = {
-        'positions'       : 'Positions',
-        'sweep_positions' : 'Sweep Positions',
-        'blade_sweeps'    : 'Blades at Sweeps',
-        'bpm'             : 'BPM',
-    }
-
-    BPM_STATS_DESCRIPTIONS = {
-        'sigma_h'     : 'Horizontal RMS pos. difference ',
-        'sigma_v'     : '  Vertical RMS pos. difference ',
-        'sigma_total' : '     Total RMS pos. difference ',
-        'diff_max_h'  : 'Max hor.  |x_meas - x_nom| [μm]',
-        'diff_max_v'  : 'Max vert. |y_meas - y_nom| [μm]',
-    }
 
     def __init__(self: "XBPMMainWindow") -> None:
         """Initialize the main window."""
@@ -66,14 +53,16 @@ class XBPMMainWindow(QMainWindow):
         self.workbeamline      = None
         self.workdata          = None  # Effective BeamlineData instance
         self._last_inputfile   = ""
-        self.results           = {}    # Single unified results storage
         self._last_roisize     = None
         self._analysis_running = False
-        # self.grid_shape        : tuple[int, int] | None = None
+
+        self.analysis          = None
+        self._tab_info         = {}
+
         self.setup_ui()
-        self.setWindowTitle("XBPM Calibration and Analysis Tool")
-        # Wider default window to give canvases more horizontal room
         self.resize(1920, 1080)
+        self._refresh_analysis_info()
+        self.setWindowTitle("XBPM Calibration and Analysis Tool")
 
     @pyqtSlot()
     def _on_run_clicked(self) -> None:
@@ -97,6 +86,8 @@ class XBPMMainWindow(QMainWindow):
             self.set_analysis_running(False)
 
         self.analysis = analysis
+        self._build_tab_info()
+        self._refresh_analysis_info()
         self.log_message("Analysis completed.")
 
         # Render every populated tab via the single orchestrator.
@@ -107,8 +98,6 @@ class XBPMMainWindow(QMainWindow):
             )
         for key, fig in figures.items():
             self._embed_figure(self.canvases[key], fig)
-
-        self._refresh_analysis_info()
 
     def setup_ui(self) -> None:
         """Initialize the main window layout."""
@@ -224,40 +213,49 @@ class XBPMMainWindow(QMainWindow):
         self.console.setReadOnly(True)
         self.console.setFont(QFont("Courier", 9))
         self.results_tabs.addTab(self.console, "Console")
+        self.console._info_key = None
 
         # Visualization tabs (ordered to match analysis options)
         bpm_tab, bpm_canvas = self._create_canvas_tab()
         self.results_tabs.addTab(bpm_tab, "BPM")
         self.canvases["bpm"] = bpm_canvas
+        bpm_tab._info_key = "bpm"
 
         blade_tab, blade_canvas = self._create_canvas_tab()
         self.results_tabs.addTab(blade_tab, "Blade Map")
-        self.canvases["blade"] = blade_canvas
+        self.canvases["blade_map"] = blade_canvas
+        blade_tab._info_key = "blade_map"
 
         blades_center_tab, blades_center_canvas = self._create_canvas_tab()
         self.results_tabs.addTab(blades_center_tab, "Blades at sweeps")
-        self.canvases["blades_center"] = blades_center_canvas
+        self.canvases["blade_central_sweeps"] = blades_center_canvas
+        blades_center_tab._info_key = "blade_central_sweeps"
 
         # Move the sweeps tab after blades_center
         sweep_tab, sweep_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(sweep_tab, "Positions along sweeps")
-        self.canvases["sweeps"] = sweep_canvas
+        self.results_tabs.addTab(sweep_tab, "Positions central sweeps")
+        self.canvases["position_central_sweeps"] = sweep_canvas
+        sweep_tab._info_key = "position_central_sweeps"
 
         xbpm_raw_pw_tab, xbpm_raw_pw_canvas = self._create_canvas_tab()
         self.results_tabs.addTab(xbpm_raw_pw_tab, "XBPM Δ/Σ raw")
-        self.canvases["xbpm_raw_pairwise"] = xbpm_raw_pw_canvas
+        self.canvases["xbpm_pairwise_raw"] = xbpm_raw_pw_canvas
+        xbpm_raw_pw_tab._info_key = "xbpm_pairwise_raw"
 
         xbpm_scaled_pw_tab, xbpm_scaled_pw_canvas = self._create_canvas_tab()
         self.results_tabs.addTab(xbpm_scaled_pw_tab, "XBPM Δ/Σ Sup. Mat.")
-        self.canvases["xbpm_scaled_pairwise"] = xbpm_scaled_pw_canvas
+        self.canvases["xbpm_pairwise_trn"] = xbpm_scaled_pw_canvas
+        xbpm_scaled_pw_tab._info_key = "xbpm_pairwise_trn"
 
         xbpm_raw_cr_tab, xbpm_raw_cr_canvas = self._create_canvas_tab()
         self.results_tabs.addTab(xbpm_raw_cr_tab, "XBPM part. Δ/Σ - raw")
-        self.canvases["xbpm_raw_cross"] = xbpm_raw_cr_canvas
+        self.canvases["xbpm_cross_raw"] = xbpm_raw_cr_canvas
+        xbpm_raw_cr_tab._info_key = "xbpm_cross_raw"
 
         xbpm_scaled_cr_tab, xbpm_scaled_cr_canvas = self._create_canvas_tab()
         self.results_tabs.addTab(xbpm_scaled_cr_tab, "XBPM part. Δ/Σ - LinTr")
-        self.canvases["xbpm_scaled_cross"] = xbpm_scaled_cr_canvas
+        self.canvases["xbpm_cross_trn"] = xbpm_scaled_cr_canvas
+        xbpm_scaled_cr_tab._info_key = "xbpm_cross_trn"
 
         return self.results_tabs
 
@@ -321,7 +319,8 @@ class XBPMMainWindow(QMainWindow):
         # Define links to effective beamline data. 
         self.workdata     = self.beamlinedata[self.workbeamline]
         self.analysis     = self.workdata.analysis
-        self.beamline_prm : DStr.BeamlinePrm = self.workdata.prm
+        self.beamline_prm = self.workdata.prm
+        self._build_tab_info()
 
         # Update BPM distance.
         self.beamline_prm.bpmdist = Config.BPMDISTS.get(
@@ -653,7 +652,6 @@ class XBPMMainWindow(QMainWindow):
             logger.exception("Failed to open Help dialog")
             self.show_error("Help", f"Could not open Help: {exc}")
 
-
     @pyqtSlot(bool)
     def set_analysis_running(self, running: bool) -> None:
         """Update UI state during analysis execution.
@@ -694,521 +692,24 @@ class XBPMMainWindow(QMainWindow):
         layout.addWidget(canvas)
         return widget, canvas
 
-    def _tab_to_section(self, tab_text: str) -> str:
-        text = (tab_text or "").lower()
-        if 'blade map' in text:
-            return 'none'
-        if 'blades at' in text or 'blades at sweeps' in text:
-            return 'blade_sweeps'
-        if ('positions along sweep' in text or
-            'positions along sweeps' in text):
-            return 'sweep_positions'
-        if 'sweep' in text:
-            return 'sweeps'
-        if 'xbpm' in text:
-            return 'positions'
-        if 'bpm' in text:
-            return 'bpm'
-        return ''
-
-    def _tab_position_filter(self, tab_text: str):
-        """Return (scope, label) filter for XBPM tabs or None."""
-        text = (tab_text or "").lower()
-        scope = None
-        label = None
-
-        if 'raw' in text:
-            scope = 'raw'
-        if 'scaled' in text or ' tr' in text:
-            scope = 'scaled'
-        if 'pair' in text:
-            label = 'pair'
-        if 'cross' in text or 'part.' in text:
-            label = 'cross'
-
-        # Pairwise tabs are named "XBPM Δ/Σ raw|Tr" and do not include
-        # the literal word "pair".
-        if 'xbpm' in text and label is None:
-            label = 'pair'
-
-        if scope or label:
-            return scope, label
-        return None
-
-    def _format_analysis_info(self, active_tab: str) -> str:
-        """Format analysis metadata for UI display.
-
-        Delegates to helper methods to reduce complexity.
-
-        Args:
-            active_tab: Name of the currently active results tab.
-
-        Returns:
-            Formatted string for display in the read-only analysis info panel.
-        """
-        if not self.results:
-            return "No analysis metadata available yet."
-
-        active_section = self._tab_to_section(active_tab)
-        pos_filter = self._tab_position_filter(active_tab)
-        if active_section == 'none':
-            return ""
-
-        sections: dict[str, list[str]] = {}
-        sections.update(self._format_scales_section(pos_filter))
-        sections.update(self._format_sweeps_positions_section())
-        sections.update(self._format_blades_section())
-        sections.update(self._format_bpm_stats_section())
-
-        # Add XBPM stats to positions section if present
-        xbpm_stats_dict = self._format_xbpm_stats_section(active_tab)
-        if xbpm_stats_dict:
-            sections.setdefault('positions', []).extend(
-                xbpm_stats_dict.get('xbpm', [])
-                )
-
-        supmat_lines = self._format_supmat_lines(active_tab)
-        if supmat_lines:
-            sections.setdefault('positions', []).extend(supmat_lines)
-
-        return self._format_sections_output(sections, active_section)
-
-    def _format_scales_section(self, pos_filter=None) -> dict[str, list[str]]:
-        """Format scales (positions) metadata section.
-        
-        Inlines coefficient and error formatting for cleaner code.
-        Supports both legacy (s_kx/s_dx) and current (skx/sdx) error key formats.
-
-        Args:
-            pos_filter: Optional tuple of (scope, label) to filter scales.
-
-        Returns:
-            Dictionary with 'positions' key containing formatted lines.
-        """
-        scale_lines: list[str] = []
-
-        # Build unified scales view from both legacy and
-        # current result layouts.
-        scales: dict[str, dict] = {}
-
-        if isinstance(self.results, dict):
-            legacy_scales = self.results.get('scales')
-            if isinstance(legacy_scales, dict):
-                for scope in ('raw', 'scaled'):
-                    block = legacy_scales.get(scope)
-                    if isinstance(block, dict):
-                        scales[scope] = block
-
-            raw_full = self.results.get('positions_raw_full')
-            if isinstance(raw_full, dict):
-                raw_scales = raw_full.get('scales')
-                if isinstance(raw_scales, dict):
-                    scales['raw'] = raw_scales
-
-            scaled_full = self.results.get('positions_scaled_full')
-            if isinstance(scaled_full, dict):
-                scaled_scales = scaled_full.get('scales')
-                if isinstance(scaled_scales, dict):
-                    scales['scaled'] = scaled_scales
-
-        for scope in ('scaled', 'raw'):
-            scope_block = scales.get(scope)
-            if not isinstance(scope_block, dict):
-                continue
-            for label, coeffs in scope_block.items():
-                if not isinstance(coeffs, dict):
-                    continue
-                if pos_filter:
-                    filt_scope, filt_label = pos_filter
-                    if filt_scope and scope != filt_scope:
-                        continue
-                    if filt_label and label != filt_label:
-                        continue
-
-                # Format coefficient lines inline
-                lines_to_add: list[str] = []
-
-                # Format qx/kx/dx pair
-                coeffnames1 = (
-                    ('qx', ('sqx', 's_qx')),
-                    ('kx', ('skx', 's_kx')),
-                    ('dx', ('sdx', 's_dx')),
-                )
-                line1 = self._format_coefficent_lines(coeffnames1, coeffs)
-
-                # Format qy/ky/dy pair
-                coeffnames2 = (
-                    ('qy', ('sqy', 's_qy')),
-                    ('ky', ('sky', 's_ky')),
-                    ('dy', ('sdy', 's_dy')),
-                )
-                line2 = self._format_coefficent_lines(coeffnames2, coeffs)
-
-                if line1:
-                    lines_to_add.append(",\n".join(line1))
-                if line2:
-                    lines_to_add.append("\n" + ",\n".join(line2))
-
-                if lines_to_add:
-                    subject = Config.get_position_subject(scope, label)
-                    scale_lines.append(f"  * {subject}:")
-                    scale_lines.extend(lines_to_add)
-
-        return {'positions': scale_lines} if scale_lines else {}
-
-    def _format_coefficent_lines(self, coeffnames: tuple,
-                                 coeffs: dict) -> list[str]:
-        """Format coefficient lines for a given coefficient set.
-
-        Args:
-            coeffnames  : Tuple of polynomial coefficient strings.
-            coeffs    : Dictionary of coefficient values.
-
-        Returns:
-            List of formatted coefficient lines.
-        """
-        line = []
-        # Format k/d pair
-        for key, err_keys in coeffnames:
-            val = coeffs.get(key)
-            if val is not None:
-                err = None
-                for ek in (err_keys
-                           if isinstance(err_keys, (tuple, list))
-                           else (err_keys,)):
-                    if ek in coeffs and coeffs.get(ek) is not None:
-                        err = coeffs.get(ek)
-                        break
-                try:
-                    val_num = float(val)
-                    if err is not None:
-                        rel_err = float(err) / abs(val_num)
-                        line.append(
-                            f"{key:>8} = {val_num:8.3g}  "
-                            f"({float(err):2.0e} : {rel_err:.2%})"
-                            )
-                    else:
-                        line.append(f"{key:>8} =  {val_num:8.3g}")
-                except Exception:
-                    if err is not None:
-                        line.append(f"{key:>8} =  {val} ({err})")
-                    else:
-                        line.append(f"{key:>8} =  {val}")
-        return line
-
-    def _format_sweeps_positions_section(self) -> dict[str, list[str]]:
-        """Format sweeps positions (global fits) metadata section.
-        
-        Inlines fit entry formatting for cleaner code structure.
-        """
-        sweeps_pos_lines: list[str] = []
-        sweeps = self.results.get('sweeps', {}) if isinstance(self.results, dict) else {}
-        positions_meta = (sweeps.get('positions', {})
-                         if isinstance(sweeps, dict) else {})
-
-        for orient, label in (('horizontal', ' H '), ('vertical', ' V ')):
-            fit = positions_meta.get(orient)
-            if not isinstance(fit, dict):
-                continue
-
-            # Format fit entry inline
-            lines_to_add: list[str] = []
-            line1 = []
-            line2 = []
-
-            for key, bucket in (('k', line1), ('delta', line1),
-                               ('s_k', line2), ('s_delta', line2)):
-                if key in fit and fit[key] is not None:
-                    try:
-                        bucket.append(f"{key:>10} = {float(fit[key]):.4g}")
-                    except Exception:
-                        bucket.append(f"{key:>10} = {fit[key]}")
-
-            if line1:
-                lines_to_add.append("  " + ",  ".join(line1))
-            if line2:
-                lines_to_add.append("  " + ",  ".join(line2))
-
-            if lines_to_add:
-                sweeps_pos_lines.append(f"  * {label}:")
-                sweeps_pos_lines.extend(lines_to_add)
-
-        return ({'sweep_positions': sweeps_pos_lines}
-                if sweeps_pos_lines else {})
-
-    def _format_blades_section(self) -> dict[str, list[str]]:
-        """Format blades-at-sweeps per-blade fits metadata section.
-        
-        Inlines blade fit entry formatting for cleaner code structure.
-        """
-        blades_lines: list[str] = []
-        sweeps = self.results.get('sweeps', {}) if isinstance(self.results, dict) else {}
-        blades_meta = (sweeps.get('blades', {})
-                       if isinstance(sweeps, dict) else {})
-
-        for orient, label in (('horizontal', 'H'), ('vertical', 'V')):
-            bfits = blades_meta.get(orient)
-            if not isinstance(bfits, dict):
-                continue
-
-            for blade, fit in bfits.items():
-                if not isinstance(fit, dict):
-                    continue
-
-                # Format blade fit inline
-                parts = []
-                for key in ('k', 'delta'):
-                    if key in fit and fit[key] is not None:
-                        try:
-                            parts.append(f"{key}={float(fit[key]):.4g}")
-                        except Exception:
-                            parts.append(f"{key}={fit[key]}")
-
-                if parts:
-                    blades_lines.append(f"  * {label} {blade}:")
-                    blades_lines.append("   " + ", ".join(parts))
-
-        return {'blade_sweeps': blades_lines} if blades_lines else {}
-
-    def _format_bpm_stats_section(self) -> dict[str, list[str]]:
-        """Format BPM statistics metadata section."""
-        bpm_lines: list[str] = []
-        bpm_stats = (self.results.get('bpm_stats', {})
-                     if isinstance(self.results, dict) else {})
-
-        if isinstance(bpm_stats, dict):
-            bpm_lines.append(
-                "  ROI size [lines x columns points] ="
-                f" {self.beamline_prm.roislice.size_v} x {self.beamline_prm.roislice.size_h}"
-            )
-            bpm_lines.append("\n  Sigmas (all sites):")
-            for key in ('sigma_h', 'sigma_v', 'sigma_total'):
-                if key in bpm_stats:
-                    entry = self.BPM_STATS_DESCRIPTIONS.get(key, key)
-                    try:
-                        bpm_lines.append(
-                            f"  {entry:>17} = {float(bpm_stats[key]):.4g}"
-                        )
-                    except Exception:
-                        bpm_lines.append(f"  {entry:>17} = {bpm_stats[key]}")
-
-            bpm_lines.append("\n  Extremes (all sites):")
-            for key in ('diff_max_h', 'diff_max_v'):
-                if key in bpm_stats:
-                    entry = self.BPM_STATS_DESCRIPTIONS.get(key, key)
-                    try:
-                        bpm_lines.append(
-                            f"  {entry:>17} = {float(bpm_stats[key]):.4g}"
-                        )
-                    except Exception:
-                        bpm_lines.append(f"  {entry:>17} = {bpm_stats[key]}")
-
-            if bpm_stats.get('roi_available'):
-                bpm_lines.append("\n  Sigmas (ROI):")
-                roi_sig_h = bpm_stats.get('roi_sigma_h')
-                roi_sig_v = bpm_stats.get('roi_sigma_v')
-                roi_sig_t = bpm_stats.get('roi_sigma_total')
-                roi_lines = [
-                    f" {'ROI horizontal RMS':>17} = {float(roi_sig_h):.4g}",
-                    f" {'ROI vertical RMS':>17} = {float(roi_sig_v):.4g}",
-                    f" {'ROI total RMS':>17} = {float(roi_sig_t):.4g}"
-                ]
-                bpm_lines += roi_lines
-        return {'bpm': bpm_lines}
-
-    def _format_xbpm_stats_section(self,
-                                   active_tab: str
-                                   ) -> dict[str, list[str]]:
-        """Format XBPM statistics metadata section.
-
-        Only shows the relevant calculation type based on active tab:
-        - Pairwise stats for tabs containing 'pair'
-        - Cross-blade stats for tabs containing 'cross'
-        """
-        xbpm_lines: list[str] = []
-        text = (active_tab or "").lower()
-
-        # Determine which stats to display based on active tab
-        xbpm_stats = None
-        if 'raw' in text:
-            xbpm_stats = (self.results.get('xbpm_stats_raw', {})
-                          if isinstance(self.results, dict) else {})
-        elif 'scaled' in text or ' tr' in text:
-            xbpm_stats = (self.results.get('xbpm_stats_scaled', {})
-                          if isinstance(self.results, dict) else {})
-        else:
-            xbpm_stats = {}
-
-        if not isinstance(xbpm_stats, dict) or not xbpm_stats:
-            return {}
-
-        # Determine which calculation type to display based on tab name
-        calc_type = None
-        if 'pair' in text:
-            calc_type = 'pairwise'
-        elif 'cross' in text or 'part.' in text:
-            calc_type = 'cross'
-
-        # Default XBPM Δ/Σ raw|Tr tabs are pairwise.
-        if calc_type is None and 'xbpm' in text:
-            calc_type = 'pairwise'
-
-        if not calc_type:
-            return {}
-
-        calc_stats = xbpm_stats.get(calc_type, {})
-        if not isinstance(calc_stats, dict) or not calc_stats:
-            return {}
-
-        # Format statistics similar to BPM _std_dev_estimate print output
-        # All statistics should always be present in calc_stats dictionary
-        try:
-            xbpm_lines.append("")
-            xbpm_lines.append("  Sigmas (RMS differences):")
-            xbpm_lines.append(f"     H = {float(calc_stats['sigma_h']):.4f}")
-            xbpm_lines.append(f"     V = {float(calc_stats['sigma_v']):.4f}")
-            xbpm_lines.append(
-                f" total = {float(calc_stats['sigma_total']):.4f}"
-            )
-
-            xbpm_lines.append("")
-            xbpm_lines.append("  Maximum difference:")
-            xbpm_lines.append(
-                f"     H = {float(calc_stats['diff_max_h']):.4f}"
-            )
-            xbpm_lines.append(
-                f"     V = {float(calc_stats['diff_max_v']):.4f}"
-            )
-
-            xbpm_lines.append("")
-            xbpm_lines.append("  Minimum difference:")
-            xbpm_lines.append(
-                f"     H = {float(calc_stats['diff_min_h']):.4f}"
-            )
-            xbpm_lines.append(
-                f"     V = {float(calc_stats['diff_min_v']):.4f}"
-            )
-        except (KeyError, TypeError, ValueError):
-            # If any key is missing or can't be converted, return empty
-            return {}
-
-        return {'xbpm': xbpm_lines} if xbpm_lines else {}
-
-    def _format_supmat_lines(self, active_tab: str) -> list[str]:
-        """Format suppression matrix lines for the active tab with uncertainties."""
-        lines: list[str] = []
-        text = (active_tab or "").lower()
-
-        # Raw pairwise tab: show standard suppression matrix with uncertainties
-        is_pairwise = ('pair' in text) or ('xbpm' in text and 'part.' not in text)
-        if 'raw' in text and is_pairwise:
-            supmat = self.results.get('supmat_standard')
-            stddevmat = self.results.get('stddevmat_standard')
-            if supmat is not None:
-                lines.append("\n  ** Standard Suppression Matrix:")
-                if stddevmat is not None:
-                    lines.extend(self._format_matrix_with_uncertainties(supmat, stddevmat))
-                else:
-                    lines.extend(self._format_matrix(supmat))
-
-        # Scaled pairwise tab: show calculated suppression matrix with uncertainties
-        elif ('scaled' in text or ' tr' in text) and is_pairwise:
-            supmat = self.results.get('supmat')
-            stddevmat = self.results.get('stddevmat')
-            if supmat is not None:
-                lines.append("\n  ** Calculated Suppression Matrix:")
-                if stddevmat is not None:
-                    lines.extend(self._format_matrix_with_uncertainties(supmat, stddevmat))
-                else:
-                    lines.extend(self._format_matrix(supmat))
-
-        return lines
-
-    def _format_matrix(self, supmat) -> list[str]:
-        """Pretty-print suppression matrix rows."""
-        arr = np.asarray(supmat, dtype=float)
-        return [
-            "  " + " ".join(f"{val:8.4f}" for val in row)
-            for row in arr
-        ]
-
-    def _format_matrix_with_uncertainties(self, supmat, stddevmat) -> list[str]:
-        """Pretty-print suppression matrix rows with standard deviations.
-        
-        Args:
-            supmat: Suppression matrix (4x4 array)
-            stddevmat: Standard deviation matrix (4x4 array)
-            
-        Returns:
-            List of formatted strings showing value (±uncertainty) format
-        """
-        arr = np.asarray(supmat, dtype=float)
-        std = np.asarray(stddevmat, dtype=float)
-        lines = []
-        for ii, row in enumerate(arr):
-            row_parts = []
-            for jj, val in enumerate(row):
-                uncertainty = std[ii, jj] if ii < std.shape[0] and jj < std.shape[1] else 0.0
-                if uncertainty > 0:
-                    row_parts.append(f"{val:8.2f} ({uncertainty:1.0e})")
-                else:
-                    row_parts.append(f"{val:8.2f} (0.0)")
-            lines.append("  " + "  ".join(row_parts))
-        return lines
-
-    def _format_sections_output(self, sections: dict[str, list[str]],
-                                active_section: str) -> str:
-        """Format all sections into final output string."""
-        ordered_sections = (
-            [active_section] if active_section else list(sections.keys())
-        )
-
-        lines: list[str] = []
-        for name in ordered_sections:
-            content = sections.get(name)
-            if not content:
-                continue
-            title = self.ANALYSIS_SECTION_TITLES.get(name, name.replace('_', ' ').title())
-            lines.append(f"\n** {title}:")
-            lines.extend(content)
-            lines.append("")
-
-        if lines and lines[-1] == "":
-            lines.pop()
-
-        if lines:
-            return "\n".join(lines)
-
-        if active_section:
-            return "No metadata for this tab."
-        return "No analysis metadata available yet."
-
-    def _refresh_analysis_info(self, tab_index: int = None) -> None:
-        """Update the analysis info panel based on the current tab.
-        
-        Args:
-            tab_index: Optional index of the tab to refresh.
-                       If None, uses the current tab index.
-        """
-        # If UI not fully built yet, skip
-        if not hasattr(self, 'analysis_info') or self.analysis_info is None:
+    def _build_tab_info(self):
+        """Place holder."""
+        self._tab_info = format_analysis_info(self.analysis)
+
+    def _refresh_analysis_info(self) -> None:
+        """Update the analysis info panel based on the current tab."""
+        # If analysis not available yet, skip.
+        if self.analysis is None:
+            self.analysis_info.setText("No analysis available yet.")
             return
 
-        try:
-            current_tab = (
-                self.results_tabs.tabText(tab_index)
-                if tab_index is not None else
-                self.results_tabs.tabText(self.results_tabs.currentIndex())
-            )
-        except Exception:
-            current_tab = ""
-        text = self._format_analysis_info(current_tab)
-        self.analysis_info.setText(text)
+        key =  getattr(self.results_tabs.currentWidget(), "_info_key", None)
+        self.analysis_info.setText(self._tab_info.get(key, ""))
 
     @pyqtSlot(int)
     def _on_tab_changed(self, index: int):
         """Update analysis info when the active tab changes."""
-        self._refresh_analysis_info(index)
+        self._refresh_analysis_info()
 
     def _embed_figure(self,
                       canvas: MatplotlibCanvas,

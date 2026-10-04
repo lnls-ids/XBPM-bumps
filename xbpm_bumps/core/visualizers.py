@@ -14,7 +14,6 @@ from .constants import FIGDPI
 from .config import Config
 from .data_structure import (
     BPMAnalysis,
-    BladeCenterAnalysis,
     CentralSweeps,
     Positions,
     BeamlinePrm,
@@ -22,6 +21,7 @@ from .data_structure import (
     BladeMap,
     RMSStatistics,
     ROISlice,
+    BCA_HV,
     )
 
 
@@ -68,7 +68,7 @@ def render_data_analysis(
             )
 
     if analysis.blademap is not None:
-        figures["blade"] = (
+        figures["blade_map"] = (
             BladeMapVisualizer(
                 analysis.blademap,
                 outputfile
@@ -76,16 +76,15 @@ def render_data_analysis(
             )
 
     cs = analysis.centralsweeps
-    if cs is not None:
-        if cs.h is not None or cs.v is not None:
-            figures["blade_sweeps"] = (
-                CentralSweepVisualizer.plot_central_sweep_blades(
-                    cs,
-                    beamline=prm.beamline
-                    ))
-        figures["position_sweeps"] = (
+    if cs.h is not None or cs.v is not None:
+        figures["position_central_sweeps"] = (
             CentralSweepVisualizer.plot_central_sweep_positions(cs)
             )
+        figures["blade_central_sweeps"] = (
+            CentralSweepVisualizer.plot_central_sweep_blades(
+                analysis.bladecenter,
+                beamline=prm.beamline
+                ))
 
     # Position visualizations. For each tab, select the appropriate sets:
     # ROI slice, nominal positions, calculated positions (raw or transformed),
@@ -520,7 +519,7 @@ class CentralSweepVisualizer:
             axh.set_title(_Title(
                 beamline   = beamline,
                 graph_type = 'sweeps',
-                ax_type    = 'H')
+                ax_type    = 'h')
                 )
             axh.grid(True)
             axh.legend()
@@ -546,7 +545,7 @@ class CentralSweepVisualizer:
             axv.set_title(_Title(
                 beamline   = beamline,
                 graph_type = 'sweeps',
-                ax_type    = 'V')
+                ax_type    = 'v')
                 )
             axv.grid(True)
             axv.legend()
@@ -566,7 +565,7 @@ class CentralSweepVisualizer:
 
     @staticmethod
     def plot_central_sweep_blades(
-        bc_analysis: dict,
+        bc_analysis: BCA_HV,
         beamline: str = ""
         ) -> Optional[Figure]:
         """Generate blade currents at center plots (canonical version).
@@ -576,8 +575,8 @@ class CentralSweepVisualizer:
         semantics for the "Blades at sweeps" tab.
 
         Args:
-            bc_analysis : Dictionary containing BladeCenterAnalysis data for
-                             horizontal and vertical sweeps.
+            bc_analysis : BCA_HV instance containing BladeCenterAnalysis
+                            data for horizontal and vertical sweeps.
             beamline    : Beamline name for ylabel determination.
 
         Returns:
@@ -585,8 +584,8 @@ class CentralSweepVisualizer:
         """
         fig, (axh, axv) = plt.subplots(1, 2, figsize=(10, 5))
 
-        ch = bc_analysis['h']
-        cv = bc_analysis['v']
+        ch = bc_analysis.h
+        cv = bc_analysis.v
 
         # If horizontal sweeps are available.
         if ch.blades is not None:
@@ -600,15 +599,15 @@ class CentralSweepVisualizer:
                 k = f"{key.upper()}"
                 axh.errorbar(
                     bld.pos,
-                    bld.raw,
-                    bld.sigma_pos,
+                    bld.bld_raw,
+                    bld.bld_err,
                     fmt='o-',
                     label=k,
                     zorder=1
                     )
                 axh.plot(
                     bld.pos,
-                    bld.fit,
+                    bld.bld_fit,
                     "^-",
                     label=f"{k} fit",
                     zorder=2
@@ -626,15 +625,15 @@ class CentralSweepVisualizer:
                 k = f"{key.upper()}"
                 axv.errorbar(
                     bld.pos,
-                    bld.raw,
-                    bld.sigma_pos,
+                    bld.bld_raw,
+                    bld.bld_err,
                     fmt='o-',
                     label=k,
                     zorder=1
                     )
                 axv.plot(
                     bld.pos,
-                    bld.fit,
+                    bld.bld_fit,
                     "^-",
                     label=f"{k} fit",
                     zorder=2
@@ -665,134 +664,6 @@ class CentralSweepVisualizer:
         fig.tight_layout()
 
         return fig
-
-    @staticmethod
-    def _fit_blade(rng: np.ndarray, y: np.ndarray,
-                   yerr: np.ndarray, attrs: dict, blade_name: str):
-        k_attr = f'k_{blade_name}'
-        d_attr = f'delta_{blade_name}'
-        coef = None
-        if attrs:
-            k_val = attrs.get(k_attr)
-            d_val = attrs.get(d_attr)
-            if k_val is not None and d_val is not None:
-                coef = (k_val, d_val)
-        if coef is None:
-            weights = None
-            if ((yerr is not None and
-                    np.all(np.isfinite(yerr)) and
-                    np.all(yerr > 0))):
-                weights = 1.0 / yerr
-            coef = np.polyfit(rng, y, deg=1, w=weights)
-        return coef
-
-    @staticmethod
-    def _plot_side(ax: plt.Axes, blades: dict,
-                   rng: np.ndarray, attrs: dict, marker_map: list,
-                   xlab_default: str, fit_style: dict, side_label: str):
-        if blades is None or rng is None:
-            return
-        for blade_name, marker in marker_map:
-            arr = blades.get(blade_name)
-            if arr is None:
-                continue
-            arr = np.asarray(arr)
-            if arr.ndim == 2 and arr.shape[1] >= 2:
-                y = arr[:, 0]
-                yerr = arr[:, 1]
-            else:
-                y = arr
-                yerr = None
-
-            data_line = CentralSweepVisualizer._plot_blade(
-                ax, rng, y, yerr, marker, blade_name
-            )
-
-            # Fit only if variation exists
-            if (np.any(np.isfinite(y)) and
-                np.nanstd(y) > 0 and
-                len(rng) > 1):
-                try:
-                    coef = (
-                        CentralSweepVisualizer._fit_blade(rng, y, yerr,
-                                                        attrs, blade_name)
-                    )
-                    style = dict(fit_style)
-                    if data_line is not None:
-                        style['color'] = data_line.get_color()
-                    ax.plot(rng, coef[0] * rng + coef[1],
-                            label=f"{blade_name} fit", **style)
-                except Exception:
-                    logger = logging.getLogger(__name__)
-                    logger.warning(
-                        "Blade fit failed for %s side, blade %s",
-                        side_label,
-                        blade_name,
-                        exc_info=True,
-                    )
-                    pass
-
-        ax.set_xlabel(xlab_default, fontsize=16)
-        ax.set_ylabel('I', fontsize=16)
-        ax.tick_params(labelsize=12)
-        ax.grid()
-        ax.legend(fontsize=11)
-
-    @staticmethod
-    def _plot_blade(
-        ax: plt.Axes,
-        rng: np.ndarray,
-        y: np.ndarray,
-        yerr: np.ndarray,
-        marker: str,
-        blade_name: str) -> Optional[plt.Line2D]:
-        if yerr is not None:
-            container = ax.errorbar(
-                rng, y, yerr=yerr, fmt=marker, label=blade_name, zorder=2
-            )
-            return container.lines[0] if container.lines else None
-        else:
-            line, = ax.plot(rng, y, marker, label=blade_name, zorder=2)
-            return line
-
-    @staticmethod
-    def _plot_blades_common(blades_h: dict, blades_v: dict,
-                            range_h: np.ndarray, range_v: np.ndarray,
-                            attrs_h: dict = None, attrs_v: dict = None,
-                            beamline: str = "", figsize: tuple = (10, 5)):
-        """Shared plotting path for blade currents (live and HDF5)."""
-        # Keep fit lines consistent and visually overlaid on data.
-        fit_style = {"linestyle": "--",
-                 "linewidth": 2.0,
-                 "alpha": 1.0,
-                 "zorder": 6}
-
-        fig, (axh, axv) = plt.subplots(1, 2, figsize=figsize)
-
-        CentralSweepVisualizer._plot_side(
-            axh, blades_h, range_h, attrs_h,
-            [('to', 'o-'), ('ti', 's-'), ('bi', 'd-'), ('bo', '^-')],
-            (attrs_h or {}).get('xlabel_blades', 'x [μrad]'),
-            fit_style, 'horizontal')
-        CentralSweepVisualizer._plot_side(
-            axv, blades_v, range_v, attrs_v,
-            [('to', 'o-'), ('ti', 's-'), ('bi', 'd-'), ('bo', 'v-')],
-            (attrs_v or {}).get('xlabel_blades', 'y [μrad]'),
-            fit_style, 'vertical')
-
-        ylabel = (u"$I$ [# counts]" if beamline[:3] in ["MGN", "MNC"]
-                 else u"$I$ [A]")
-        axh.set_ylabel(ylabel, fontsize=14)
-        axv.set_ylabel(ylabel, fontsize=14)
-        axh.set_title(_Title('blades_at_sweeps', 'h'))
-        axv.set_title(_Title('blades_at_sweeps', 'v'))
-
-        fig.suptitle(
-            _Title('blades_at_sweeps', 'suptitle'), fontsize=12, fontweight='bold'
-        )
-        fig.tight_layout()
-        return fig
-
 
 class PositionVisualizer:
     """Visualizes calculated XBPM beam positions.

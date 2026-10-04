@@ -729,30 +729,36 @@ class BladeLineFit:
     """Container for the results of a linear fit to blade data.
 
     Attributes:
-        coeffs : Coefficients of the linear fit (slope and intercept).
-        sigmas : Standard deviations of the coefficients.
+        k       : Slope of the linear fit.
+        sk      : Standard deviation of the slope.
+        d       : Intercept of the linear fit.
+        sd      : Standard deviation of the intercept.
+        pos     : Positions of the data points.
+        bld_raw : Raw data points.
+        bld_err : Standard deviations of the blade measurements.
+        bld_fit : Fitted data points.
     """
     k       : float
     sk      : float
     d       : float
     sd      : float
     pos     : np.ndarray
-    sig_pos : np.ndarray
-    raw     : np.ndarray
-    fit     : np.ndarray
+    bld_raw : np.ndarray
+    bld_err : np.ndarray
+    bld_fit : np.ndarray
 
     @classmethod
     def from_hdf5(cls, blf_grp) -> "BladeLineFit":
         """Create a BladeLineFit instance from an HDF5 group."""
         return cls(
-            k   = blf_grp.attrs['k'],
-            sk  = blf_grp.attrs['sk'],
-            d   = blf_grp.attrs['d'],
-            sd  = blf_grp.attrs['sd'],
-            pos = blf_grp['pos'][:],
-            sig_pos = blf_grp['sig_pos'][:],
-            raw = blf_grp['raw'][:],
-            fit = blf_grp['fit'][:]
+            k       = blf_grp.attrs['k'],
+            sk      = blf_grp.attrs['sk'],
+            d       = blf_grp.attrs['d'],
+            sd      = blf_grp.attrs['sd'],
+            pos     = blf_grp['pos'][:],
+            bld_raw = blf_grp['bld_raw'][:],
+            bld_err = blf_grp['bld_err'][:],
+            bld_fit = blf_grp['bld_fit'][:]
         )
 
 
@@ -765,15 +771,11 @@ class BladeCenterAnalysis:
         ti   : Fitting results for the top inner blade.
         bi   : Fitting results for the bottom inner blade.
         bo   : Fitting results for the bottom outer blade.
-        blades : Blade measurements along the central sweep.
-        pos_nom : Nominal positions along the central sweep.
     """
     to : BladeLineFit
     ti : BladeLineFit
     bi : BladeLineFit
     bo : BladeLineFit
-    blades  : Blades
-    pos_nom : Positions
 
     @classmethod
     def from_hdf5(cls, bca_grp) -> "BladeCenterAnalysis":
@@ -783,10 +785,21 @@ class BladeCenterAnalysis:
             ti = BladeLineFit.from_hdf5(bca_grp['ti']),
             bi = BladeLineFit.from_hdf5(bca_grp['bi']),
             bo = BladeLineFit.from_hdf5(bca_grp['bo']),
-            blades  = Blades.from_hdf5(bca_grp['blades']),
-            pos_nom = Positions.from_hdf5(bca_grp['pos_nom'])
         )
 
+@dataclass
+class BCA_HV:
+    """Container for horizontal and vertical blade center analyses."""
+    h : BladeCenterAnalysis
+    v : BladeCenterAnalysis
+
+    @classmethod
+    def from_hdf5(cls, bcahv_grp) -> "BCA_HV":
+        """Create a BCA_HV instance from an HDF5 group."""
+        return cls(
+            h = BladeCenterAnalysis.from_hdf5(bcahv_grp['h']),
+            v = BladeCenterAnalysis.from_hdf5(bcahv_grp['v'])
+        )
 
 @dataclass
 class CentralSweepLine:
@@ -1050,6 +1063,7 @@ class DataAnalysis:
     prm          : beamline parameters
     bpm          : BPM calculated positions at XBPM site
     blademap     : blade map of positions
+    bladecenter  : h and v blade center analyses
     positions    : Analyzed positions (raw and transformed)   
     centralsweep : Central sweep blade currents with errors
     scales       : Scaling factors
@@ -1059,7 +1073,7 @@ class DataAnalysis:
     beamline_prm  : BeamlinePrm       | None = None
     bpm           : BPMAnalysis       | None = None
     blademap      : BladeMap          | None = None
-    bladecenter   : dict              | None = None
+    bladecenter   : BCA_HV            | None = None
     positions     : AnalyzedPositions | None = None
     centralsweeps : CentralSweeps     | None = None
     scales        : AllScales         | None = None
@@ -1078,10 +1092,10 @@ class DataAnalysis:
         # Extract blade map.
         blademap = BladeMap.from_hdf5(anl_grp["blade_map"])
 
-        bladecenter = {
-            'h' : BladeCenterAnalysis.from_hdf5(anl_grp["blade_center/h"]),
-            'v' : BladeCenterAnalysis.from_hdf5(anl_grp["blade_center/v"])
-        }
+        bladecenter = BCA_HV(
+            h = BladeCenterAnalysis.from_hdf5(anl_grp["blade_center/h"]),
+            v = BladeCenterAnalysis.from_hdf5(anl_grp["blade_center/v"])
+        )
 
         # Extract other analysis data.
         positions = AnalyzedPositions.from_hdf5(anl_grp["positions"])

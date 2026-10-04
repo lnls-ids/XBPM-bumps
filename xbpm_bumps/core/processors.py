@@ -312,6 +312,7 @@ class XBPMProcessor:
 
         # Positions with linear general transfomation.
         pos_cr_lintr = self.transform_position_cross(pos_cr_std_scaled)
+        self.analysis.gl2r = self.gl2rmat
 
         # Scale positions.
         cr_scale_lintr, pos_cr_lintr_scaled = self._scale_positions(
@@ -387,24 +388,25 @@ class XBPMProcessor:
         vrange = self.range_v[self.roi.slice_v]
         vert   = self._blade_central_line_fit(vrange, bld_fit_v)
 
-        return {
-            "h": DStr.BladeCenterAnalysis(**horz),
-            "v": DStr.BladeCenterAnalysis(**vert),
-        }
+        return DStr.BCA_HV(
+            h = DStr.BladeCenterAnalysis(**horz),
+            v = DStr.BladeCenterAnalysis(**vert),
+        )
 
     def _blade_central_line_fit(self,
-                               range_vals: np.ndarray,
-                               blades: dict,
-                               ) -> dict:
+                                range_vals: np.ndarray,
+                                blades: dict,
+                                ) -> dict:
         """Linear fittings to each blade's data through central line.
         
         Args:
+            range_vals : range values corresponding to the ROI.
             blades     : dictionary containing blade data and associated
                          errors within the ROI.
-            range_vals : range values corresponding to the ROI.
 
         Returns:
-            Dictionary containing the fit coefficients and standard deviations for each blade.
+            Dictionary containing the fit coefficients and standard
+            deviations for each blade.
         """
         # Loop over each blade and perform linear fitting.
         results = {}
@@ -417,9 +419,9 @@ class XBPMProcessor:
             # Fit a linear polynomial to the blade data with weights.
             coefs, cov = np.polyfit(range_vals,
                                     blade,
-                                    deg=1,
-                                    w=weight,
-                                    cov=True)
+                                    deg = 1,
+                                    w   = weight,
+                                    cov = True)
 
             # Coefficient errors.
             sigmas = np.sqrt(np.diag(cov))
@@ -429,14 +431,14 @@ class XBPMProcessor:
 
             # Store results in the dataclass for each blade.
             results[bl] = DStr.BladeLineFit(
-                k   = coefs[0],
-                sk  = sigmas[0],
-                d   = coefs[1],
-                sd  = sigmas[1],
-                pos = range_vals,
-                sig_pos = err,
-                raw = blade,
-                fit = yfit,
+                k       = coefs[0],
+                sk      = sigmas[0],
+                d       = coefs[1],
+                sd      = sigmas[1],
+                pos     = range_vals,
+                bld_raw = blade,
+                bld_err = err,
+                bld_fit = yfit,
             )
         return results
 
@@ -487,9 +489,9 @@ class XBPMProcessor:
         # Assemble the calculated suppression matrix.
         calculated = np.array([
             [pc_v[0], -pc_v[1], -pc_v[2],  pc_v[3]],
-            [pc_v[0],  pc_v[1],  pc_v[2],  pc_v[3]],
+            pc_v,
             [pc_h[0],  pc_h[1], -pc_h[2], -pc_h[3]],
-            [pc_h[0],  pc_h[1],  pc_h[2],  pc_h[3]],
+            pc_h,
         ])
 
         # Assemble the standard deviation matrix.
@@ -557,13 +559,10 @@ class XBPMProcessor:
             )
 
         # Stack cross-blade positions into a 2xN array for transformation.
-        scross = np.stack((
-            pos_std.x,
-            pos_std.y),
-            axis=0)
+        scross = np.stack((pos_std.x, pos_std.y), axis=0)
 
         # Apply the linear transformation to the stacked positions.
-        pos_tr = np.einsum('ij,jkl->ikl', self.gl2rmat, scross)
+        pos_tr = np.einsum('ij,jkl->ikl', self.gl2rmat.calc, scross)
         return DStr.Positions(x=pos_tr[0], y=pos_tr[1])
 
     def general_linear_transformation(self,
@@ -576,7 +575,7 @@ class XBPMProcessor:
             [ ky, -1],
             [-kx,  1]
         ])
-        return gl2rmat
+        return DStr.GL2RMatrix(calc = gl2rmat)
 
     def _scale_positions(self,
                         pos_nom  : DStr.Positions,
