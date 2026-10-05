@@ -1,6 +1,6 @@
 """Parameter handling and CLI parsing."""
 
-# import sys
+from typing import Callable, Optional, Iterator
 # from curses import raw
 from dataclasses import dataclass, field
 import logging
@@ -35,8 +35,8 @@ class GenPrm:
     show_bpmpositions     : bool = False
     show_blademap         : bool = False
     show_centralsweep     : bool = False
-    show_bladecenter      : bool = False
-    show_xbpmpositionsraw : bool = False
+    # show_bladecenter      : bool = False
+    # show_xbpmpositionsraw : bool = False
     show_xbpmpositions    : bool = False
 
     def __getitem__(self, key: str):
@@ -69,7 +69,7 @@ class GenPrm:
         # Create a Prm instance with the extracted attributes.
         return cls(**attrs)
 
-    @classmethod
+    @staticmethod
     def _set_outputfile_name(inputfile: str) -> str:
         """Set the output file prefix for the analysis."""
         return inputfile.rsplit('.', 1)[0]
@@ -793,6 +793,10 @@ class BCA_HV:
     h : BladeCenterAnalysis
     v : BladeCenterAnalysis
 
+    def __iter__(self) -> Iterator[tuple[str, BladeCenterAnalysis]]:
+        yield 'h', self.h
+        yield 'v', self.v
+
     @classmethod
     def from_hdf5(cls, bcahv_grp) -> "BCA_HV":
         """Create a BCA_HV instance from an HDF5 group."""
@@ -962,6 +966,28 @@ class GL2RMatrix:
     std  : np.ndarray = field(default_factory=lambda: np.identity(2))
     calc : np.ndarray = field(default_factory=lambda: np.array([]))
 
+    @classmethod
+    def from_hdf5(cls, gl2r_grp) -> "GL2RMatrix":
+        """Create a GL2RMatrix instance from an HDF5 group."""
+        kwargs = {
+            "std"  : gl2r_grp["std"][:],
+            "calc" : gl2r_grp["calc"][:],
+        }
+        return cls(**kwargs)
+
+    @classmethod
+    def to_hdf5(cls,
+                gl2r: "GL2RMatrix",
+                gl2r_grp: h5py.Group,
+                ) -> None:
+        """Write the GL2RMatrix instance to an HDF5 group."""
+
+        if ("std" in gl2r_grp):
+            gl2r_grp["std"][:] = gl2r.std
+        if ("calc" in gl2r_grp):
+            gl2r_grp["calc"][:] = gl2r.calc
+
+
 
 @dataclass
 class CalculatedPositions:
@@ -1109,6 +1135,9 @@ class DataAnalysis:
         # Extract suppression matrix.        
         supmat = SuppressionMatrix.from_hdf5(anl_grp["matrices"])
 
+        # Extract GL2R matrix.
+        gl2r = GL2RMatrix.from_hdf5(anl_grp["gl2r"])
+
         return cls(
             beamline_prm  = bl_prm,
             bpm           = bpm,
@@ -1118,29 +1147,31 @@ class DataAnalysis:
             centralsweeps = centralsweeps,
             scales        = scales,
             supmat        = supmat,
+            gl2r         = gl2r,
         )
 
     @classmethod
-    def to_hdf5(cls, datanl: "DataAnalysis", h5file: h5py.File) -> int:
+    def to_hdf5(cls,
+                datanl: "DataAnalysis",
+                dan_grp: h5py.Group,
+                ) -> int:
         """Serialize a DataAnalysis instance to an HDF5 group."""
-        datanl.attrs['beamline_prm']  = cls.beamline_prm
-        datanl.attrs['bpm']           = cls.bpm
-        datanl.attrs['blademap']      = cls.blademap
-        datanl.attrs['bladecenter']   = cls.bladecenter
-        datanl.attrs['positions']     = cls.positions
-        datanl.attrs['centralsweeps'] = cls.centralsweeps
-        datanl.attrs['scales']        = cls.scales
-        datanl.attrs['supmat']        = cls.supmat
+        kwargs = {}
+        kwargs['beamline_prm']  = datanl.beamline_prm
+        kwargs['bpm']           = datanl.bpm
+        kwargs['blademap']      = datanl.blademap
+        kwargs['bladecenter']   = datanl.bladecenter
+        kwargs['positions']     = datanl.positions
+        kwargs['centralsweeps'] = datanl.centralsweeps
+        kwargs['scales']        = datanl.scales
+        kwargs['supmat']        = datanl.supmat
+        kwargs['gl2r']          = datanl.gl2r
         try:
-            with h5file as h5f:
-                h5f.create_group(datanl.name)
+            dan_grp.require_group("data_analysis")
+            datanl.to_hdf5(dan_grp["data_analysis"])
         except Exception as e:
             logging.error("Failed to create HDF5 group"
-                          f" '{datanl.name}': {e}")
-        finally:
-            # Ensure that the HDF5 file is closed properly.
-            if 'h5f' in locals() and h5f:
-                h5f.close()
+                            f" '{datanl.name}': {e}")
         return 0
 
 
@@ -1182,30 +1213,36 @@ class BeamlineData:
             kwargs["analysis"] = DataAnalysis()
         return cls(**kwargs)
 
-    def to_hdf5(self, raw : bool = False) -> int:
+    @classmethod
+    def to_hdf5(cls,
+                bldata   : "BeamlineData",
+                bld_grp  : h5py.Group,
+                ) -> int:
         """Serialize the BeamlineData instance to an HDF5 file.
 
         Args:
-            raw (bool): If True, raw data is overwritten.
+            prm (BeamlinePrm): Beamline parameters.
+            raw_data (BeamlineRawData): Raw data for the beamline.
+            analysis (DataAnalysis): Analysis data for the beamline.
 
         Returns:
             int: Status code (0 for success).
         """
         # Create a temporary HDF5 file in memory.
         try:
-            with h5py.File(self.prm.outputfile, 'w') as h5f:
+            with h5py.File(bldata.prm.outputfile, 'w') as h5f:
                 # Create a group for the beamline data.
-                bl_group = h5f.require_group(self.prm.beamline)
+                bl_group = h5f.require_group(bldata.prm.beamline)
 
                 # Rewrite raw data only if explicitly requested.
-                if raw:
+                if bldata.raw_data is not None:
                     raw_group = bl_group.require_group("raw_data")
-                    self.raw_data.to_hdf5(raw_group)
+                    bldata.raw_data.to_hdf5(raw_group)
 
                 # Store analysis data if present.
-                if self.analysis is not None:
+                if bldata.analysis is not None:
                     anl_group = bl_group.require_group("analysis")
-                    self.analysis.to_hdf5(anl_group)
+                    bldata.analysis.to_hdf5(anl_group)
         except Exception as err:
             logging.error(f"Failed to write BeamlineData to HDF5: {err}")
             return 1

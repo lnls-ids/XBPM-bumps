@@ -3,9 +3,9 @@
 import numpy as np
 
 from xbpm_bumps.core.data_structure import (
+    BCA_HV,
     BPMAnalysis,
     DataAnalysis,
-    AnalyzedPositions,
     Scales,
     CentralSweeps,
     RMSGridStatistics,
@@ -82,34 +82,39 @@ def format_analysis_info(
         return tab_info
 
     # Table for pairwise and cross position statistics.
+    anpos = analysis.positions
     stat_table = {
         "xbpm_pairwise_raw" : (
         "Pairwise Standard Deviation, not transformed",
-        analysis.positions.pairw.stat_std,
+        anpos.pairw.scale_std,
+        anpos.pairw.stat_std,
         "std"
         ),
         "xbpm_pairwise_trn" : (
         "Pairwise Standard Deviation, transformed",
-        analysis.positions.pairw.stat_trn,
+        anpos.pairw.scale_trn,
+        anpos.pairw.stat_trn,
         "pw_tr"
         ),
         "xbpm_cross_raw" : (
         "Cross Standard Deviation, not transformed",
-        analysis.positions.cross.stat_std,
+        anpos.cross.scale_std,
+        anpos.cross.stat_std,
         "cr_std"
         ),
         "xbpm_cross_trn" : (
         "Cross Standard Deviation, transformed",
-        analysis.positions.cross.stat_trn,
+        anpos.cross.scale_trn,
+        anpos.cross.stat_trn,
         "cr_rot"
         ),
     }
 
     supmat_lines = _supmat(analysis.supmat, analysis.gl2r)
-    for tab_name, (description, stat, mat) in stat_table.items():
+    for tab_name, (description, scales, stat, mat) in stat_table.items():
         tab_info[tab_name] = (
             description + '\n' +
-            _scales(stat) +
+            _scales(scales) +
             _xbpm_stats(stat) +
             supmat_lines.get(mat, "")
         )
@@ -153,7 +158,7 @@ def _scales(
         "qx" : (scl.qx, scl.sqx),
         "qy" : (scl.qy, scl.sqy)
     }
-    headline = f"\n### Scales:\n\n"
+    headline = "\n### Scales:\n\n"
     lines = [
         f"  {name}  = {_err(value, error)}"
         for name, (value, error) in sclset.items()
@@ -218,7 +223,7 @@ def _sweeps(
 
 
 def _blades(
-        blades: dict,
+        blades: "BCA_HV",
         ) -> str:
     """Format blade analysis for the given positions.
     
@@ -227,7 +232,7 @@ def _blades(
     """
     lines = []
     lines.append("\n### Blade Analysis ###\n")
-    for direction, bl in blades.items():
+    for direction, bl in blades:
         lines.append(f"  {direction.capitalize()} sweep:\n")
         lines.append(f"  TO : k = {_err(bl.to.k, bl.to.sk)},\t"
                      f"   delta = {_err(bl.to.d, bl.to.sd)}\n"

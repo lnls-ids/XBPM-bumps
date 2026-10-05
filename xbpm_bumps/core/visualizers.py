@@ -5,7 +5,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 import logging
-import os
+# import os
 
 from typing import Optional
 # from pyparsing import Optional
@@ -52,9 +52,9 @@ logger = logging.getLogger(__name__)
 
 
 def render_data_analysis(
-        analysis: DataAnalysis,
-        prm: BeamlinePrm,
-        outputfile: Optional[str] = None,
+        pos_nom  : Positions,
+        analysis : DataAnalysis,
+        prm      : BeamlinePrm,
         ) -> dict[str, Figure]:
     """Return one Figure per tab key for every populated analysis field."""
     figures: dict[str, Figure] = {}
@@ -63,7 +63,7 @@ def render_data_analysis(
         figures["bpm"] = (
             BPMVisualizer(
                 analysis.bpm,
-                analysis.positions.nom
+                pos_nom
                 ).plot_bpm_positions()
             )
 
@@ -71,19 +71,24 @@ def render_data_analysis(
         figures["blade_map"] = (
             BladeMapVisualizer(
                 analysis.blademap,
-                outputfile
                 ).plot_blade_map()
             )
 
-    cs = analysis.centralsweeps
-    if cs.h is not None or cs.v is not None:
-        figures["position_central_sweeps"] = (
-            CentralSweepVisualizer.plot_central_sweep_positions(cs)
-            )
+    if analysis.centralsweeps is not None:
+        cs = analysis.centralsweeps
+        if cs.h is not None or cs.v is not None:
+            figures["position_central_sweeps"] = (
+                CentralSweepVisualizer.plot_central_sweep_positions(
+                    csweep   = cs,
+                    beamline = prm.beamline,
+                    )
+                )
+
+    if analysis.bladecenter is not None:
         figures["blade_central_sweeps"] = (
             CentralSweepVisualizer.plot_central_sweep_blades(
-                analysis.bladecenter,
-                beamline=prm.beamline
+                bc_analysis = analysis.bladecenter,
+                beamline = prm.beamline
                 ))
 
     # Position visualizations. For each tab, select the appropriate sets:
@@ -136,8 +141,8 @@ class BPMVisualizer:
     and readers._reconstruct_bpm_center().
     """
     def __init__(self,
-                 bpm_ana: BPMAnalysis,
-                 pos_nom: Positions,
+                 bpm_ana : BPMAnalysis,
+                 pos_nom : Positions,
                  ) -> None:
         self.bana     = bpm_ana
         self.beamline = bpm_ana.prm.beamline
@@ -316,7 +321,7 @@ class BPMVisualizer:
             h_min = np.nanmin(self.nom_roi_x)
             h_max = np.nanmax(self.nom_roi_x)
 
-            color_vals = np.ravel(roi_diffs.h).reshape(-1, 1)
+            color_vals = np.ravel(roi_diffs.tot).reshape(-1, 1)
             extent = [0, 1, self.nom_roi_y.min(), self.nom_roi_y.max()]
             aspect = 'auto'
 
@@ -364,7 +369,7 @@ class BPMVisualizer:
 
             # Use imshow for filled heatmap visualization
             im = self.ax_diff.imshow(
-                roi_diffs, cmap='viridis', extent=extent,
+                roi_diffs.tot, cmap='viridis', extent=extent,
                 aspect=aspect, origin='lower'
             )
             cbar = self.fig.colorbar(im, ax=self.ax_diff,
@@ -396,7 +401,6 @@ class BladeMapVisualizer:
 
     def __init__(self,
                  bmap : BladeMap,
-                 outputfile : str = None,
                  ) -> None:
         """Initialize visualizer with data and parameters.
 
@@ -404,7 +408,6 @@ class BladeMapVisualizer:
             bmap: BladeMap instance.
         """
         self.bm_ana = bmap
-        self.outputfile = outputfile
 
     def plot_blade_map(self) -> "matplotlib.figure.Figure":
         """Display blade intensity maps for all four blades.
@@ -455,11 +458,6 @@ class BladeMapVisualizer:
 
         fig.tight_layout(pad=0., w_pad=-17., h_pad=2.)
 
-        if self.outputfile:
-            outfile = self.outputfile + "_blade_map.png"
-            fig.savefig(outfile, dpi=FIGDPI)
-            logger.info("Figure of blades' map saved to file %s", outfile)
-
         return fig
 
 
@@ -498,6 +496,7 @@ class CentralSweepVisualizer:
             figsize=(12, 5)
             )
 
+
         ch = csweep.h
         if csweep.h is not None:
             axh.plot(
@@ -505,50 +504,56 @@ class CentralSweepVisualizer:
                 ch.pos_calc,
                 'o-',
                 label="H calc",
-                zorder=2
+                zorder=2,
                 )
             axh.plot(
                 ch.pos_index,
                 ch.pos_fit,
                 '^-',
                 label="H fit",
-                zorder=3
+                zorder=3,
                 )
-            axh.set_xlabel("$x$ [$\\mu$m]")
-            axh.set_ylabel("$y$ [$\\mu$m]")
-            axh.set_title(_Title(
-                beamline   = beamline,
-                graph_type = 'sweeps',
-                ax_type    = 'h')
-                )
-            axh.grid(True)
-            axh.legend()
 
         cv = csweep.v
         if csweep.v is not None:
-            axv.plot(
-                cv.pos_index,
+            axh.plot(
                 cv.pos_calc,
+                cv.pos_index,
                 'o-',
                 label="V calc",
                 zorder=2
                 )
-            axv.plot(
-                cv.pos_index,
+            axh.plot(
                 cv.pos_fit,
+                cv.pos_index,
                   '^-',
                   label="V fit",
                   zorder=3
                   )
-            axv.set_xlabel("$x$ [$\\mu$m]")
-            axv.set_ylabel("$y$ [$\\mu$m]")
-            axv.set_title(_Title(
-                beamline   = beamline,
-                graph_type = 'sweeps',
-                ax_type    = 'v')
-                )
-            axv.grid(True)
-            axv.legend()
+            # axv.set_xlabel("$x$ [a.u.]")
+            # axv.set_ylabel("$y$ [a.u.]")
+            # axv.set_title(_Title(
+            #     beamline   = beamline,
+            #     graph_type = 'sweeps',
+            #     ax_type    = 'v')
+            #     )
+            # axv.set_xlim(extent[0], extent[1])
+            # axv.set_ylim(extent[2], extent[3])
+            # axv.grid(True)
+            # axv.legend()
+
+        extent = np.array((-1, 1, -1, 1)) * 1.05
+        axh.set_xlabel("$x$ [a.u.]")
+        axh.set_ylabel("$y$ [a.u.]")
+        axh.set_title(_Title(
+            beamline   = beamline,
+            graph_type = 'sweeps',
+            ax_type    = '')
+            )
+        axh.set_xlim(extent[0], extent[1])
+        axh.set_ylim(extent[2], extent[3])
+        axh.grid(True)
+        axh.legend()
 
         fig.tight_layout()
         return fig
@@ -588,7 +593,7 @@ class CentralSweepVisualizer:
         cv = bc_analysis.v
 
         # If horizontal sweeps are available.
-        if ch.blades is not None:
+        if ch is not None:
             hblades = {
                 "TO" : ch.to,
                 "TI" : ch.ti,
@@ -614,7 +619,7 @@ class CentralSweepVisualizer:
                     )
 
         # If vertical sweeps are available.
-        if cv.blades is not None:
+        if cv is not None:
             vblades = {
                 "TO" : cv.to,
                 "TI" : cv.ti,
@@ -765,7 +770,7 @@ class PositionVisualizer:
         roi_h, roi_v  = roi.slice_h, roi.slice_v
 
         # Graph characteristics.
-        _, calc_type, rort = graph_type.split('_')[1:]
+        _, calc_type, rort = graph_type.split('_')
 
         # Full grid view
         title_total    = _Title(

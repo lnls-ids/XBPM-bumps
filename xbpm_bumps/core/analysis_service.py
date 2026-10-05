@@ -10,46 +10,48 @@ class AnalysisService:
 
     @staticmethod
     def run(
-        workdata: DStr.BeamlineData,
+        beamlinedata: DStr.BeamlineData,
         runtime_prm: DStr.GenPrm,
         ) -> DStr.DataAnalysis:
         # Initialize the analysis result container.
-        analysis = DStr.DataAnalysis(beamline_prm = workdata.prm)
-
-        # Create a processor instance to perform the calculations.
-        xprocessor = XBPMProcessor(
-            beamlinedata = workdata,
-            beamline_prm = workdata.prm,
-            runtime_prm  = runtime_prm,
-            analysis     = analysis,
-        )
+        analysis = DStr.DataAnalysis(beamline_prm = beamlinedata.prm)
 
         # BPM tab.
         if runtime_prm.show_bpmpositions:
             bprocessor   = BPMProcessor(
-                raw_data = workdata.raw_data,
-                prm_bml  = workdata.prm,
+                raw_data = beamlinedata.raw_data,
+                prm_bml  = beamlinedata.prm,
                 )
             analysis.bpm = bprocessor.bpmanalysis
+
+        # Create a processor instance to perform the calculations.
+        try:
+            xprocessor = XBPMProcessor(
+                beamlinedata = beamlinedata,
+                beamline_prm = beamlinedata.prm,
+                runtime_prm  = runtime_prm,
+                analysis     = analysis,
+            )
+        except Exception as e:
+            print(f"Error initializing XBPMProcessor: {e}")
+            raise
 
         # Blade map.
         if runtime_prm.show_blademap:
             analysis.blademap = DStr.BladeMap(
-                prm    = workdata.prm,
-                blades = workdata.raw_data.blade_avg.blades,
-                pos    = workdata.raw_data.blade_avg.pos_nom
+                prm    = beamlinedata.prm,
+                blades = beamlinedata.raw_data.blade_avg.blades,
+                pos    = beamlinedata.raw_data.blade_avg.pos_nom
             )
 
         # Blades at center are necessary for the suppression matrix.
-        if runtime_prm.show_bladecenter:
+        if runtime_prm.show_centralsweep:
             analysis.bladecenter = xprocessor.analyze_central_sweep_blades()
 
         # Central sweeps are needed for linear transformation of
         # partial Delta/Sigma calculations.
         needs_sweeps = (
             runtime_prm.show_centralsweep
-            or runtime_prm.show_bladecenter
-            or runtime_prm.show_xbpmpositionsraw
             or runtime_prm.show_xbpmpositions
         )
         if needs_sweeps:
@@ -58,10 +60,7 @@ class AnalysisService:
                 )
 
         # XBPM positions calculation.
-        if (
-            runtime_prm.show_xbpmpositionsraw or
-            runtime_prm.show_xbpmpositions
-            ):
+        if runtime_prm.show_xbpmpositions:
             analysis.positions = xprocessor.xbpm_position_calculation()
 
         return analysis

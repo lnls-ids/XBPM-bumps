@@ -170,7 +170,11 @@ class Config:
 
         # Select calc type name from pairwise / cross, if provided.
         if calc_type:
-            calc_type = "Δ/Σ" if calc_type == "pairwise" else "partial Δ/Σ"
+            calc_type = (
+                r"$\Delta/\Sigma$"
+                if calc_type == "pairwise"
+                else r"partial $\Delta/\Sigma$"
+                )
 
         # Set raw / transformed string for title, if provided.
         rort = (

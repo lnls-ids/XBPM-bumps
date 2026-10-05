@@ -1,6 +1,6 @@
 """Main window for XBPM analysis application."""
 
-from typing import Callable, Optional
+# from typing import Callable, Optional
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTextEdit, QSplitter, QTabWidget,
@@ -27,7 +27,6 @@ from .dialogs.help_dialog     import HelpDialog
 from ..core                   import data_structure as DStr
 from ..core.analysis_info     import format_analysis_info
 from ..core.config            import Config
-from ..core.constants         import FIGDPI
 from ..core.analysis_service  import AnalysisService
 from ..core.reader_hdf5       import read_hdf5
 from ..core.visualizers       import render_data_analysis
@@ -79,8 +78,8 @@ class XBPMMainWindow(QMainWindow):
                 self.runtime_prm,
             )
         except Exception as exc:
-            msg = f"{str(exc)}"   # + "\n(workdata: {type(self.workdata)})"
-            self.show_error("Analysis failed", msg)
+            msg = f"{str(exc)}"
+            self.show_error("Run Analysis failed", msg)
             return
         finally:
             self.set_analysis_running(False)
@@ -92,9 +91,9 @@ class XBPMMainWindow(QMainWindow):
 
         # Render every populated tab via the single orchestrator.
         figures = render_data_analysis(
+            self.pos_nom,
             analysis,
             self.beamline_prm,
-            self._last_inputfile
             )
         for key, fig in figures.items():
             self._embed_figure(self.canvases[key], fig)
@@ -231,12 +230,6 @@ class XBPMMainWindow(QMainWindow):
         self.canvases["blade_central_sweeps"] = blades_center_canvas
         blades_center_tab._info_key = "blade_central_sweeps"
 
-        # Move the sweeps tab after blades_center
-        sweep_tab, sweep_canvas = self._create_canvas_tab()
-        self.results_tabs.addTab(sweep_tab, "Positions central sweeps")
-        self.canvases["position_central_sweeps"] = sweep_canvas
-        sweep_tab._info_key = "position_central_sweeps"
-
         xbpm_raw_pw_tab, xbpm_raw_pw_canvas = self._create_canvas_tab()
         self.results_tabs.addTab(xbpm_raw_pw_tab, "XBPM Δ/Σ raw")
         self.canvases["xbpm_pairwise_raw"] = xbpm_raw_pw_canvas
@@ -246,6 +239,11 @@ class XBPMMainWindow(QMainWindow):
         self.results_tabs.addTab(xbpm_scaled_pw_tab, "XBPM Δ/Σ Sup. Mat.")
         self.canvases["xbpm_pairwise_trn"] = xbpm_scaled_pw_canvas
         xbpm_scaled_pw_tab._info_key = "xbpm_pairwise_trn"
+
+        sweep_tab, sweep_canvas = self._create_canvas_tab()
+        self.results_tabs.addTab(sweep_tab, "Positions central sweeps")
+        self.canvases["position_central_sweeps"] = sweep_canvas
+        sweep_tab._info_key = "position_central_sweeps"
 
         xbpm_raw_cr_tab, xbpm_raw_cr_canvas = self._create_canvas_tab()
         self.results_tabs.addTab(xbpm_raw_cr_tab, "XBPM part. Δ/Σ - raw")
@@ -320,6 +318,7 @@ class XBPMMainWindow(QMainWindow):
         self.workdata     = self.beamlinedata[self.workbeamline]
         self.analysis     = self.workdata.analysis
         self.beamline_prm = self.workdata.prm
+        self.pos_nom      = self.workdata.raw_data.blade_avg.pos_nom
         self._build_tab_info()
 
         # Update BPM distance.
@@ -328,10 +327,10 @@ class XBPMMainWindow(QMainWindow):
             )
 
         # Calculate grid shape from nominal positions.
-        nom_pos = self.workdata.raw_data.blade_avg.pos_nom
+        self.nom_pos = self.workdata.raw_data.blade_avg.pos_nom
         self.grid_shape = (
-            len(np.unique(nom_pos.y)),  # vertical dimension
-            len(np.unique(nom_pos.x)),  # horizontal dimension
+            len(np.unique(self.nom_pos.y)),  # vertical dimension
+            len(np.unique(self.nom_pos.x)),  # horizontal dimension
         )
 
         # Update parameter panel.
@@ -390,11 +389,11 @@ class XBPMMainWindow(QMainWindow):
 
         # Runtime parameters.
         rt_prm = self.runtime_prm
-        rt_prm.show_bladecenter      = params["show_bladecenter"]
         rt_prm.show_blademap         = params["show_blademap"]
         rt_prm.show_bpmpositions     = params["show_bpmpositions"]
         rt_prm.show_centralsweep     = params["show_centralsweep"]
-        rt_prm.show_xbpmpositionsraw = params["show_xbpmpositionsraw"]
+        # rt_prm.show_bladecenter      = params["show_bladecenter"]
+        # rt_prm.show_xbpmpositionsraw = params["show_xbpmpositionsraw"]
         rt_prm.show_xbpmpositions    = params["show_xbpmpositions"]
 
     def _create_status_bar(self) -> None:
@@ -515,7 +514,7 @@ class XBPMMainWindow(QMainWindow):
         layout.addWidget(canvas)
         return widget, canvas
 
-    def _build_tab_info(self):
+    def _build_tab_info(self) -> None:
         """Place holder."""
         self._tab_info = format_analysis_info(self.analysis)
 

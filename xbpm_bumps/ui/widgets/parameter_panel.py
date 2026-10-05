@@ -154,11 +154,11 @@ class ParameterPanel(QWidget):
         layout.addWidget(self.blademap_check)
 
         # 3. Show central line sweeps
-        self.blade_central_check = QCheckBox(
-            "Show blades at central line sweeps"
-            )
-        self.blade_central_check.toggled.connect(self.parametersChanged.emit)
-        layout.addWidget(self.blade_central_check)
+        # self.blade_central_check = QCheckBox(
+        #     "Show blades at central line sweeps"
+        #     )
+        # self.blade_central_check.toggled.connect(self.parametersChanged.emit)
+        # layout.addWidget(self.blade_central_check)
 
         # 4. Show positions at center
         self.position_center_check = QCheckBox(
@@ -168,13 +168,13 @@ class ParameterPanel(QWidget):
         layout.addWidget(self.position_center_check)
 
         # 5. XBPM positions without suppression
-        self.xbpm_raw_check = QCheckBox(
-            "XBPM positions without suppression"
-        )
-        self.xbpm_raw_check.toggled.connect(self.parametersChanged.emit)
-        layout.addWidget(self.xbpm_raw_check)
+        # self.xbpm_raw_check = QCheckBox(
+        #     "XBPM positions without suppression"
+        # )
+        # self.xbpm_raw_check.toggled.connect(self.parametersChanged.emit)
+        # layout.addWidget(self.xbpm_raw_check)
 
-        # 6. Calculate XBPM positions (scaled)
+        # 5. Calculate XBPM positions (scaled)
         self.xbpm_calc_check = QCheckBox(
             "Calculate XBPM positions"
             )
@@ -198,9 +198,9 @@ class ParameterPanel(QWidget):
         boxes = (
                 self.bpm_check,
                 self.blademap_check,
-                self.blade_central_check,
+                # self.blade_central_check,
                 self.position_center_check,
-                self.xbpm_raw_check,
+                # self.xbpm_raw_check,
                 self.xbpm_calc_check,
             )
         checked = not all(box.isChecked() for box in boxes)
@@ -247,11 +247,11 @@ class ParameterPanel(QWidget):
                 int(self.roi_h_spin.value()),
                 ],
             'show_blademap'         : self.blademap_check.isChecked(),
-            'show_centralsweep'     : self.blade_central_check.isChecked(),
-            'show_bladecenter'      : self.position_center_check.isChecked(),
+            # 'show_bladecenter'      : self.blade_central_check.isChecked(),
+            'show_centralsweep'     : self.position_center_check.isChecked(),
             'show_xbpmpositions'    : self.xbpm_calc_check.isChecked(),
             'show_bpmpositions'     : self.bpm_check.isChecked(),
-            'show_xbpmpositionsraw' : self.xbpm_raw_check.isChecked(),
+            # 'show_xbpmpositionsraw' : self.xbpm_raw_check.isChecked(),
 
             'skip'                  : self.skip_spin.value(),
             'scalepolydeg'          : self.scalepolydeg.value(),
