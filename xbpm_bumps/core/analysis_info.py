@@ -287,7 +287,7 @@ def _matrix_print(
     if mat is None:
         return f"### WARNING: Matrix {title} is not defined.\n"
 
-    lines = [f"### Suppression matrix - {title}:\n"]
+    lines = [f"\n### Matrix - {title}:\n"]
     mm, nn = mat.shape
     for ii in range(mm):
         row = []
@@ -297,6 +297,6 @@ def _matrix_print(
                 if err is not None
                 else _f(mat[ii, jj])
                 )
-        lines.append("\t" + "  ".join(row) + "\n")
+        lines.append(" " + "  ".join(row) + "\n")
     return ''.join(lines)
 
