@@ -1,8 +1,8 @@
 """Parameter handling and CLI parsing."""
 
-from typing import Callable, Optional, Iterator
+from typing import Optional, Iterator
 # from curses import raw
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 import logging
 from typing import List, Optional
 
@@ -30,6 +30,9 @@ class GenPrm:
     outputfile            : str   | None = None     # HDF5 output file prefix. 
     phaseorgap            : dict  | None = None     # Phase/gap for the IDs.
     maxradangle           : float = MAX_RAD_ANGLE   # Max. bump angle (mrad).
+    created               : str   | None = None     # Creation timestamp.
+    description           : str   | None = None     # Study description.
+    version               : str   | None = None     # Version of the study.
 
     # What to calculate and show.
     show_bpmpositions     : bool = False
@@ -169,6 +172,10 @@ class BeamlinePrm:
                 "### ERROR while reading 'BeamlinePrm' from HDF5 group:\n"
                 f" {err}"
             )
+
+        # Ignore attributes that are not declared fields of this dataclass.
+        valid_keys = {fld.name for fld in fields(cls)}
+        attrs = {key: val for key, val in attrs.items() if key in valid_keys}
 
         return cls(**attrs)
 

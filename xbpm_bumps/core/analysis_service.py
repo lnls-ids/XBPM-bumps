@@ -48,17 +48,6 @@ class AnalysisService:
         if runtime_prm.show_centralsweep:
             analysis.bladecenter = xprocessor.analyze_central_sweep_blades()
 
-        # Central sweeps are needed for linear transformation of
-        # partial Delta/Sigma calculations.
-        needs_sweeps = (
-            runtime_prm.show_centralsweep
-            or runtime_prm.show_xbpmpositions
-        )
-        if needs_sweeps:
-            analysis.centralsweeps = (
-                xprocessor.analyze_central_sweep_positions()
-                )
-
         # XBPM positions calculation.
         if runtime_prm.show_xbpmpositions:
             analysis.positions = xprocessor.xbpm_position_calculation()

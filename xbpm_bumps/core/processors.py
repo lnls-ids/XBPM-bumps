@@ -4,6 +4,7 @@ import numpy as np
 from copy import deepcopy
 from .config import Config
 from . import data_structure as DStr
+# from dataclasses import fields
 
 
 class XBPMProcessor:
@@ -53,7 +54,14 @@ class XBPMProcessor:
 
         # Nominal positions.
         self.pos_nom    = self.blade_avg.pos_nom
+        # self._check_data_consistency()
         self._central_sweep_slices()
+
+    # def _check_data_consistency(self) -> None:
+    #     for bld in fields(self.blade_avg):
+    #         for f in fields(bld):
+    #             assert f.shape == (len(self.range_v), len(self.range_h)), \
+    #             f"Blade grid ({f.name}) does not match nominal grid."
 
     """
     Position calculation tabs.
@@ -80,12 +88,12 @@ class XBPMProcessor:
 
         # Pairwise (pw) calculation (Delta/Sigma).
         # Positions with standard suppression matrix.
-        pos_pw_std = self.beam_position_pair(self.supmat.standard)
+        self.pos_pw_std = self.beam_position_pair(self.supmat.standard)
 
         # Scale positions for pairwise standard case.
         pw_scale_std, pw_pos_std = self._scale_positions(
             self.pos_ref,
-            pos_pw_std,
+            self.pos_pw_std,
             )
 
         # RMS statistics.
@@ -98,12 +106,12 @@ class XBPMProcessor:
         )
 
         # Positions with calculated suppression matrix and scaling.
-        pos_pw_sup = self.beam_position_pair(self.supmat.calculated)
+        self.pos_pw_sup = self.beam_position_pair(self.supmat.calculated)
 
         # Scale positions.
         pw_scale_sup, pw_pos_sup = self._scale_positions(
             self.pos_ref,
-            pos_pw_sup,
+            self.pos_pw_sup,
             )
 
         # RMS statistics.
@@ -129,25 +137,28 @@ class XBPMProcessor:
         # Compute suppression matrix at the ROI.
         # Cross-blade calculation (partial Delta/Sigma).
         # Positions from standard formulae.
-        pos_cr_std = self.beam_position_cross(self.blades)
+        self.cr_pos_std = self.beam_position_cross(self.blades)
 
         # Process data: fitting, scaling, stats, visualization.
-        cr_scale_std, pos_cr_std_scaled = self._scale_positions(
+        cr_scale_std, cr_pos_std_scaled = self._scale_positions(
             self.pos_ref,
-            pos_cr_std,
+            self.cr_pos_std,
             )
 
         # RMS statistics.
         rms_cr_std = grid_statistics(
             self.pos_ref.x,
             self.pos_ref.y,
-            pos_cr_std_scaled.x,
-            pos_cr_std_scaled.y,
+            cr_pos_std_scaled.x,
+            cr_pos_std_scaled.y,
             self.roi
         )
 
+        # Analyze central position sweeps for linear general transformation.
+        self.analysis.centralsweeps = self.analyze_central_sweep_positions()
+    
         # Positions with linear general transfomation.
-        pos_cr_lintr = self.transform_position_cross(pos_cr_std)
+        pos_cr_lintr = self.transform_position_cross(self.cr_pos_std)
         self.analysis.gl2r = self.gl2rmat
 
         # Scale positions.
@@ -167,21 +178,22 @@ class XBPMProcessor:
 
         # Cross-blade results instance.
         cross_res = DStr.CalculatedPositions(
-            roi=deepcopy(self.roi),
-            pos_std=pos_cr_std_scaled,
-            scale_std=cr_scale_std,
-            stat_std=rms_cr_std,
-            pos_trn=pos_cr_lintr,
-            scale_trn=cr_scale_lintr,
-            stat_trn=rms_cr_lintr
+            roi       = deepcopy(self.roi),
+            # pos_std   = self.cr_pos_std,
+            pos_std   = cr_pos_std_scaled,
+            scale_std = cr_scale_std,
+            stat_std  = rms_cr_std,
+            pos_trn   = pos_cr_lintr_scaled,
+            scale_trn = cr_scale_lintr,
+            stat_trn  = rms_cr_lintr
         )
 
         # Compile and return results
         return DStr.AnalyzedPositions(
-            nom=deepcopy(self.pos_ref),
-            bpm=deepcopy(self.analysis.bpm),
-            pairw=pairwise_res,
-            cross=cross_res
+            nom   = deepcopy(self.pos_ref),
+            bpm   = deepcopy(self.analysis.bpm),
+            pairw = pairwise_res,
+            cross = cross_res
             )
 
     """
@@ -443,123 +455,85 @@ class XBPMProcessor:
                     y = self.pos_nom.y[mask_v][idx_v]
                 )
             )
+        # Store masks and indices for later use in central sweep analysis.
+        self.mask_h, self.mask_idx_h = mask_h, idx_h
+        self.mask_v, self.mask_idx_v = mask_v, idx_v
 
     """
     Position calculation with partial delta/sigma formula.
     """
 
     def analyze_central_sweep_positions(self,
-                               pairw: bool = False
-                               ) -> DStr.CentralSweeps:
+                                        cross: bool = True
+                                        ) -> DStr.CentralSweeps:
         """Assemble the central sweep analysis.
 
         Returns:
             CentralSweeps instance containing horizontal and vertical central sweeps.
         """
+        if cross:
+            pos_csweep_h_x = self.cr_pos_std.x[self.mask_h][self.mask_idx_h]
+            pos_csweep_h_y = self.cr_pos_std.y[self.mask_h][self.mask_idx_h]
+
+            pos_csweep_v_x = self.cr_pos_std.x[self.mask_v][self.mask_idx_v]
+            pos_csweep_v_y = self.cr_pos_std.y[self.mask_v][self.mask_idx_v]
+        else:
+            pos_csweep_h_x = self.pos_pw_std.x[self.mask_h][self.mask_idx_h]
+            pos_csweep_h_y = self.pos_pw_std.y[self.mask_h][self.mask_idx_h]
+
+            pos_csweep_v_x = self.pos_pw_std.x[self.mask_v][self.mask_idx_v]
+            pos_csweep_v_y = self.pos_pw_std.y[self.mask_v][self.mask_idx_v]
+
         # Run through central lines if data is not just a point.
         h = (
-            self._central_sweep_h(pairw)
+            self._central_sweep(pos_csweep_h_x, pos_csweep_h_y)
             if len(self.range_h) > 1
             else None
             )
         v = (
-            self._central_sweep_v(pairw)
+            self._central_sweep(pos_csweep_v_y, pos_csweep_v_x)
             if len(self.range_v) > 1
             else None
             )
+
         return DStr.CentralSweeps(h=h, v=v)
 
-    def _central_sweep_h(self,
-                        cross: bool = True
-                        ) -> DStr.CentralSweepLine:
-        """Analyze position calculation along the central horizontal line."""
-        # Shortcuts for the central horizontal blades.
-        to = self.cs_bld_h.to
-        ti = self.cs_bld_h.ti
-        bi = self.cs_bld_h.bi
-        bo = self.cs_bld_h.bo
+    def _central_sweep(self,
+                       x : np.ndarray,
+                       y: np.ndarray,
+                       ) -> DStr.CentralSweepLine:
+        """Analyze position calculation along the central horizontal line.
+        
+        Args:
+            x (np.ndarray): Array of x positions along the central line.
+            y (np.ndarray): Array of y positions along the central line.
 
-        # Calculate positions using pairwise Δ/Σ or cross-blades (partial Δ/Σ) 
-        # formula. pos_calc_v is the calculated set of positions at central
-        # line along h direction (fixed nominal y at 0), expected to be zero.
-        if cross:
-            v1 = (to - bi) / (to + bi)
-            v2 = (ti - bo) / (ti + bo)
-            pos_calc_v = (v1 + v2)
-        else:
-            s_top = to + ti
-            s_bot = bo + bi
-            pos_calc_v = (s_top - s_bot) / (s_top + s_bot)
-
+        Returns:
+            DStr.CentralSweepLine: Instance containing the analyzed central sweep line data.
+        """
         # Fit a linear model to the position data and calculate uncertainties.
-        range_h   = np.linspace(-1, 1, len(self.range_h))
-        fit, cov  = np.polyfit(range_h, pos_calc_v, deg=1, cov=True)
-        pos_fit_v = np.polyval(fit, range_h)
-        sk, sd    = np.sqrt(np.diag(cov))
-        fit_err   = np.sqrt((range_h * sk)**2 + sd**2)
+        fit, cov = np.polyfit(x, y, deg=1, cov=True)
+        pos_fit  = np.polyval(fit, x)
+        sk, sd   = np.sqrt(np.diag(cov))
+        fit_err  = np.sqrt((x * sk)**2 + sd**2)
 
         # Discount offset.
-        pos_calc_v -= fit[1]
-        pos_fit_v  -= fit[1]
+        x -= 0.5 * (x[0] + x[-1])
+        y -= 0.5 * (y[0] + y[-1])
+        pos_fit -= 0.5 * (pos_fit[0] + pos_fit[-1])
+        pos_fixed   = self.cs_bld_h.pos_nom.y[:]
+        pos_fixed   -= 0.5 * (pos_fixed[0] + pos_fixed[-1])
 
         return DStr.CentralSweepLine(
             blades      = self.cs_bld_h,
-            pos_index   = range_h,
-            pos_fixed   = self.cs_bld_h.pos_nom.y,
-            pos_calc    = pos_calc_v,
-            pos_fit     = pos_fit_v,
+            pos_index   = x,
+            pos_fixed   = pos_fixed,
+            pos_calc    = y,
+            pos_fit     = pos_fit,
             pos_fit_err = fit_err,
             coeffs      = fit,
             sigmas      = np.sqrt(np.diag(cov))
         )
-
-    def _central_sweep_v(self,
-                        cross: bool = True
-                        ) -> DStr.CentralSweepLine:
-        """Analyze position calculation along the central vertical line."""
-        # Shortcuts for the central vertical blades.
-        to = self.cs_bld_v.to
-        ti = self.cs_bld_v.ti
-        bi = self.cs_bld_v.bi
-        bo = self.cs_bld_v.bo
-
-        # Calculate positions using pairwise Δ/Σ or cross-blades (partial Δ/Σ)
-        # formula. pos_calc_h is the calculated set of positions at central
-        # line along v direction (fixed nominal x at 0), expected to be zero.
-        if cross:
-            h1 = (to - bi) / (to + bi)
-            h2 = (ti - bo) / (ti + bo)
-            pos_calc_h = (h1 + h2)
-        else:
-            s_left     = to + bo
-            s_right    = ti + bi
-            pos_calc_h = (s_left - s_right) / (s_left + s_right)
-
-        # Fit a linear model to the position data and calculate uncertainties.
-        range_v   = np.linspace(-1, 1, len(self.range_v))
-        fit, cov  = np.polyfit(range_v, pos_calc_h, deg=1, cov=True)
-        pos_fit_h = np.polyval(fit, range_v)
-        sa, sb    = np.sqrt(np.diag(cov))
-        fit_err   = np.sqrt((range_v * sa)**2 + sb**2)
-
-        # Discount offset.
-        pos_calc_h -= fit[1]
-        pos_fit_h  -= fit[1]
-
-        # Actual vertical slope in grid is relative to the complementary angle.
-        # fit[0] = 1./ fit[0]
-        # sa     = sa / (fit[0]**2)
-
-        return DStr.CentralSweepLine(
-            blades      = self.cs_bld_v,
-            pos_index   = range_v,
-            pos_fixed   = self.cs_bld_v.pos_nom.x,
-            pos_calc    = pos_calc_h,
-            pos_fit     = pos_fit_h,
-            pos_fit_err = fit_err,
-            coeffs      = fit,
-            sigmas      = np.sqrt(np.diag(cov))
-            )
 
     @staticmethod
     def beam_position_cross(blades) -> DStr.Positions:
@@ -573,16 +547,14 @@ class XBPMProcessor:
     def transform_position_cross(self,
                                  pos_std: DStr.Positions
                                  ) -> DStr.Positions:
-        """Transform cross-blade positions using the linear transformation matrix."""
-        # Discount offsets from calculated positions before scaling.
-        pos_std.x -= self.analysis.centralsweeps.h.coeffs[1]
-        pos_std.y -= self.analysis.centralsweeps.v.coeffs[1]
+        """Transform positions using a linear transformation matrix."""
+        kx, dx = self.analysis.centralsweeps.h.coeffs
+        ky, dy = self.analysis.centralsweeps.v.coeffs
 
         # Compute linear transformation matrix at the ROI.
-        csweep = self.analysis.centralsweeps
         self.gl2rmat = self.general_linear_transformation(
-            csweep.h.coeffs[0],
-            csweep.v.coeffs[0]
+            kx = kx,
+            ky = ky
             )
 
         # Stack cross-blade positions into a 2xN array for transformation.
@@ -590,17 +562,22 @@ class XBPMProcessor:
 
         # Apply the linear transformation to the stacked positions.
         pos_tr = np.einsum('ij,jkl->ikl', self.gl2rmat.calc, scross)
-        return DStr.Positions(x=pos_tr[0], y=pos_tr[1])
+        x = pos_tr[0]  #  / np.max(pos_tr[0])
+        y = pos_tr[1]  #  / np.max(pos_tr[1])
+
+        return DStr.Positions(
+            x = x,
+            y = y
+            )
 
     def general_linear_transformation(self,
                                       kx: float,
                                       ky: float
-                                      ) -> np.ndarray:
+                                      ) -> DStr.GL2RMatrix:
         """Calculate the linear transformation matrix from position slopes."""
-        c = 1. / (1. + kx + ky)
-        gl2rmat = c * np.array([
-            [ 1 - kx, -ky],
-            [-kx,  1 + ky]
+        gl2rmat = np.array([
+            [ 1, -ky],
+            [-kx,  1]
         ])
         return DStr.GL2RMatrix(calc = gl2rmat)
 

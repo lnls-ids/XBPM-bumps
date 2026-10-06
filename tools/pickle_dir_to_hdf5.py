@@ -259,23 +259,27 @@ def parse_rawdata(rawdata: list, beamline: str) -> list:
         jj = ii + 1
 
         # Storage ring current.
-        current = record[2]['current']
+        try:
+            current = record[2].get('current', "N/A")
+        except Exception as e:
+            print(f"Error accessing current for record {jj}:\n\t {e}")
+            current = "N/A"
 
         # Time.
         timestamp = record[2].get('timestamp', "N/A")
 
         # Nominal positions of the bumps by changing the beam angles.
-        angle_x = record[2]['agx']
-        angle_y = record[2]['agy']
+        angle_x = record[2].get('agx', "N/A")
+        angle_y = record[2].get('agy', "N/A")
 
         # Alternative bumping method, by displacing the beam with defined
         # positions. If bumps are made by angle, these are tipically zero.
-        pos_x   = record[2]['posx']
-        pos_y   = record[2]['posy']
+        pos_x   = record[2].get('posx', "N/A")
+        pos_y   = record[2].get('posy', "N/A")
 
         # BPM registered positions (orbx, orby) for the current bump.
-        orbx    = record[2]['orbx']
-        orby    = record[2]['orby']
+        orbx    = record[2].get('orbx', "N/A")
+        orby    = record[2].get('orby', "N/A")
         bpm_data[jj] = {
             'x_bpm' : orbx,
             'y_bpm' : orby
