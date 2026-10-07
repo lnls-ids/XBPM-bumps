@@ -190,7 +190,10 @@ def blade_average(blade: list) -> tuple:
         return np.average(blade), np.std(blade), np.array(blade)
 
 
-def extract_and_average_blade_data(rawdata0: dict, beamline: str) -> dict:
+def extract_and_average_blade_data(
+        rawdata0: dict,
+        beamline: str
+        ) -> tuple[dict, dict]:
     """Extract and average blade data for the given beamline.
     
     'rawdata0' contains raw blade data for the selected beamline for a single grid point. This script extracts the data for the given beamline and computes the average and standard deviation for each blade for that point.
@@ -225,6 +228,7 @@ def extract_and_average_blade_data(rawdata0: dict, beamline: str) -> dict:
 
         # Store each avg / std. dev. value.
         bl     = revmap.get(pv)
+
         blname = f"{bl.lower()}_"
         avgblades[blname + "mean"] = avg
         avgblades[blname + "err"]  = std
@@ -515,6 +519,10 @@ def main() -> None:
     print(f"\n>>> Selected beamline(s): {', '.join(beamlines)}")
     print(f"\n### Found {len(rawdata)} pickle files in directory \n### "
           f"'{args.dir}'")
+
+    # DEBUG
+    print(f"\n ### blade map: {Config.BLADEMAP[beamlines[0]]}\n###\n")
+    # DEBUG
     
     # Extract data for each selected beamline and store in a dictionary.
     # Data is extracted as-is and averaged data is also computed.

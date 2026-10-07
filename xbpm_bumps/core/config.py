@@ -1,6 +1,6 @@
 """Beamline configuration constants."""
 
-from typing import Optional
+# from typing import Optional
 
 
 class Config:
@@ -36,22 +36,25 @@ class Config:
         # Set for simulation.
         "SIMUL": {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
     }
+    # Repeat map for synonymous beamline names.
+    BLADEMAP["CNB1"] = BLADEMAP["CNB"]
+    BLADEMAP["CAT1"] = BLADEMAP["CAT"]
 
     # The XBPM beamlines.
     BEAMLINENAME = {
-        "CAT": "Caterete",
-        "CNB": "Carnauba",
-        "MGN": "Mogno",
-        "MNC": "Manaca",
-        "N/A": "Not defined",
+        "CAT" : "Caterete",
+        "CNB" : "Carnauba",
+        "MGN" : "Mogno",
+        "MNC" : "Manaca",
+        "N/A" : "Not defined",
     }
 
     # Distances between two adjacent BPMs around source of bump at each line.
     BPMDISTS = {
-        "CAT": 6.175495,
-        "CNB": 6.175495,
-        "MGN": 2.2769999999999015,
-        "MNC": 7.035495,
+        "CAT" : 6.175495,
+        "CNB" : 6.175495,
+        "MGN" : 2.2769999999999015,
+        "MNC" : 7.035495,
     }
 
     # Distance from source (its center) to XBPM at each beamline.
@@ -71,10 +74,10 @@ class Config:
 
     # Sections of the ring for each beamline.
     SECTOR = {
-        "CAT": ["subsec:07SP", 7],
-        "CNB": ["subsec:06SB", 6],
-        "MGN": ["subsec:10BC", 10],
-        "MNC": ["subsec:09SA", 9]
+        "CAT" : ["subsec:07SP", 7],
+        "CNB" : ["subsec:06SB", 6],
+        "MGN" : ["subsec:10BC", 10],
+        "MNC" : ["subsec:09SA", 9]
     }
 
     # -----------------------------------------------------------------------
@@ -112,10 +115,10 @@ class Config:
         # XBPM position tabs (pairwise / cross, raw / transformed)
         "xbpm_positions": {
             "total"    : (
-                r"XBPM{xbpmnum}@{beamline}: {ct} $\Delta/\Sigma$, {rort}"
+                r"XBPM{xbpmnum}@{beamline}: {ct}, {rort}"
                 ),
             "roi"      : (
-                r"XBPM{xbpmnum}@{beamline}: {ct} $\Delta/\Sigma$, {rort} (ROI)"
+                r"XBPM{xbpmnum}@{beamline}: {ct}, {rort} (ROI)"
                 ),
             "heatmap"  : (
                 r"RMS $\Delta$ @ ROI"

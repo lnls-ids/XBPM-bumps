@@ -16,7 +16,7 @@ from xbpm_bumps.core.data_structure import (
 
 def _f(
         value : float,
-        digits: int = 6
+        digits: int = 2
         ) -> str:
     """Format a float value with a given number of significant digits.
 
@@ -28,12 +28,16 @@ def _f(
         The formatted float as a string.
     """
     try:
-        return f"{float(value):.{digits}g}"
+        return f"{float(value):6.{digits}f}"
     except (TypeError, ValueError):
         return str(value)
 
 
-def _err(value: float, err: float) -> str:
+def _err(
+        value: float,
+        err: float,
+        digits: int = 1,
+        ) -> str:
     """Format a value with its associated error.
 
     Args:
@@ -43,7 +47,7 @@ def _err(value: float, err: float) -> str:
     Returns:
         A string representation in the form "value (err)".
     """
-    return f"{_f(value)} ({_f(err, 2)})"
+    return f"{_f(value)} ({float(err):.{digits}g})"
 
 
 def format_analysis_info(

@@ -202,16 +202,18 @@ class XBPMProcessor:
 
     def analyze_central_sweep_blades(self) -> dict:
         """Analyze the central positions of the blades."""
-        # Define blade intervals according to ROI for slope calculation.
+        # Map blades to dictionaries for calculation.
+        # Uncomment the slicing according to the ROI if needed.
+        # (Default is to make the fitting over the entire range).
         blades_h = {
-            'to'  : self.cs_bld_h.to[self.roi.slice_h],
-            'ti'  : self.cs_bld_h.ti[self.roi.slice_h],
-            'bi'  : self.cs_bld_h.bi[self.roi.slice_h],
-            'bo'  : self.cs_bld_h.bo[self.roi.slice_h],
-            'sto' : self.cs_bld_h.sto[self.roi.slice_h],
-            'sti' : self.cs_bld_h.sti[self.roi.slice_h],
-            'sbi' : self.cs_bld_h.sbi[self.roi.slice_h],
-            'sbo' : self.cs_bld_h.sbo[self.roi.slice_h],
+            'to'  : self.cs_bld_h.to ,  # [self.roi.slice_h],
+            'ti'  : self.cs_bld_h.ti ,  # [self.roi.slice_h],
+            'bi'  : self.cs_bld_h.bi ,  # [self.roi.slice_h],
+            'bo'  : self.cs_bld_h.bo ,  # [self.roi.slice_h],
+            'sto' : self.cs_bld_h.sto,  # [self.roi.slice_h],
+            'sti' : self.cs_bld_h.sti,  # [self.roi.slice_h],
+            'sbi' : self.cs_bld_h.sbi,  # [self.roi.slice_h],
+            'sbo' : self.cs_bld_h.sbo,  # [self.roi.slice_h],
         }
         bld_fit_h = {
             k: (blades_h[k], blades_h[f's{k}'])
@@ -219,14 +221,14 @@ class XBPMProcessor:
         }
 
         blades_v = {
-            'to'  : self.cs_bld_v.to[self.roi.slice_v],
-            'ti'  : self.cs_bld_v.ti[self.roi.slice_v],
-            'bi'  : self.cs_bld_v.bi[self.roi.slice_v],
-            'bo'  : self.cs_bld_v.bo[self.roi.slice_v],
-            'sto' : self.cs_bld_v.sto[self.roi.slice_v],
-            'sti' : self.cs_bld_v.sti[self.roi.slice_v],
-            'sbi' : self.cs_bld_v.sbi[self.roi.slice_v],
-            'sbo' : self.cs_bld_v.sbo[self.roi.slice_v],
+            'to'  : self.cs_bld_v.to,   # [self.roi.slice_v],
+            'ti'  : self.cs_bld_v.ti,   # [self.roi.slice_v],
+            'bi'  : self.cs_bld_v.bi,   # [self.roi.slice_v],
+            'bo'  : self.cs_bld_v.bo,   # [self.roi.slice_v],
+            'sto' : self.cs_bld_v.sto,  # [self.roi.slice_v],
+            'sti' : self.cs_bld_v.sti,  # [self.roi.slice_v],
+            'sbi' : self.cs_bld_v.sbi,  # [self.roi.slice_v],
+            'sbo' : self.cs_bld_v.sbo,  # [self.roi.slice_v],
         }
         bld_fit_v = {
             k: (blades_v[k], blades_v[f's{k}'])
@@ -234,10 +236,10 @@ class XBPMProcessor:
         }
 
         # Perform central line fit for horizontal and vertical blade analysis.
-        hrange = self.range_h[self.roi.slice_h]
+        hrange = self.range_h  # [self.roi.slice_h]
         horz   = self._blade_central_line_fit(hrange, bld_fit_h)
 
-        vrange = self.range_v[self.roi.slice_v]
+        vrange = self.range_v  # [self.roi.slice_v]
         vert   = self._blade_central_line_fit(vrange, bld_fit_v)
 
         return DStr.BCA_HV(
@@ -500,7 +502,7 @@ class XBPMProcessor:
 
     def _central_sweep(self,
                        x : np.ndarray,
-                       y: np.ndarray,
+                       y : np.ndarray,
                        ) -> DStr.CentralSweepLine:
         """Analyze position calculation along the central horizontal line.
         
@@ -517,12 +519,8 @@ class XBPMProcessor:
         sk, sd   = np.sqrt(np.diag(cov))
         fit_err  = np.sqrt((x * sk)**2 + sd**2)
 
-        # Discount offset.
-        x -= 0.5 * (x[0] + x[-1])
-        y -= 0.5 * (y[0] + y[-1])
-        pos_fit -= 0.5 * (pos_fit[0] + pos_fit[-1])
-        pos_fixed   = self.cs_bld_h.pos_nom.y[:]
-        pos_fixed   -= 0.5 * (pos_fixed[0] + pos_fixed[-1])
+        # Define the fixed positions array as the zero axis.
+        pos_fixed = np.zeros_like(x)
 
         return DStr.CentralSweepLine(
             blades      = self.cs_bld_h,

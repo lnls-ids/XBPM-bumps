@@ -1,10 +1,10 @@
 """Parameter handling and CLI parsing."""
 
-from typing import Optional, Iterator
+from typing import Optional, Iterator, List
 # from curses import raw
 from dataclasses import dataclass, field, fields
 import logging
-from typing import List, Optional
+# from typing import List, Optional
 
 import h5py
 import numpy as np
@@ -133,6 +133,9 @@ class BeamlinePrm:
     roislice     : ROISlice = field(default_factory=ROISlice)
     updated      : str  | None = None
 
+    # Extra parameters not explicitly defined above.
+    extras       : dict | None = None
+
     @classmethod
     def from_hdf5(cls, bln_grp: h5py.Group) -> "BeamlinePrm":
         """Create a BeamlinePrm instance from an HDF5 group."""
@@ -175,10 +178,33 @@ class BeamlinePrm:
 
         # Ignore attributes that are not declared fields of this dataclass.
         valid_keys = {fld.name for fld in fields(cls)}
-        attrs = {key: val for key, val in attrs.items() if key in valid_keys}
+        extras = {
+            key: val
+            for key, val in attrs.items()
+            if key not in valid_keys
+            }
+
+        attrs = {
+            key: val
+            for key, val in attrs.items()
+            if key in valid_keys
+            }
+        attrs["extras"] = extras
 
         return cls(**attrs)
 
+    def __getattr__(self, name: str):
+        """Expose unknown HDF5 attributes from the `extras` dict.
+
+        Replicates the usual behavior for retrieving attributes
+        of the class.
+        """
+        extras = self.__dict__.get("extras")
+        if extras is not None and name in extras:
+            return extras[name]
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute '{name}'"
+        )
 
 #
 # Generic data structures.

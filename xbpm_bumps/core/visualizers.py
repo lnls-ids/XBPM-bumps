@@ -431,7 +431,7 @@ class BladeMapVisualizer:
             self.bm_ana.blades.bo
         )
 
-        fig, rx = plt.subplots(2, 2, figsize=(8, 5))
+        fig, rx = plt.subplots(2, 2, figsize=(10, 6))
 
         # Calculate extent for proper axis labels
         if (to.ndim < 2 or to.shape[0] <= 1 or to.shape[1] <= 1):
@@ -442,12 +442,22 @@ class BladeMapVisualizer:
             minvaly, maxvaly = np.min(y), np.max(y)
             extent = (minvalx, maxvalx, minvaly, maxvaly)
 
-        quad = [[ti, to], [bi, bo]]
-        names = [["TI", "TO"], ["BI", "BO"]]
+        quad = [
+            [ti, to],
+            [bi, bo]
+            ]
+        names = [
+            ["TI", "TO"],
+            ["BI", "BO"]
+            ]
 
         for idy in range(2):
             for idx in range(2):
-                rx[idy][idx].imshow(quad[idy][idx], extent=extent)
+                rx[idy][idx].imshow(
+                    quad[idy][idx],
+                    extent=extent,
+                    origin='lower'
+                    )
                 if extent is None:
                     rx[idy][idx].set_xlabel('')
                     rx[idy][idx].set_xticks([])
@@ -490,70 +500,45 @@ class CentralSweepVisualizer:
             matplotlib.figure.Figure
         """
         # Scale for the beamline (source-XBPM distance).
-        fig, (axh, axv) = plt.subplots(
+        fig, ax = plt.subplots(
             nrows=1,
-            ncols=2,
+            ncols=1,
             figsize=(12, 5)
             )
 
-
-        ch = csweep.h
+        # # Discount offsets and normalize index range for graphs.
+        ch  = csweep.h
         if csweep.h is not None:
-            axh.plot(
-                ch.pos_index,
-                ch.pos_calc,
-                'o-',
-                label="H calc",
-                zorder=2,
-                )
-            axh.plot(
-                ch.pos_index,
-                ch.pos_fit,
-                '^-',
-                label="H fit",
-                zorder=3,
-                )
+            hx  = ch.pos_index - 0.5 * (ch.pos_index[0] + ch.pos_index[-1])
+            hy  = ch.pos_calc  - 0.5 * (ch.pos_calc[0] + ch.pos_calc[-1])
+            hfy = ch.pos_fit  - 0.5 * (ch.pos_fit[0] + ch.pos_fit[-1])
+            hx /= np.max(np.abs(hx))
 
-        cv = csweep.v
+            ax.plot(hx,  hy, 'o-', label="H calc", zorder=2)
+            ax.plot(hx, hfy, '^-', label="H fit",  zorder=3)
+
+        cv  = csweep.v
         if csweep.v is not None:
-            axh.plot(
-                cv.pos_calc,
-                cv.pos_index,
-                'o-',
-                label="V calc",
-                zorder=2
-                )
-            axh.plot(
-                cv.pos_fit,
-                cv.pos_index,
-                  '^-',
-                  label="V fit",
-                  zorder=3
-                  )
-            # axv.set_xlabel("$x$ [a.u.]")
-            # axv.set_ylabel("$y$ [a.u.]")
-            # axv.set_title(_Title(
-            #     beamline   = beamline,
-            #     graph_type = 'sweeps',
-            #     ax_type    = 'v')
-            #     )
-            # axv.set_xlim(extent[0], extent[1])
-            # axv.set_ylim(extent[2], extent[3])
-            # axv.grid(True)
-            # axv.legend()
+            vx  = cv.pos_index - 0.5 * (cv.pos_index[0] + cv.pos_index[-1])
+            vy  = cv.pos_calc  - 0.5 * (cv.pos_calc[0] + cv.pos_calc[-1])
+            vfy = cv.pos_fit   - 0.5 * (cv.pos_fit[0] + cv.pos_fit[-1])
+            vx /= np.max(np.abs(vx))
+
+            ax.plot(vx,  vy, 'o-', label="V calc", zorder=2)
+            ax.plot(vx, vfy, '^-', label="V fit",  zorder=3)
 
         extent = np.array((-1, 1, -1, 1)) * 1.05
-        axh.set_xlabel("$x$ [a.u.]")
-        axh.set_ylabel("$y$ [a.u.]")
-        axh.set_title(_Title(
+        ax.set_xlabel("$x$ [a.u.]")
+        ax.set_ylabel("$y$ [a.u.]")
+        ax.set_title(_Title(
             beamline   = beamline,
             graph_type = 'sweeps',
             ax_type    = '')
             )
-        axh.set_xlim(extent[0], extent[1])
-        axh.set_ylim(extent[2], extent[3])
-        axh.grid(True)
-        axh.legend()
+        ax.set_xlim(extent[0], extent[1])
+        ax.set_ylim(extent[2], extent[3])
+        ax.grid(True)
+        ax.legend()
 
         fig.tight_layout()
         return fig
