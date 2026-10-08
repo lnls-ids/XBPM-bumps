@@ -10,8 +10,8 @@ class AnalysisService:
 
     @staticmethod
     def run(
-        beamlinedata: DStr.BeamlineData,
-        runtime_prm: DStr.GenPrm,
+        beamlinedata : DStr.BeamlineData,
+        runtime_prm  : DStr.GenPrm,
         ) -> DStr.DataAnalysis:
         # Initialize the analysis result container.
         analysis = DStr.DataAnalysis(beamline_prm = beamlinedata.prm)
@@ -46,7 +46,9 @@ class AnalysisService:
 
         # Blades at center are necessary for the suppression matrix.
         if runtime_prm.show_centralsweep:
-            analysis.bladecenter = xprocessor.analyze_central_sweep_blades()
+            analysis.bladecenter = xprocessor.analyze_central_sweep_blades(
+                slice_by_roi = runtime_prm.slice_by_roi
+            )
 
         # XBPM positions calculation.
         if runtime_prm.show_xbpmpositions:

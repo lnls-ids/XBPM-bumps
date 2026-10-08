@@ -506,26 +506,42 @@ class CentralSweepVisualizer:
             figsize=(12, 5)
             )
 
-        # # Discount offsets and normalize index range for graphs.
+        # Discount offsets, normalize index range for graph and plot it.
         ch  = csweep.h
         if csweep.h is not None:
-            hx  = ch.pos_index - 0.5 * (ch.pos_index[0] + ch.pos_index[-1])
-            hy  = ch.pos_calc  - 0.5 * (ch.pos_calc[0] + ch.pos_calc[-1])
-            hfy = ch.pos_fit  - 0.5 * (ch.pos_fit[0] + ch.pos_fit[-1])
-            hx /= np.max(np.abs(hx))
+            # offset_h_y = np.mean(ch.pos_fit)
+            offset_h_x = np.mean(ch.pos_index)
+            a, b = ch.coeffs
+            offset_h_y = a * offset_h_x + b
+            hx  = ch.pos_index - offset_h_x
+            hy  = ch.pos_calc  - offset_h_y
+            hfy = ch.pos_fit   - offset_h_y
+            #
+            norm_x = np.max(np.abs(hx))
+            hx  /= norm_x
+            hy  /= norm_x
+            hfy /= norm_x
 
             ax.plot(hx,  hy, 'o-', label="H calc", zorder=2)
             ax.plot(hx, hfy, '^-', label="H fit",  zorder=3)
 
         cv  = csweep.v
         if csweep.v is not None:
-            vx  = cv.pos_index - 0.5 * (cv.pos_index[0] + cv.pos_index[-1])
-            vy  = cv.pos_calc  - 0.5 * (cv.pos_calc[0] + cv.pos_calc[-1])
-            vfy = cv.pos_fit   - 0.5 * (cv.pos_fit[0] + cv.pos_fit[-1])
-            vx /= np.max(np.abs(vx))
+            # offset_v_y = np.mean(ch.pos_fit)
+            offset_v_x = np.mean(cv.pos_index)
+            a, b = cv.coeffs
+            offset_v_y = a * offset_v_x + b
+            vx  = cv.pos_index - offset_v_x
+            vy  = cv.pos_calc  - offset_v_y
+            vfy = cv.pos_fit   - offset_v_y
+            #
+            norm_y = np.max(np.abs(vx))
+            vx  /= norm_y
+            vy  /= norm_y
+            vfy /= norm_y
 
-            ax.plot(vx,  vy, 'o-', label="V calc", zorder=2)
-            ax.plot(vx, vfy, '^-', label="V fit",  zorder=3)
+            ax.plot(vy,  vx, 'o-', label="V calc", zorder=2)
+            ax.plot(vfy, vx, '^-', label="V fit",  zorder=3)
 
         extent = np.array((-1, 1, -1, 1)) * 1.05
         ax.set_xlabel("$x$ [a.u.]")

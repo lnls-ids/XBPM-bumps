@@ -38,9 +38,10 @@ class GenPrm:
     show_bpmpositions     : bool = False
     show_blademap         : bool = False
     show_centralsweep     : bool = False
+    show_xbpmpositions    : bool = False
+    slice_by_roi          : bool = False
     # show_bladecenter      : bool = False
     # show_xbpmpositionsraw : bool = False
-    show_xbpmpositions    : bool = False
 
     def __getitem__(self, key: str):
         """Dictionary-style access (prm['key']) for backward compatibility."""
@@ -468,6 +469,19 @@ class SweepData:
         try:
             # Sweep metadata.
             meta = dict(swp_grp.attrs.items())
+            # Ensure angle keys are present. Workaound for double standars.
+            ag = {'x': None, 'y': None}
+            ag = {
+                d : val
+                for d in ['x', 'y']
+                for key, val in swp_grp.attrs.items()
+                if key.startswith(f'Angle {d}') or
+                key.startswith(f'ag{d}')
+            }
+            meta.update({
+                'Angle x': ag['x'],
+                'Angle y': ag['y']
+            })
 
             # BPM dataset.
             bpm = BPMRawData.from_hdf5(swp_grp['bpm_data'])

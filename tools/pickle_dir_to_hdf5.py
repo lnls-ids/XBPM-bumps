@@ -520,10 +520,6 @@ def main() -> None:
     print(f"\n### Found {len(rawdata)} pickle files in directory \n### "
           f"'{args.dir}'")
 
-    # DEBUG
-    print(f"\n ### blade map: {Config.BLADEMAP[beamlines[0]]}\n###\n")
-    # DEBUG
-    
     # Extract data for each selected beamline and store in a dictionary.
     # Data is extracted as-is and averaged data is also computed.
     dataset = {}

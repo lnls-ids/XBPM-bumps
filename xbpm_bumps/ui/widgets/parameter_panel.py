@@ -145,11 +145,13 @@ class ParameterPanel(QWidget):
         self.bpm_check = QCheckBox(
             "Show positions from BPM measurements"
             )
+        self.bpm_check.setChecked(True),
         self.bpm_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.bpm_check)
 
         # 2. Show blade map
         self.blademap_check = QCheckBox("Show blade map")
+        self.blademap_check.setChecked(True)
         self.blademap_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.blademap_check)
 
@@ -164,6 +166,8 @@ class ParameterPanel(QWidget):
         self.position_center_check = QCheckBox(
             "Show positions at center line sweeps"
             )
+        self.position_center_check.setChecked(True)
+        self.position_center_check.setChecked(True)
         self.position_center_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.position_center_check)
 
@@ -178,8 +182,17 @@ class ParameterPanel(QWidget):
         self.xbpm_calc_check = QCheckBox(
             "Calculate XBPM positions"
             )
+        self.xbpm_calc_check.setChecked(True)
         self.xbpm_calc_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.xbpm_calc_check)
+
+        # 6. Slice by ROI
+        self.slice_by_roi_check = QCheckBox(
+            "Central range fit defined by ROI"
+            )
+        self.slice_by_roi_check.setChecked(False)
+        self.slice_by_roi_check.toggled.connect(self.parametersChanged.emit)
+        layout.addWidget(self.slice_by_roi_check)
 
         # Button row for "All" option
         layout.addSpacing(10)
@@ -256,6 +269,7 @@ class ParameterPanel(QWidget):
             'skip'                  : self.skip_spin.value(),
             'scalepolydeg'          : self.scalepolydeg.value(),
             'usebpmref'             : self.bpm_ref_check.isChecked(),
+            'slice_by_roi'          : self.slice_by_roi_check.isChecked(),
         }
 
         # Define variables in parameters dataclass.

@@ -377,24 +377,25 @@ class XBPMMainWindow(QMainWindow):
 
         # Reset prm values from parameter panel.
         # Beamline parameters.
-        bl_prm = self.beamline_prm
+        bl_prm              = self.beamline_prm
         bl_prm.xbpmdist     = params["xbpmdist"]
         bl_prm.skip         = params["skip"]
         bl_prm.scalepolydeg = params["scalepolydeg"]
         bl_prm.usebpmref    = params["usebpmref"]
-        bl_prm.roislice          = DStr.ROISlice.update(
+        bl_prm.roislice     = DStr.ROISlice.update(
             self.grid_shape,
             params["roisize"]
             )
 
         # Runtime parameters.
-        rt_prm = self.runtime_prm
+        rt_prm                       = self.runtime_prm
         rt_prm.show_blademap         = params["show_blademap"]
         rt_prm.show_bpmpositions     = params["show_bpmpositions"]
         rt_prm.show_centralsweep     = params["show_centralsweep"]
+        rt_prm.show_xbpmpositions    = params["show_xbpmpositions"]
+        rt_prm.slice_by_roi          = params["slice_by_roi"]
         # rt_prm.show_bladecenter      = params["show_bladecenter"]
         # rt_prm.show_xbpmpositionsraw = params["show_xbpmpositionsraw"]
-        rt_prm.show_xbpmpositions    = params["show_xbpmpositions"]
 
     def _create_status_bar(self) -> None:
         """Create status bar with progress indicator."""

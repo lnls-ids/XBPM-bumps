@@ -200,20 +200,36 @@ class XBPMProcessor:
     Blade behavior at central line sweeps.
     """
 
-    def analyze_central_sweep_blades(self) -> dict:
-        """Analyze the central positions of the blades."""
+    def analyze_central_sweep_blades(self,
+                                     slice_by_roi: bool = False
+                                     ) -> dict:
+        """Analyze the central positions of the blades.
+
+        Args:
+            slice_roi: Whether to slice the data according to the ROI.
+            Default is to make the fitting over the entire range.
+
+        Returns:
+            A dictionary containing the analysis results for horizontal
+                and vertical blades.
+        """
         # Map blades to dictionaries for calculation.
-        # Uncomment the slicing according to the ROI if needed.
-        # (Default is to make the fitting over the entire range).
+        if slice_by_roi:
+            slice_h = self.roi.slice_h
+            slice_v = self.roi.slice_v
+        else:
+            slice_h = slice(None)
+            slice_v = slice(None)
+
         blades_h = {
-            'to'  : self.cs_bld_h.to ,  # [self.roi.slice_h],
-            'ti'  : self.cs_bld_h.ti ,  # [self.roi.slice_h],
-            'bi'  : self.cs_bld_h.bi ,  # [self.roi.slice_h],
-            'bo'  : self.cs_bld_h.bo ,  # [self.roi.slice_h],
-            'sto' : self.cs_bld_h.sto,  # [self.roi.slice_h],
-            'sti' : self.cs_bld_h.sti,  # [self.roi.slice_h],
-            'sbi' : self.cs_bld_h.sbi,  # [self.roi.slice_h],
-            'sbo' : self.cs_bld_h.sbo,  # [self.roi.slice_h],
+            'to'  : self.cs_bld_h.to[slice_h],
+            'ti'  : self.cs_bld_h.ti[slice_h],
+            'bi'  : self.cs_bld_h.bi[slice_h],
+            'bo'  : self.cs_bld_h.bo[slice_h],
+            'sto' : self.cs_bld_h.sto[slice_h],
+            'sti' : self.cs_bld_h.sti[slice_h],
+            'sbi' : self.cs_bld_h.sbi[slice_h],
+            'sbo' : self.cs_bld_h.sbo[slice_h],
         }
         bld_fit_h = {
             k: (blades_h[k], blades_h[f's{k}'])
@@ -221,14 +237,14 @@ class XBPMProcessor:
         }
 
         blades_v = {
-            'to'  : self.cs_bld_v.to,   # [self.roi.slice_v],
-            'ti'  : self.cs_bld_v.ti,   # [self.roi.slice_v],
-            'bi'  : self.cs_bld_v.bi,   # [self.roi.slice_v],
-            'bo'  : self.cs_bld_v.bo,   # [self.roi.slice_v],
-            'sto' : self.cs_bld_v.sto,  # [self.roi.slice_v],
-            'sti' : self.cs_bld_v.sti,  # [self.roi.slice_v],
-            'sbi' : self.cs_bld_v.sbi,  # [self.roi.slice_v],
-            'sbo' : self.cs_bld_v.sbo,  # [self.roi.slice_v],
+            'to'  : self.cs_bld_v.to[slice_v],
+            'ti'  : self.cs_bld_v.ti[slice_v],
+            'bi'  : self.cs_bld_v.bi[slice_v],
+            'bo'  : self.cs_bld_v.bo[slice_v],
+            'sto' : self.cs_bld_v.sto[slice_v],
+            'sti' : self.cs_bld_v.sti[slice_v],
+            'sbi' : self.cs_bld_v.sbi[slice_v],
+            'sbo' : self.cs_bld_v.sbo[slice_v],
         }
         bld_fit_v = {
             k: (blades_v[k], blades_v[f's{k}'])
@@ -503,6 +519,7 @@ class XBPMProcessor:
     def _central_sweep(self,
                        x : np.ndarray,
                        y : np.ndarray,
+                       w : np.ndarray | None = None,
                        ) -> DStr.CentralSweepLine:
         """Analyze position calculation along the central horizontal line.
         
@@ -514,7 +531,7 @@ class XBPMProcessor:
             DStr.CentralSweepLine: Instance containing the analyzed central sweep line data.
         """
         # Fit a linear model to the position data and calculate uncertainties.
-        fit, cov = np.polyfit(x, y, deg=1, cov=True)
+        fit, cov = np.polyfit(x, y, deg=1, w=w, cov=True)
         pos_fit  = np.polyval(fit, x)
         sk, sd   = np.sqrt(np.diag(cov))
         fit_err  = np.sqrt((x * sk)**2 + sd**2)
@@ -843,8 +860,16 @@ class BPMProcessor:
 
         # Try and guess offsets by extrapolation if not found.
         if not offsetfound:
-            (offset_x_sect, offset_x_next,
-             offset_y_sect, offset_y_next) = self._offset_search(sector_idx)
+            try:
+                (
+                offset_x_sect, offset_x_next,
+                offset_y_sect, offset_y_next
+                ) = self._offset_search(sector_idx)
+            except Exception as e:
+                print(f" ERROR: failed to extrapolate BPM offsets:\n {e}."
+                      "\n Setting offsets to zero.")
+                offset_x_sect, offset_x_next = 0, 0
+                offset_y_sect, offset_y_next = 0, 0
 
         # Calculate tangents for all angles.
         self.tangents = dict()
@@ -880,7 +905,7 @@ class BPMProcessor:
             """Search offset in given direction."""
             # Get nominal angle value.
             angle = np.array([
-                swp.meta.get(f'Angle {direction}')
+                self.meta[ns].get(f'Angle {direction}')
                 for ns, swp in self.sweeps_bpm.items()
                 ])
 
@@ -888,7 +913,8 @@ class BPMProcessor:
             ang_max = np.max(angle)
             if np.isclose(ang_max, ang_min):
                 raise ValueError(
-                    f"Cannot infer BPM {direction}-offset from data without {direction} angle variation "
+                    f"Cannot infer BPM {direction}-offset from data"
+                    f" without {direction} angle variation "
                     "or explicit (agx=0, agy=0) reference point."
                 )
 
@@ -904,16 +930,24 @@ class BPMProcessor:
 
             return (offset_sect, offset_next)
 
-        orbx     = np.array([swp.bpm.pos.x[sector_idx]
-                             for ns, swp in self.sweeps_bpm.items()])
-        orbx_nxt = np.array([swp.bpm.pos.x[sector_idx_nxt]
-                             for ns, swp in self.sweeps_bpm.items()])
+        orbx     = np.array([
+            swp.pos.x[sector_idx]
+            for ns, swp in self.sweeps_bpm.items()
+            ])
+        orbx_nxt = np.array([
+            swp.pos.x[sector_idx_nxt]
+            for ns, swp in self.sweeps_bpm.items()
+            ])
         (offset_x, offset_x_nxt) = _offset_from_direction('x', orbx, orbx_nxt)
 
-        orby     = np.array([swp.bpm.pos.y[sector_idx]
-                             for ns, swp in self.sweeps_bpm.items()])
-        orby_nxt = np.array([swp.bpm.pos.y[sector_idx_nxt]
-                             for ns, swp in self.sweeps_bpm.items()])
+        orby     = np.array([
+            swp.pos.y[sector_idx]
+            for ns, swp in self.sweeps_bpm.items()
+            ])
+        orby_nxt = np.array([
+            swp.pos.y[sector_idx_nxt]
+            for ns, swp in self.sweeps_bpm.items()
+            ])
         (offset_y, offset_y_nxt) = _offset_from_direction('y', orby, orby_nxt)
 
         return (offset_x, offset_x_nxt, offset_y, offset_y_nxt)
