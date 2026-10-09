@@ -159,9 +159,9 @@ class BPMVisualizer:
         # Initialize figure with 1x3 subplots:
         # full grid, roi closeup, differences
         is_1d = (
-            self.rms_diff.roi.tot.ndim == 1 or
-            (self.rms_diff.roi.tot.ndim == 2 and
-             min(self.rms_diff.roi.tot.shape) == 1)
+            self.rms_diff.roi.diff_tot.ndim == 1 or
+            (self.rms_diff.roi.diff_tot.ndim == 2 and
+             min(self.rms_diff.roi.diff_tot.shape) == 1)
              )
         gridspec = {'width_ratios': [1, 1, 0.1]} if is_1d else None
         self.fig, bpm_axes = plt.subplots(
@@ -310,9 +310,9 @@ class BPMVisualizer:
         # constant (single-line sweep).
         h_const = np.nanmax(self.nom_roi_x) == np.nanmin(self.nom_roi_x)
         v_const = np.nanmax(self.nom_roi_y) == np.nanmin(self.nom_roi_y)
-        is_1d = (roi_diffs.h.ndim == 1 or
-             (roi_diffs.h.ndim == 2 and
-              min(roi_diffs.h.shape) == 1) or
+        is_1d = (roi_diffs.diff_h.ndim == 1 or
+             (roi_diffs.diff_h.ndim == 2 and
+              min(roi_diffs.diff_h.shape) == 1) or
              h_const or v_const
              )
 
@@ -321,7 +321,7 @@ class BPMVisualizer:
             h_min = np.nanmin(self.nom_roi_x)
             h_max = np.nanmax(self.nom_roi_x)
 
-            color_vals = np.ravel(roi_diffs.tot).reshape(-1, 1)
+            color_vals = np.ravel(roi_diffs.diff_tot).reshape(-1, 1)
             extent = [0, 1, self.nom_roi_y.min(), self.nom_roi_y.max()]
             aspect = 'auto'
 
@@ -360,7 +360,7 @@ class BPMVisualizer:
             # Calculate aspect ratio to maintain proper physical proportions.
             # Account for both physical extents and array shape to avoid
             # distortion when physical x and y ranges differ significantly.
-            n_v, n_h = roi_diffs.h.shape
+            n_v, n_h = roi_diffs.diff_h.shape
             h_extent = h_max - h_min
             v_extent = v_max - v_min
             # aspect = (physical_y_per_pixel) / (physical_x_per_pixel)
@@ -369,7 +369,7 @@ class BPMVisualizer:
 
             # Use imshow for filled heatmap visualization
             im = self.ax_diff.imshow(
-                roi_diffs.tot, cmap='viridis', extent=extent,
+                roi_diffs.diff_tot, cmap='viridis', extent=extent,
                 aspect=aspect, origin='lower'
             )
             cbar = self.fig.colorbar(im, ax=self.ax_diff,
@@ -727,12 +727,12 @@ class PositionVisualizer:
             graph_type: Type of graph to display (e.g., 'xbpm_pairwise_raw').
         """
         # Check dimensionality of the RMS statistics to determine layout.
-        if stat_roi.tot is None:
+        if stat_roi.diff_tot is None:
             is_1d = True
         else:
-            is_1d = (stat_roi.tot.ndim == 1 or
-                     (stat_roi.tot.ndim == 2 and
-                      min(stat_roi.tot.shape) == 1))
+            is_1d = (stat_roi.diff_tot.ndim == 1 or
+                     (stat_roi.diff_tot.ndim == 2 and
+                      min(stat_roi.diff_tot.shape) == 1))
         if is_1d:
             gridspec = {'width_ratios': [1, 1, 0.1]}
         else:
@@ -819,7 +819,7 @@ class PositionVisualizer:
             ax_heat,
             pos_nom.x[roi_v, roi_h],
             pos_nom.y[roi_v, roi_h],
-            stat_roi.tot,
+            stat_roi.diff_tot,
             title = title_heatmap
         )
 

@@ -80,6 +80,41 @@ class Config:
         "MNC" : ["subsec:09SA", 9]
     }
 
+    GROUP_DESCRIPTION = {
+        "Beamline" : (
+            "Data for {beamline} beamline from XBPM bumping experiments."
+        ),
+
+        "Raw data": (
+            "Raw data for {beamline} beamline from XBPMbumping experiments."
+            ),
+
+        "Blade averages": (
+            "Averaged blade measurements for each sweep sampling"
+            " from {beamline}, with standard deviations."
+            ),
+
+        "Sweeps": (
+            "Raw data for sweep {n} from XBPM-bumps experiments."
+        ),
+
+        "Blade data" : (
+            "Raw blade measurements for the sweep {n}."
+            ),
+
+        "BPM data" : (
+            "All BPM registered positions for the sweep {n}."
+            ),
+
+        "RMS statistics": (
+            "RMS statistics for {case}."
+            ),
+
+        "BPM Analysis" : (
+            "Analysis of BPM positions for {beamline}."
+            ),
+    }
+
     # -----------------------------------------------------------------------
     # Graph titles, grouped by tab / figure.
     # Keys within each tab are the subplot role: 'total', 'roi', 'heatmap',
@@ -143,6 +178,21 @@ class Config:
     def get_beamline_name(cls, code: str) -> str:
         """Get full beamline name from code."""
         return cls.BEAMLINENAME.get(code, "N/A")
+
+    @classmethod
+    def get_description(cls,
+                        group      : str,
+                        beamline   : str = "",
+                        sweepnum   : int = None,
+                        roi_or_all : str = "",
+                        ) -> str:
+        """Get the description for a given group."""
+        template = cls.GROUP_DESCRIPTION.get(group, "N/A")
+        return template.format(
+            beamline   = beamline,
+            sweepnum   = sweepnum,
+            roi_or_all = roi_or_all
+        )
 
     @classmethod
     def get_plot_title(cls,

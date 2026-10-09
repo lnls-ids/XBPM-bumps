@@ -750,7 +750,7 @@ class BPMProcessor:
                  ) -> None:
         """Store raw BPM/XBPM dataset and parameters for later processing."""
         self.raw_data    = raw_data
-        self.sweeps_bpm  = raw_data.sweeps_bpm
+        self.sweeps      = raw_data.sweeps
         self.meta        = raw_data.meta
         self.prm_bml     = prm_bml
         self.roi         = prm_bml.roislice
@@ -788,11 +788,13 @@ class BPMProcessor:
             x=self.meas_x,
             y=self.meas_y
             )
+
         bpmanalysis = DStr.BPMAnalysis(
             pos_meas=pos_meas,
             prm=self.prm_bml,
             rms_diff=self.rms_grid_stats,
         )
+
         return bpmanalysis
 
     def _positions_from_tangents(self) -> dict:
@@ -814,7 +816,7 @@ class BPMProcessor:
         xidx = sorted(set([key[0] for key in positions.keys()]))
         yidx = sorted(set([key[1] for key in positions.keys()]))
         nx, ny = len(xidx), len(yidx)
-
+   
         # Initialize numpy arrays for nominal and measured positions.
         self.nom_x  = np.zeros((ny, nx))
         self.nom_y  = np.zeros((ny, nx))
@@ -847,14 +849,16 @@ class BPMProcessor:
         offsetfound = False
 
         # Select offsets from BPMs with zero angles (reference orbit).
-        for ns in self.sweeps_bpm:
-            agx = self.meta[ns].get('Angle x')
-            agy = self.meta[ns].get('Angle y')
+        for _, swp in self.sweeps.items():
+            agx = swp.meta['Angle x']
+            agy = swp.meta['Angle y']
+            pos = swp.bpm.pos
             if agx == 0 and agy == 0:
-                offset_x_sect = self.sweeps_bpm[ns].pos.x[sector_idx]
-                offset_y_sect = self.sweeps_bpm[ns].pos.y[sector_idx]
-                offset_x_next = self.sweeps_bpm[ns].pos.x[sector_idx_nxt]
-                offset_y_next = self.sweeps_bpm[ns].pos.y[sector_idx_nxt]
+                pos = swp.bpm.pos
+                offset_x_sect = pos.x[sector_idx]
+                offset_y_sect = pos.y[sector_idx]
+                offset_x_next = pos.x[sector_idx_nxt]
+                offset_y_next = pos.y[sector_idx_nxt]
                 offsetfound = True
                 break
 
@@ -874,14 +878,14 @@ class BPMProcessor:
         # Calculate tangents for all angles.
         self.tangents = dict()
         bdist = self.prm_bml.bpmdist
-        for ns in self.sweeps_bpm:
-            agx = self.meta[ns].get('Angle x')
-            agy = self.meta[ns].get('Angle y')
-
-            orbx     = self.sweeps_bpm[ns].pos.x[sector_idx]
-            orby     = self.sweeps_bpm[ns].pos.y[sector_idx]
-            orbx_nxt = self.sweeps_bpm[ns].pos.x[sector_idx_nxt]
-            orby_nxt = self.sweeps_bpm[ns].pos.y[sector_idx_nxt]
+        for _, swp in self.sweeps.items():
+            agx      = swp.meta['Angle x']
+            agy      = swp.meta['Angle y']
+            pos      = swp.bpm.pos
+            orbx     = pos.x[sector_idx]
+            orby     = pos.y[sector_idx]
+            orbx_nxt = pos.x[sector_idx_nxt]
+            orby_nxt = pos.y[sector_idx_nxt]
             tx = ((orbx_nxt - offset_x_next) -
                   (orbx - offset_x_sect)) / bdist
             ty = ((orby_nxt - offset_y_next) -
@@ -905,8 +909,8 @@ class BPMProcessor:
             """Search offset in given direction."""
             # Get nominal angle value.
             angle = np.array([
-                self.meta[ns].get(f'Angle {direction}')
-                for ns, swp in self.sweeps_bpm.items()
+                swp.meta.get(f'Angle {direction}')
+                for _, swp in self.sweeps.items()
                 ])
 
             ang_min = np.min(angle)
@@ -931,22 +935,22 @@ class BPMProcessor:
             return (offset_sect, offset_next)
 
         orbx     = np.array([
-            swp.pos.x[sector_idx]
-            for ns, swp in self.sweeps_bpm.items()
+            swp.bpm.pos.x[sector_idx]
+            for _, swp in self.sweeps.items()
             ])
         orbx_nxt = np.array([
-            swp.pos.x[sector_idx_nxt]
-            for ns, swp in self.sweeps_bpm.items()
+            swp.bpm.pos.x[sector_idx_nxt]
+            for _, swp in self.sweeps.items()
             ])
         (offset_x, offset_x_nxt) = _offset_from_direction('x', orbx, orbx_nxt)
 
         orby     = np.array([
-            swp.pos.y[sector_idx]
-            for ns, swp in self.sweeps_bpm.items()
+            swp.bpm.pos.y[sector_idx]
+            for _, swp in self.sweeps.items()
             ])
         orby_nxt = np.array([
-            swp.pos.y[sector_idx_nxt]
-            for ns, swp in self.sweeps_bpm.items()
+            swp.bpm.pos.y[sector_idx_nxt]
+            for _, swp in self.sweeps.items()
             ])
         (offset_y, offset_y_nxt) = _offset_from_direction('y', orby, orby_nxt)
 
@@ -982,14 +986,15 @@ def calculate_grid_stats(
         print("\n WARNING: no valid BPM points found for RMS estimation.")
         rms_dict = {
             key: np.nan for key in [
-            'min_h', 'max_h', 'min_v', 'max_v',
+            'min_h', 'max_h',
+            'min_v', 'max_v',
             'mean_h', 'mean_v', 'mean_tot',
             ]}
         shape = nom_x.shape
         rms_dict.update({
-            'h'   : np.full(shape, np.nan),
-            'v'   : np.full(shape, np.nan),
-            'tot' : np.full(shape, np.nan),
+            'diff_h'   : np.full(shape, np.nan),
+            'diff_v'   : np.full(shape, np.nan),
+            'diff_tot' : np.full(shape, np.nan),
         })
         return DStr.RMSStatistics(**rms_dict)
 
@@ -1020,9 +1025,9 @@ def calculate_grid_stats(
                 " in total). Skipping ROI analysis.")
 
     rms = {
-        'h'        : rms_h,
-        'v'        : rms_v,
-        'tot'      : rms_tot,
+        'diff_h'   : rms_h,
+        'diff_v'   : rms_v,
+        'diff_tot' : rms_tot,
         'min_h'    : rms_min_h,
         'max_h'    : rms_max_h,
         'min_v'    : rms_min_v,
