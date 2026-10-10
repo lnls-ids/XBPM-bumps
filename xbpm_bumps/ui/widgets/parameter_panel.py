@@ -194,6 +194,16 @@ class ParameterPanel(QWidget):
         self.slice_by_roi_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.slice_by_roi_check)
 
+        # 7. Blade map absolute scale
+        self.bmap_global_scale_check = QCheckBox(
+            "Blade map absolute scale"
+            )
+        self.bmap_global_scale_check.setChecked(False)
+        self.bmap_global_scale_check.toggled.connect(
+            self.parametersChanged.emit
+            )
+        layout.addWidget(self.bmap_global_scale_check)
+
         # Button row for "All" option
         layout.addSpacing(10)
         button_layout = QHBoxLayout()
@@ -215,6 +225,7 @@ class ParameterPanel(QWidget):
                 self.position_center_check,
                 # self.xbpm_raw_check,
                 self.xbpm_calc_check,
+                self.bmap_global_scale_check,
             )
         checked = not all(box.isChecked() for box in boxes)
 
@@ -270,6 +281,9 @@ class ParameterPanel(QWidget):
             'scalepolydeg'          : self.scalepolydeg.value(),
             'usebpmref'             : self.bpm_ref_check.isChecked(),
             'slice_by_roi'          : self.slice_by_roi_check.isChecked(),
+            'bmap_global_scale'   : (
+                self.bmap_global_scale_check.isChecked()
+                ),
         }
 
         # Define variables in parameters dataclass.

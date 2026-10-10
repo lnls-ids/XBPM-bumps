@@ -94,6 +94,7 @@ class XBPMMainWindow(QMainWindow):
             self.pos_nom,
             analysis,
             self.beamline_prm,
+            self.runtime_prm.bmap_global_scale,
             )
         for key, fig in figures.items():
             self._embed_figure(self.canvases[key], fig)
@@ -394,6 +395,7 @@ class XBPMMainWindow(QMainWindow):
         rt_prm.show_centralsweep     = params["show_centralsweep"]
         rt_prm.show_xbpmpositions    = params["show_xbpmpositions"]
         rt_prm.slice_by_roi          = params["slice_by_roi"]
+        rt_prm.bmap_global_scale     = params["bmap_global_scale"]
         # rt_prm.show_bladecenter      = params["show_bladecenter"]
         # rt_prm.show_xbpmpositionsraw = params["show_xbpmpositionsraw"]
 

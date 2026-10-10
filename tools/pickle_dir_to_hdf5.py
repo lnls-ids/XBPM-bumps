@@ -237,15 +237,16 @@ def extract_and_average_blade_data(
 
 
 def parse_rawdata(rawdata: list, beamline: str) -> list:
-    """Parse rawdata to extract beamline-specific data.
+    """Parse rawdata to extract beamline-specific data for each bump.
 
     Args:
         rawdata: List of (meta, grid, bpm_dict) tuples for the selected
-            beamline.
+            beamline, corresponding to each bump.
 
     Returns:
-        blade_data: List of (meta, grid, bpm_dict) tuples for the selected 
-            beamline.
+        blade_data: List of (meta, grid, bpm_dict) tuples for the selected
+            beamline, corresponding to each bump (same as rawdata but only
+            blade info).
     """
     # Electronics PV.
     pv_meter = rawdata[0][0][beamline].get('prefix', None)
@@ -257,7 +258,7 @@ def parse_rawdata(rawdata: list, beamline: str) -> list:
     avgblades  = {}
     rawmeta    = {}
 
-    # Run through each sweep record.
+    # Run through each bump record.
     for ii, record in enumerate(rawdata):
         # Define index for experience numbering.
         jj = ii + 1
@@ -306,17 +307,18 @@ def parse_rawdata(rawdata: list, beamline: str) -> list:
         # Create metadata dictionary.
         # Description.
         description = (
-            f"Raw data for sweep {jj:04d} from XBPM-bumps experiments."
+            f"Raw data for bump {jj:04d} from XBPM-bumps experiments."
             )
         rawmeta[jj] = {
+            'Bump #'          : jj,
             'Description'     : description,
             'Timestamp'       : timestamp,
             'PV meter'        : pv_meter,
             'Angle x'         : angle_x,
             'Angle y'         : angle_y,
             'Angle unit'      : 'mrad',
-            'Bump pos x'      : pos_x,
-            'Bump pos y'      : pos_y,
+            'Disp pos x'      : pos_x,
+            'Disp pos y'      : pos_y,
             'SR current'      : current,
             'SR current unit' : 'mA',
             }
@@ -378,7 +380,7 @@ def export_rawdata_to_hdf5(
             lenmeta = len(metadata)
     
             mastermeta = {
-                "# sweeps"         : lenmeta,
+                "# Bumps"          : lenmeta,
                 "Beamline"         : beamline,
                 "Description"      : descr,
                 "HDF5 updated on"  : (
@@ -388,11 +390,11 @@ def export_rawdata_to_hdf5(
                 }
             mastergrp.attrs.update(mastermeta)
 
-            # Set metadata attributes for the raw data group.
+            # Set metadata attributes for the raw data group (per bump).
             rawgrp   = mastergrp.create_group("raw_data")
             descr    = (
                 f"Raw data for {beamline} beamline from XBPM"
-                "bumping experiments."
+                " bumping experiments."
                 )
             ts_first = metadata[1].get('Timestamp', "N/A")
             ts_last  = metadata[lenmeta - 1].get('Timestamp', "N/A")
@@ -401,7 +403,7 @@ def export_rawdata_to_hdf5(
                 datetime.strptime(ts_first, "%Y-%m-%d %H:%M:%S")
             )
             rawmeta  = {
-                "# sweeps"         : lenmeta,
+                "# Bumps"          : lenmeta,
                 "Beamline"         : beamline,
                 "Description"      : descr,
                 "Experience start" : ts_first,
@@ -413,25 +415,25 @@ def export_rawdata_to_hdf5(
             # Write raw data.
             avg_sr_current = 0.
             for ii in metadata.keys():
-                # Create a subgroup for each sweep and write its attributes.
-                grp_sweep = rawgrp.create_group(f"sweep_{ii:04d}")
-                grp_sweep.attrs.update(metadata[ii])
+                # Create a subgroup for each bump and write its attributes.
+                grp_bump = rawgrp.create_group(f"bump_{ii:04d}")
+                grp_bump.attrs.update(metadata[ii])
 
                 # Subgroup for BPM data.
                 datasetname = "bpm_data"
-                dset = _write_group_data(datasetname, grp_sweep, bpmdata[ii])
+                dset = _write_group_data(datasetname, grp_bump, bpmdata[ii])
                 dset.attrs['Description'] =  (
-                    f"All BPM registered positions for the sweep {ii:04d}."
+                    f"All BPM registered positions for the bump {ii:04d}."
                     )
 
                 # Subgroup for raw blade data.
                 datasetname = "blade_data"
-                dset = _write_group_data(datasetname, grp_sweep, bladedata[ii])
+                dset = _write_group_data(datasetname, grp_bump, bladedata[ii])
                 dset.attrs['Description'] = (
-                    f"Raw blade measurements for the sweep {ii:04d}."
+                    f"Raw blade measurements for the bump {ii:04d}."
                     )
 
-                avg_sr_current += metadata[ii].get('SR current [mA]', 0.)
+                avg_sr_current += metadata[ii].get('SR current', 0.)
             avg_sr_current /= lenmeta
 
             # Write averaged data.
@@ -439,7 +441,7 @@ def export_rawdata_to_hdf5(
             
             # Data must be put into a table structure.
             # Extract column names from the first entry of avgdata,
-            # and sort rows by sweep index.
+            # and sort rows by bump index.
             columns     = list(next(iter(avgblades.values())).keys()) 
             rows_sorted = [avgblades[k] for k in sorted(avgblades)]
 
@@ -460,14 +462,14 @@ def export_rawdata_to_hdf5(
 
             # Select some metadata attributes to define the averaged data.
             avg_meta = {
-                'PV meter'             : metadata[1]['PV meter'],
-                'Avg. SR current [mA]' : avg_sr_current,
+                'PV meter'        : metadata[1]['PV meter'],
+                'Avg. SR current' : avg_sr_current,
                 }
             avg_meta.update({k: v for k, v in metadata[1].items()
                              if k.startswith('gap')})
             dset.attrs.update(avg_meta)
             dset.attrs['Description'] = (
-                "Averaged blade measurements for each sweep sampling "
+                "Averaged blade measurements for each bump sampling "
                 f"from {beamline}, with standard deviations."
                 )
 

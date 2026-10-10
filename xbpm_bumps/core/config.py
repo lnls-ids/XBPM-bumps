@@ -29,6 +29,7 @@ class Config:
         "CAT"  : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         "CNB"  : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         "MNC1" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+        # "MNC1" : {"TO": 'D', "TI": 'C', "BI": 'B', "BO": 'A'},
         "MNC2" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         "MGN1" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
         "MGN2" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
@@ -94,16 +95,16 @@ class Config:
             " from {beamline}, with standard deviations."
             ),
 
-        "Sweeps": (
-            "Raw data for sweep {n} from XBPM-bumps experiments."
+        "Bumps": (
+            "Raw data for bump # {bumpnum} from XBPM-bumps experiments."
         ),
 
         "Blade data" : (
-            "Raw blade measurements for the sweep {n}."
+            "Raw blade measurements for the bump # {bumpnum}."
             ),
 
         "BPM data" : (
-            "All BPM registered positions for the sweep {n}."
+            "All BPM registered positions for the bump # {bumpnum}."
             ),
 
         "RMS statistics": (
@@ -183,14 +184,16 @@ class Config:
     def get_description(cls,
                         group      : str,
                         beamline   : str = "",
-                        sweepnum   : int = None,
+                        bumpnum    : int = None,
                         roi_or_all : str = "",
                         ) -> str:
         """Get the description for a given group."""
-        template = cls.GROUP_DESCRIPTION.get(group, "N/A")
+        template = cls.GROUP_DESCRIPTION.get(group, None)
+        if template is None:
+            return "N/A"
         return template.format(
             beamline   = beamline,
-            sweepnum   = sweepnum,
+            bumpnum    = bumpnum,
             roi_or_all = roi_or_all
         )
 

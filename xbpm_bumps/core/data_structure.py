@@ -43,6 +43,7 @@ class GenPrm:
     show_centralsweep     : bool = False
     show_xbpmpositions    : bool = False
     slice_by_roi          : bool = False
+    bmap_global_scale     : bool = False
     # show_bladecenter      : bool = False
     # show_xbpmpositionsraw : bool = False
 
@@ -146,7 +147,7 @@ class BeamlinePrm:
 
     beamline     : Beamline name
     description  : Description of the beamline.
-    sweeps       : Number of sweeps.
+    nbumps       : Number of bumps.
     bpmdist      : Distance between adjacent BPMs.
     xbpmdist     : Source-XBPM distance
     skip         : Number of points to skip
@@ -156,7 +157,7 @@ class BeamlinePrm:
     """
     beamline     : str   | None = None
     description  : str   | None = None
-    sweeps       : int   = 1
+    nbumps       : int   = 1
     bpmdist      : float | None = None
     xbpmdist     : float | None = None
     skip         : int   = 0
@@ -178,8 +179,8 @@ class BeamlinePrm:
         try:
             attrs = {key.lower(): val for key, val in bln_grp.attrs.items()}
 
-            # Rewrite '# sweeps' to 'sweeps'.
-            attrs["sweeps"] = attrs.pop("# sweeps", 1)
+            # Rewrite '# bumps' to 'nbumps'.
+            attrs["nbumps"] = attrs.pop("# bumps", attrs.get("# sweeps", 1))
 
             beamline = attrs.get("beamline", None)
             bl_short = beamline[:3]
@@ -197,7 +198,7 @@ class BeamlinePrm:
                 attrs["grid_shape"] = None
 
             # Initialize ROI data.
-            rs = int(np.sqrt(attrs["sweeps"]))
+            rs = int(np.sqrt(attrs["nbumps"]))
             attrs["roislice"] = ROISlice.update(
                 arrayshape=(rs, rs),
                 roisize=[ROI_SIZE_V, ROI_SIZE_H]
@@ -642,15 +643,17 @@ class BPMRawData:
 
     @classmethod
     def to_hdf5(cls,
-                bpm_grp: h5py.Group,
-                bpm_raw_data: "BPMRawData",
-                beamline: str = ""
+                bpm_grp      : h5py.Group,
+                bpm_raw_data : "BPMRawData",
+                beamline     : str = "",
+                bumpnum      : int = None,
                 ) -> int:
         """Write a BPMRawData instance to an HDF5 group."""
         try:
             bpm_grp.attrs["Description"] = Config.get_description(
                 "BPM data",
-                beamline = beamline
+                beamline = beamline,
+                bumpnum  = bumpnum
                 )   
             Positions.to_hdf5(
                 bpm_grp,
@@ -735,11 +738,11 @@ class BladeRawData:
 
 
 @dataclass
-class SweepData:
-    """Container for sweep data and associated metadata.
+class BumpRawData:
+    """Container for bump data and associated metadata.
     
-    prm   : parameters of the sweep
-    bpm   : BPM registered orbit at the time of the sweep
+    prm   : parameters of the bump
+    bpm   : BPM registered orbit at the time of the bump
     blades: BladeRawData
     """
     meta   : dict
@@ -748,22 +751,22 @@ class SweepData:
 
     @classmethod
     def from_hdf5(cls,
-                  swp_grp  : h5py.Group,
+                  bump_grp  : h5py.Group,
                   beamline : str,
-                  sweepnum : int,
-                  ) -> "SweepData":
-        """Create a SweepData instance from an HDF5 group."""
+                  bumpnum  : int,
+                  ) -> "BumpRawData":
+        """Create a BumpRawData instance from an HDF5 group."""
         try:
             # Sweep metadata.
-            meta = dict(swp_grp.attrs.items())
-            meta["Sweep #"] = sweepnum
+            meta = dict(bump_grp.attrs.items())
+            meta["Bump #"] = bumpnum
 
             # Ensure angle keys are present. Workaound for double standars.
             ag = {'x': None, 'y': None}
             ag = {
                 d : val
                 for d in ['x', 'y']
-                for key, val in swp_grp.attrs.items()
+                for key, val in bump_grp.attrs.items()
                 if key.startswith(f'Angle {d}') or
                 key.startswith(f'ag{d}')
             }
@@ -773,12 +776,12 @@ class SweepData:
             })
 
             # BPM dataset.
-            bpm = BPMRawData.from_hdf5(swp_grp['bpm_data'])
+            bpm = BPMRawData.from_hdf5(bump_grp['bpm_data'])
 
             # Read raw data.
-            bld = BladeRawData.from_hdf5(swp_grp["blade_data"], beamline)
+            bld = BladeRawData.from_hdf5(bump_grp["blade_data"], beamline)
 
-            # Instantiate SweepData with parameters, BPM data, and raw data.
+            # Instantiate BumpRawData with parameters, BPM data, and raw data.
             return cls(
                 meta   = meta,
                 bpm    = bpm,
@@ -786,23 +789,24 @@ class SweepData:
                 )
         except Exception as err:
             raise ValueError(
-                "### ERROR while reading 'Sweep Data' from HDF5 file:\n"
-                f" {err}"
+                "### ERROR while reading 'BumpRawData' from HDF5 file:\n"
+                f"  >>> {err}"
             )
 
     @classmethod
     def to_hdf5(cls,
-                swp_grp  : h5py.Group,
-                sweep    : "SweepData",
-                beamline : str = ""
+                bump_grp  : h5py.Group,
+                bump      : "BumpRawData",
+                beamline  : str = "",
+                bumpnum   : int = None,
                 ) -> int:
-        """Write a SweepData instance to an HDF5 group."""
+        """Write a BumpRawData instance to an HDF5 group."""
         try:
             # Write sweep metadata to HDF5 group attributes.
-            swp_grp.attrs["Description"] = Config.get_description(
-                "Sweeps",
+            bump_grp.attrs["Description"] = Config.get_description(
+                "Bumps",
                 beamline = beamline,
-                sweepnum = sweep.meta.get("sweep_num")
+                bumpnum  = bump.meta.get("Bump #")
                 )
             swp_attrs = ['Angle x', 'Angle y',
                          'Bump pos x', 'Bump pos y',
@@ -811,26 +815,28 @@ class SweepData:
                          'gap/ph.'
                          ]
             for attr in swp_attrs:
-                if attr in sweep.meta:
-                    swp_grp.attrs[attr] = sweep.meta[attr]
+                if attr in bump.meta:
+                    bump_grp.attrs[attr] = bump.meta[attr]
+            if bumpnum is not None:
+                bump_grp.attrs["Bump #"] = bumpnum
 
             # BPM data.
             BPMRawData.to_hdf5(
-                swp_grp["bpm_data"],
-                sweep.bpm,
+                bump_grp["bpm_data"],
+                bump.bpm,
                 beamline = beamline
                 )
 
             # Blade raw data.
             BladeRawData.to_hdf5(
-                swp_grp["blade_data"],
-                sweep.blades,
+                bump_grp["blade_data"],
+                bump.blades,
                 beamline = beamline
                 )
         except Exception as err:
             print(
-                "### ERROR while writing 'SweepData' instance to"
-                f" {swp_grp.name} (HDF5 group):"
+                "### ERROR while writing 'BumpRawData' instance to"
+                f" {bump_grp.name} (HDF5 group):"
                 f"\n {err}"
             )
             return 1
@@ -842,13 +848,13 @@ class SweepData:
 class BeamlineRawData:
     """Container for all sweep data and associated metadata for a beamline.
     
-    metadata   : Metadata info for raw_data group. 
-    sweeps     : dict of SweepData instances for each sweep (int)
-    blade_avg  : BladeAvgData instance
+    metadata  : Metadata info for raw_data group. 
+    bumps     : dict of BumppRawData instances for each bump (int)
+    blade_avg : BladeAvgData instance
     """
-    meta       : dict
-    sweeps     : dict[int, SweepData]    = field(default_factory=dict)
-    blade_avg  : BladeAvgData | None     = None
+    meta      : dict
+    bumps     : dict[int, BumpRawData] = field(default_factory=dict)
+    blade_avg : BladeAvgData | None     = None
 
     @classmethod
     def from_hdf5(cls,
@@ -865,20 +871,20 @@ class BeamlineRawData:
             )
 
         # Extract sweep data.
-        sweeps = {}
+        bumps = {}
         for key, data in raw_grp.items():
-            if key.startswith('sweep_'):
+            if key.startswith('bump_'):
                 # Extract sweep number
                 num          = int(key.split('_')[1])
-                sweeps[num]  = SweepData.from_hdf5(
-                    swp_grp  = data,
+                bumps[num]   = BumpRawData.from_hdf5(
+                    bump_grp = data,
                     beamline = beamline,
-                    sweepnum = num
+                    bumpnum  = num
                     )
 
         return cls(
             meta      = meta,
-            sweeps    = sweeps,
+            bumps     = bumps,
             blade_avg = blade_avg
         )
 
@@ -887,14 +893,14 @@ class BeamlineRawData:
                 raw_grp  : h5py.Group,
                 bldata   : "BeamlineRawData",
                 beamline : str,
-                sweepnum : int,
+                nbumps   : int,
                 ) -> int:
         """Write beamline data to an HDF5 group."""
         try:
             # Group attributes.
             descr = Config.get_description("Raw data", beamline)
             meta = {
-                "# sweeps"         : sweepnum,
+                "# bumps"          : nbumps,
                 "Beamline"         : beamline,
                 "Description"      : descr,
                 "HDF5 updated on"  : (
@@ -910,14 +916,13 @@ class BeamlineRawData:
                 BladeAvgData.to_hdf5(avg_grp, bldata.blade_avg)
 
             # Write sweeps data.
-            for num, swp in bldata.sweeps.items():
-                swp_grp = raw_grp.require_group(f"sweep_{num}")
-                SweepData.to_hdf5(
-                    swp_grp,
-                    swp.bpm,
-                    swp.blades,
-                    beamline=beamline,
-                    sweepnum=num
+            for num, bump in bldata.bumps.items():
+                bump_grp = raw_grp.require_group(f"bump_{num}")
+                BumpRawData.to_hdf5(
+                    bump_grp,
+                    bump.bpm,
+                    beamline = beamline,
+                    bumpnum  = num,
                     )
 
         except Exception as e:
@@ -1330,14 +1335,14 @@ class CentralSweepLine:
 
         # Assemble the SweepLine instance.
         return cls(
-            blades=Blades.from_hdf5(sln_grp),
-            pos_index=sln_grp[f"{ind}_index"][:],
-            pos_fixed=sln_grp[f"{fix}_fix"][:],
-            pos_calc=sln_grp[f"{fix}_calc"][:],
-            pos_fit=sln_grp[f"{fix}_fit"][:],
-            pos_fit_err=sln_grp[f"s_{fix}_fit"][:],
-            coeffs=sln_grp.attrs.get(f"{fix}_fit_coeffs", None),
-            sigmas=sln_grp.attrs.get(f"{fix}_fit_sigmas", None)
+            blades      = Blades.from_hdf5(sln_grp),
+            pos_index   = sln_grp[f"{ind}_index"][:],
+            pos_fixed   = sln_grp[f"{fix}_fix"][:],
+            pos_calc    = sln_grp[f"{fix}_calc"][:],
+            pos_fit     = sln_grp[f"{fix}_fit"][:],
+            pos_fit_err = sln_grp[f"s_{fix}_fit"][:],
+            coeffs      = sln_grp.attrs.get(f"{fix}_fit_coeffs", None),
+            sigmas      = sln_grp.attrs.get(f"{fix}_fit_sigmas", None)
         )
 
 
@@ -1562,7 +1567,7 @@ class DataAnalysis:
     blademap     : blade map of positions
     bladecenter  : h and v blade center analyses
     positions    : Analyzed positions (raw and transformed)   
-    centralsweep : Central sweep blade currents with errors
+    centralsweep : Central sweep positions with errors
     scales       : Scaling factors
     supmat       : Suppression matrices
     """
@@ -1618,7 +1623,7 @@ class DataAnalysis:
             centralsweeps = centralsweeps,
             scales        = scales,
             supmat        = supmat,
-            gl2r         = gl2r,
+            gl2r          = gl2r,
         )
 
     @classmethod
@@ -1650,7 +1655,9 @@ class DataAnalysis:
 class BeamlineData:
     """Encapsulates all data for a single beamline extracted from HDF5.
     
-    A structure is created to contain the raw data measured (BeamlineRawData) and, if present, previous analysis results (DataAnalysis) stored in the HDF5 file. Metadata is stored in a parameter dictionary.
+    A structure is created to contain the raw data measured (BeamlineRawData)
+    and, if present, previous analysis results (DataAnalysis) stored in the
+    HDF5 file. Metadata is stored in a parameter dictionary.
     """
     prm      : BeamlinePrm
     raw_data : BeamlineRawData
@@ -1663,7 +1670,7 @@ class BeamlineData:
         kwargs = {}
 
         # Beamline parameters.
-        kwargs["prm"] =  BeamlinePrm.from_hdf5(bd_grp)
+        kwargs["prm"] = BeamlinePrm.from_hdf5(bd_grp)
         beamline      = kwargs["prm"].beamline
 
         # Raw data.

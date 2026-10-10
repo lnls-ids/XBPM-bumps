@@ -125,13 +125,13 @@ class XBPMProcessor:
 
         # Pairwise results instance.
         pairwise_res = DStr.CalculatedPositions(
-            roi=deepcopy(self.roi),
-            pos_std=pw_pos_std,
-            scale_std=pw_scale_std,
-            stat_std=rms_pw_std,
-            pos_trn=pw_pos_sup,
-            scale_trn=pw_scale_sup,
-            stat_trn=rms_pw_sup
+            roi       = deepcopy(self.roi),
+            pos_std   = pw_pos_std,
+            scale_std = pw_scale_std,
+            stat_std  = rms_pw_std,
+            pos_trn   = pw_pos_sup,
+            scale_trn = pw_scale_sup,
+            stat_trn  = rms_pw_sup
         )
 
         # Compute suppression matrix at the ROI.
@@ -750,7 +750,7 @@ class BPMProcessor:
                  ) -> None:
         """Store raw BPM/XBPM dataset and parameters for later processing."""
         self.raw_data    = raw_data
-        self.sweeps      = raw_data.sweeps
+        self.bumps       = raw_data.bumps
         self.meta        = raw_data.meta
         self.prm_bml     = prm_bml
         self.roi         = prm_bml.roislice
@@ -785,14 +785,14 @@ class BPMProcessor:
 
         # Build structures for BPM analysis results.
         pos_meas = DStr.Positions(
-            x=self.meas_x,
-            y=self.meas_y
+            x = self.meas_x,
+            y = self.meas_y
             )
 
-        bpmanalysis = DStr.BPMAnalysis(
-            pos_meas=pos_meas,
-            prm=self.prm_bml,
-            rms_diff=self.rms_grid_stats,
+        bpmanalysis  = DStr.BPMAnalysis(
+            pos_meas = pos_meas,
+            prm      = self.prm_bml,
+            rms_diff = self.rms_grid_stats,
         )
 
         return bpmanalysis
@@ -849,7 +849,7 @@ class BPMProcessor:
         offsetfound = False
 
         # Select offsets from BPMs with zero angles (reference orbit).
-        for _, swp in self.sweeps.items():
+        for _, swp in self.bumps.items():
             agx = swp.meta['Angle x']
             agy = swp.meta['Angle y']
             pos = swp.bpm.pos
@@ -878,7 +878,7 @@ class BPMProcessor:
         # Calculate tangents for all angles.
         self.tangents = dict()
         bdist = self.prm_bml.bpmdist
-        for _, swp in self.sweeps.items():
+        for _, swp in self.bumps.items():
             agx      = swp.meta['Angle x']
             agy      = swp.meta['Angle y']
             pos      = swp.bpm.pos
@@ -910,7 +910,7 @@ class BPMProcessor:
             # Get nominal angle value.
             angle = np.array([
                 swp.meta.get(f'Angle {direction}')
-                for _, swp in self.sweeps.items()
+                for _, swp in self.bumps.items()
                 ])
 
             ang_min = np.min(angle)
@@ -936,21 +936,21 @@ class BPMProcessor:
 
         orbx     = np.array([
             swp.bpm.pos.x[sector_idx]
-            for _, swp in self.sweeps.items()
+            for _, swp in self.bumps.items()
             ])
         orbx_nxt = np.array([
             swp.bpm.pos.x[sector_idx_nxt]
-            for _, swp in self.sweeps.items()
+            for _, swp in self.bumps.items()
             ])
         (offset_x, offset_x_nxt) = _offset_from_direction('x', orbx, orbx_nxt)
 
         orby     = np.array([
             swp.bpm.pos.y[sector_idx]
-            for _, swp in self.sweeps.items()
+            for _, swp in self.bumps.items()
             ])
         orby_nxt = np.array([
             swp.bpm.pos.y[sector_idx_nxt]
-            for _, swp in self.sweeps.items()
+            for _, swp in self.bumps.items()
             ])
         (offset_y, offset_y_nxt) = _offset_from_direction('y', orby, orby_nxt)
 
@@ -958,10 +958,10 @@ class BPMProcessor:
 
 
 def calculate_grid_stats(
-        nom_x   : np.ndarray,
-        nom_y   : np.ndarray,
-        meas_x  : np.ndarray,
-        meas_y  : np.ndarray,
+        nom_x  : np.ndarray,
+        nom_y  : np.ndarray,
+        meas_x : np.ndarray,
+        meas_y : np.ndarray,
         ) -> DStr.RMSStatistics:
     """Calculate RMS statistics from squared position differences in ROI.
 
@@ -979,7 +979,7 @@ def calculate_grid_stats(
     diff_x2 = (meas_x - nom_x) ** 2
     diff_y2 = (meas_y - nom_y) ** 2
 
-    # Check for valid points, since the sweeping might be interrupted.
+    # Check for valid points, since the scanning might be interrupted.
     valid  = np.isfinite(diff_x2) & np.isfinite(diff_y2)
     nsites = int(np.count_nonzero(valid))
     if nsites == 0:
@@ -1020,7 +1020,7 @@ def calculate_grid_stats(
 
     nsites_total = int(diff_x2.size)
     if nsites < nsites_total:
-        print("\n WARNING: sweeping looks incomplete, no ROI was defined"
+        print("\n WARNING: scanning looks incomplete, no ROI was defined"
             f" ({nsites} valid sites, out of {nsites_total}"
                 " in total). Skipping ROI analysis.")
 

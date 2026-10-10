@@ -13,6 +13,7 @@ from typing import Optional
 from .constants import FIGDPI
 from .config import Config
 from .data_structure import (
+    GenPrm,
     BPMAnalysis,
     CentralSweeps,
     Positions,
@@ -52,9 +53,10 @@ logger = logging.getLogger(__name__)
 
 
 def render_data_analysis(
-        pos_nom  : Positions,
-        analysis : DataAnalysis,
-        prm      : BeamlinePrm,
+        pos_nom    : Positions,
+        analysis   : DataAnalysis,
+        prm        : BeamlinePrm,
+        bmap_scale : bool,
         ) -> dict[str, Figure]:
     """Return one Figure per tab key for every populated analysis field."""
     figures: dict[str, Figure] = {}
@@ -71,8 +73,15 @@ def render_data_analysis(
         figures["blade_map"] = (
             BladeMapVisualizer(
                 analysis.blademap,
-                ).plot_blade_map()
+                ).plot_blade_map(bmap_scale)
             )
+
+    if analysis.bladecenter is not None:
+        figures["blade_central_sweeps"] = (
+            CentralSweepVisualizer.plot_central_sweep_blades(
+                bc_analysis = analysis.bladecenter,
+                beamline = prm.beamline
+                ))
 
     if analysis.centralsweeps is not None:
         cs = analysis.centralsweeps
@@ -83,13 +92,6 @@ def render_data_analysis(
                     beamline = prm.beamline,
                     )
                 )
-
-    if analysis.bladecenter is not None:
-        figures["blade_central_sweeps"] = (
-            CentralSweepVisualizer.plot_central_sweep_blades(
-                bc_analysis = analysis.bladecenter,
-                beamline = prm.beamline
-                ))
 
     # Position visualizations. For each tab, select the appropriate sets:
     # ROI slice, nominal positions, calculated positions (raw or transformed),
@@ -409,7 +411,9 @@ class BladeMapVisualizer:
         """
         self.bm_ana = bmap
 
-    def plot_blade_map(self) -> "matplotlib.figure.Figure":
+    def plot_blade_map(self,
+                       bmap_global_scale : bool = False,
+                       ) -> "matplotlib.figure.Figure":
         """Display blade intensity maps for all four blades.
 
         Creates a 2x2 subplot figure showing heatmaps for:
@@ -431,7 +435,39 @@ class BladeMapVisualizer:
             self.bm_ana.blades.bo
         )
 
-        fig, rx = plt.subplots(2, 2, figsize=(10, 6))
+        # --- Unify the color scale across the four blades so the colorbar
+        #     is a meaningful reference. ---
+
+        # DEBUG
+        print("\n ##### (plot blade map) \t"
+              f"  bmap_global_scale = {bmap_global_scale}")
+        # DEBUG
+
+        if bmap_global_scale:
+            vmin = min(np.nanmin(to), np.nanmin(ti),
+                       np.nanmin(bi), np.nanmin(bo))
+            vmax = max(np.nanmax(to), np.nanmax(ti),
+                       np.nanmax(bi), np.nanmax(bo))
+        else:
+            vmin = None
+            vmax = None
+
+        # fig, rx = plt.subplots(2, 2, figsize=(10, 6))
+
+        # --- 2x3 grid: 4 heatmaps on the left, one narrow colorbar column
+        #     on the right spanning both rows. ---
+        fig = plt.figure(figsize=(12, 6))
+        gs = fig.add_gridspec(
+            2, 3,
+            width_ratios=[1, 1, 0.08],
+            wspace=0.35,
+            hspace=0.35,
+        )
+        rx = [
+            [fig.add_subplot(gs[r, c]) for c in range(2)]
+            for r in range(2)
+        ]
+        cax = fig.add_subplot(gs[:, 2])   # span both rows
 
         # Calculate extent for proper axis labels
         if (to.ndim < 2 or to.shape[0] <= 1 or to.shape[1] <= 1):
@@ -451,12 +487,15 @@ class BladeMapVisualizer:
             ["BI", "BO"]
             ]
 
+        im = None
         for idy in range(2):
             for idx in range(2):
-                rx[idy][idx].imshow(
+                im = rx[idy][idx].imshow(
                     quad[idy][idx],
                     extent=extent,
-                    origin='lower'
+                    origin='lower',
+                    vmin=vmin,
+                    vmax=vmax
                     )
                 if extent is None:
                     rx[idy][idx].set_xlabel('')
@@ -466,8 +505,13 @@ class BladeMapVisualizer:
                 rx[idy][idx].set_ylabel(u"$y$ [$\\mu$rad]", fontsize=14)
                 rx[idy][idx].set_title(names[idy][idx])
 
-        fig.tight_layout(pad=0., w_pad=-17., h_pad=2.)
 
+        # Shared colorbar in the fifth (right-hand) axes.
+        fig.colorbar(im, cax=cax, label="Blade current")
+
+        # fig.tight_layout(pad=0., w_pad=-17., h_pad=2.)
+        fig.tight_layout()
+        
         return fig
 
 
@@ -500,11 +544,7 @@ class CentralSweepVisualizer:
             matplotlib.figure.Figure
         """
         # Scale for the beamline (source-XBPM distance).
-        fig, ax = plt.subplots(
-            nrows=1,
-            ncols=1,
-            figsize=(12, 5)
-            )
+        fig, ax = plt.subplots(figsize=(6, 6))
 
         # Discount offsets, normalize index range for graph and plot it.
         ch  = csweep.h
@@ -553,6 +593,7 @@ class CentralSweepVisualizer:
             )
         ax.set_xlim(extent[0], extent[1])
         ax.set_ylim(extent[2], extent[3])
+        ax.set_aspect('equal', adjustable='box')
         ax.grid(True)
         ax.legend()
 

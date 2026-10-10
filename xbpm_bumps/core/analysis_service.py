@@ -41,7 +41,7 @@ class AnalysisService:
             analysis.blademap = DStr.BladeMap(
                 prm    = beamlinedata.prm,
                 blades = beamlinedata.raw_data.blade_avg.blades,
-                pos    = beamlinedata.raw_data.blade_avg.pos_nom
+                pos    = beamlinedata.raw_data.blade_avg.pos_nom 
             )
 
         # Blades at center are necessary for the suppression matrix.

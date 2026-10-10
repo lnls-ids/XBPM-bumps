@@ -15,8 +15,8 @@ from xbpm_bumps.core.data_structure import (
 
 
 def _f(
-        value : float,
-        digits: int = 2
+        value  : float,
+        digits : int = 2
         ) -> str:
     """Format a float value with a given number of significant digits.
 
@@ -28,26 +28,24 @@ def _f(
         The formatted float as a string.
     """
     try:
-        return f"{float(value):6.{digits}f}"
+        return f"{float(value):7.{digits}f}"
     except (TypeError, ValueError):
         return str(value)
 
 
 def _err(
-        value: float,
-        err: float,
-        digits: int = 1,
+        err    : float,
+        digits : int = 1,
         ) -> str:
-    """Format a value with its associated error.
+    """Format an error value.
 
     Args:
-        value: The central value.
         err: The associated error.
 
     Returns:
-        A string representation in the form "value (err)".
+        A string representation of the error.
     """
-    return f"{_f(value)} ({float(err):.{digits}g})"
+    return f"({float(err):.{digits}g})"
 
 
 def format_analysis_info(
@@ -164,7 +162,7 @@ def _scales(
     }
     headline = "\n### Scales:\n\n"
     lines = [
-        f"  {name}  = {_err(value, error)}"
+        f"  {name}  = {_f(value)} {_err(error)}"
         for name, (value, error) in sclset.items()
         ]
     return headline + '\n'.join(lines)
@@ -213,16 +211,23 @@ def _sweeps(
         coeffs_h = sweeps.h.coeffs
         sigmas_h = sweeps.h.sigmas
         if coeffs_h is not None:
-            lines.append(f"kx : {_err(coeffs_h[0], sigmas_h[0])}\t")
-            lines.append(f"dx : {_err(coeffs_h[1], sigmas_h[1])}\n")
+            lines.append(
+                f"kx :  {_f(coeffs_h[0])}  ({_err(sigmas_h[0])})\t"
+                )
+            lines.append(
+                f"dx :  {_f(coeffs_h[1])}  ({_err(sigmas_h[1])})\n")
 
     if sweeps.v is not None:
         lines.append("  V sweep:\n \t")
         coeffs_v = sweeps.v.coeffs
         sigmas_v = sweeps.v.sigmas
         if coeffs_v is not None:
-            lines.append(f"ky : {_err(coeffs_v[0], sigmas_v[0])}\t")
-            lines.append(f"dy : {_err(coeffs_v[1], sigmas_v[1])}\n")
+            lines.append(
+                f"ky :  {_f(coeffs_v[0])}  ({_err(sigmas_v[0])})\t"
+                )
+            lines.append(
+                f"dy :  {_f(coeffs_v[1])}  ({_err(sigmas_v[1])})\n"
+                )
     return ''.join(lines)
 
 
@@ -238,15 +243,16 @@ def _blades(
     lines.append("\n### Blade Analysis ###\n")
     for direction, bl in blades:
         lines.append(f"  {direction.capitalize()} sweep:\n")
-        lines.append(f"  TO : k = {_err(bl.to.k, bl.to.sk)},\t"
-                     f"   delta = {_err(bl.to.d, bl.to.sd)}\n"
-                     f"  TI : k = {_err(bl.ti.k, bl.ti.sk)},\t"
-                     f"   delta = {_err(bl.ti.d, bl.ti.sd)}\n"
-                     f"  BI : k = {_err(bl.bi.k, bl.bi.sk)},\t"
-                     f"   delta = {_err(bl.bi.d, bl.bi.sd)}\n"
-                     f"  BO : k = {_err(bl.bo.k, bl.bo.sk)},\t"
-                     f"   delta = {_err(bl.bo.d, bl.bo.sd)}\n\n"
-                     )
+        lines.append(
+            f"  TO : k = {_f(bl.to.k):>15}  ({_err(bl.to.sk)}), "
+            f"   delta = {_f(bl.to.d):>15}  ({_err(bl.to.sd)})\n"
+            f"  TI : k = {_f(bl.ti.k):>15}  ({_err(bl.ti.sk)}), "
+            f"   delta = {_f(bl.ti.d):>15}  ({_err(bl.ti.sd)})\n"
+            f"  BI : k = {_f(bl.bi.k):>15}  ({_err(bl.bi.sk)}), "
+            f"   delta = {_f(bl.bi.d):>15}  ({_err(bl.bi.sd)})\n"
+            f"  BO : k = {_f(bl.bo.k):>15}  ({_err(bl.bo.sk)}), "
+            f"   delta = {_f(bl.bo.d):>15}  ({_err(bl.bo.sd)})\n\n"
+            )
     lines.append("###\n")
     return ''.join(lines)
 
@@ -297,7 +303,7 @@ def _matrix_print(
         row = []
         for jj in range(nn):
             row.append(
-                _err(mat[ii, jj], err[ii, jj])
+                f"{_f(mat[ii, jj])}  {_err(err[ii, jj])}"
                 if err is not None
                 else _f(mat[ii, jj])
                 )
