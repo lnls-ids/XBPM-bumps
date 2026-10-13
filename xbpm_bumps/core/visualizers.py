@@ -96,10 +96,10 @@ def render_data_analysis(
     # Position visualizations. For each tab, select the appropriate sets:
     # ROI slice, nominal positions, calculated positions (raw or transformed),
     # and RMS statistics at ROI.
-    pos = analysis.positions
+    pos = analysis.xpositions
     if pos is not None:
-        prw = analysis.positions.pairw
-        crs = analysis.positions.cross
+        prw = analysis.xpositions.pairw
+        crs = analysis.xpositions.cross
 
         tab_table = {
             "xbpm_pairwise_raw" : (

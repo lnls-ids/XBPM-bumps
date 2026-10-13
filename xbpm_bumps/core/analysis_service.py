@@ -52,6 +52,6 @@ class AnalysisService:
 
         # XBPM positions calculation.
         if runtime_prm.show_xbpmpositions:
-            analysis.positions = xprocessor.xbpm_position_calculation()
+            analysis.xpositions = xprocessor.xbpm_position_calculation()
 
         return analysis

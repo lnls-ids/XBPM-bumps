@@ -67,7 +67,7 @@ class XBPMProcessor:
     Position calculation tabs.
     """
 
-    def xbpm_position_calculation(self) -> DStr.AnalyzedPositions:
+    def xbpm_position_calculation(self) -> DStr.XBPMPositions:
         """Orchestrate position calculation for pairwise and cross-blade.
 
         Delegates to helpers for reduced complexity while maintaining
@@ -188,10 +188,17 @@ class XBPMProcessor:
             stat_trn  = rms_cr_lintr
         )
 
+        # Store all scales.
+        self.analysis.scales = DStr.AllScales(
+            pairw_std = pairwise_res.scale_std,
+            pairw_trn = pairwise_res.scale_trn,
+            cross_std = cross_res.scale_std,
+            cross_trn = cross_res.scale_trn
+        )
+
         # Compile and return results
-        return DStr.AnalyzedPositions(
+        return DStr.XBPMPositions(
             nom   = deepcopy(self.pos_ref),
-            bpm   = deepcopy(self.analysis.bpm),
             pairw = pairwise_res,
             cross = cross_res
             )
@@ -1008,10 +1015,12 @@ def calculate_grid_stats(
     rms_tot      = np.sqrt(diff_x2 + diff_y2)
 
     # RMS minimum and maximum values.
-    rms_max_h    = np.nanmax(rms_h)
     rms_min_h    = np.nanmin(rms_h)
-    rms_max_v    = np.nanmax(rms_v)
+    rms_max_h    = np.nanmax(rms_h)
     rms_min_v    = np.nanmin(rms_v)
+    rms_max_v    = np.nanmax(rms_v)
+    rms_min_tot  = np.nanmin(rms_tot)
+    rms_max_tot  = np.nanmax(rms_tot)
 
     # RMS global estimates.
     rms_mean_h   = np.sqrt(np.nanmean(diff_x2))
@@ -1029,12 +1038,14 @@ def calculate_grid_stats(
         'diff_v'   : rms_v,
         'diff_tot' : rms_tot,
         'min_h'    : rms_min_h,
+        'mean_h'   : rms_mean_h,
         'max_h'    : rms_max_h,
         'min_v'    : rms_min_v,
-        'max_v'    : rms_max_v,
-        'mean_h'   : rms_mean_h,
         'mean_v'   : rms_mean_v,
+        'max_v'    : rms_max_v,
+        'min_tot'  : rms_min_tot,
         'mean_tot' : rms_mean_tot,
+        'max_tot'  : rms_max_tot,
     }
     return DStr.RMSStatistics(**rms)
 

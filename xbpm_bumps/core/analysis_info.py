@@ -80,11 +80,11 @@ def format_analysis_info(
     }
 
     # Add position statistics to the tab information.
-    if analysis.positions is None:
+    if analysis.xpositions is None:
         return tab_info
 
     # Table for pairwise and cross position statistics.
-    anpos = analysis.positions
+    anpos = analysis.xpositions
     stat_table = {
         "xbpm_pairwise_raw" : (
         "Pairwise Standard Deviation, not transformed",
