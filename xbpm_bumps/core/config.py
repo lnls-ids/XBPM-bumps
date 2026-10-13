@@ -87,7 +87,7 @@ class Config:
         ),
 
         "Raw data": (
-            "Raw data for {beamline} beamline from XBPMbumping experiments."
+            "Raw data for {beamline} beamline from XBPM bumping experiments."
             ),
 
         "Blade averages": (
@@ -96,7 +96,7 @@ class Config:
             ),
 
         "Bumps": (
-            "Raw data for bump # {bumpnum} from XBPM-bumps experiments."
+            "Raw data for bump # {bumpnum} from XBPM bumping experiments."
         ),
 
         "Blade data" : (
@@ -114,6 +114,10 @@ class Config:
         "BPM Analysis" : (
             "Analysis of BPM positions for {beamline}."
             ),
+
+        "BladeMap": (
+            "Blade map for {beamline} beamline from XBPM bumping experiments."
+            ),    
     }
 
     # -----------------------------------------------------------------------
@@ -286,3 +290,39 @@ class Config:
         # No standard deviation for fixed matrix
         stddevmat = np.zeros_like(supmat)
         return supmat, stddevmat
+
+    @staticmethod
+    def _h5_group_name(group: str) -> str:
+        """Return the HDF5 group name for a given field."""
+        all_names ={}
+
+        all_names["BeamlineData"] = {
+            "prm"      : "Beamline parameters",
+            "raw_data" : "Raw data",
+            "analysis" : "Analysis",
+        }
+
+        all_names["DataAnalysis"] = {
+            "bpm"           : "bpm_analysis",
+            "blademap"      : "blade_map",
+            "bladecenter"   : "blade_center",
+            "xpositions"    : "xbpm_positions",
+            "centralsweeps" : "central_sweeps",
+            "scales"        : "scales",
+            "supmat"        : "suppression_matrices",
+            "gl2r"          : "gl2r",
+        }
+
+        all_names["AverageData"] = {
+            "blades"  : "Blade averages",
+            "prm"     : "Beamline parameters",
+            "pos_nom" : "Nominal positions",
+        }
+
+        all_names["BladeMap"] = {
+            "blades"  : "Blade values",
+            "prm"     : "Beamline parameters",
+            "pos_nom" : "Nominal positions",
+        }
+
+        return all_names.get(group, {})

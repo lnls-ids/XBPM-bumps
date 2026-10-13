@@ -473,7 +473,7 @@ class BladeMapVisualizer:
         if (to.ndim < 2 or to.shape[0] <= 1 or to.shape[1] <= 1):
             extent = None
         else:
-            x, y = self.bm_ana.pos.x, self.bm_ana.pos.y
+            x, y = self.bm_ana.pos_nom.x, self.bm_ana.pos_nom.y
             minvalx, maxvalx = np.min(x), np.max(x)
             minvaly, maxvaly = np.min(y), np.max(y)
             extent = (minvalx, maxvalx, minvaly, maxvaly)
