@@ -1158,7 +1158,7 @@ class BladeMap:
         self.pos_nom.to_hdf5(bld_grp.require_group('positions'))
 
         # Write blade current data.
-        self.blades.to_hdf5(bld_grp.require_group('blades'))
+        self.blades.to_hdf5(bld_grp)
 
 
 @dataclass
