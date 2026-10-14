@@ -48,3 +48,17 @@ class Exporter:
         ) -> None:
         export_hdf5(filepath, runtime_prm, beamlinedata, figures)
         return None
+
+    def write_figures(
+        fig_grp : "h5py.Group",
+        figures : dict[str, Figure]
+        ) -> None:
+        """Write figures to the /figures group in the HDF5 file.
+
+        Args:
+            fig_grp (h5py.Group): HDF5 group for figures.
+            figures (dict[str, Figure]): Dictionary of figures to write.
+        """
+        for key, fig in figures.items():
+            # Implement figure writing logic here
+            pass

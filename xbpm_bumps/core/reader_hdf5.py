@@ -31,22 +31,6 @@ def read_hdf5(filepath: str) -> tuple[DStr.GenPrm,
     return runtime_prm, beamlinedata
 
 
-def write_hdf5(
-        filepath: str,
-        beamlinedata: dict[str, DStr.BeamlineData]
-        ) -> None:
-    """Write beamline data to an HDF5 file.
-    
-    Args:
-        filepath (str): Path to the HDF5 file to write.
-        beamlinedata (dict): Dictionary of beamline data to write.
-    """
-    with h5py.File(filepath, 'w') as hf:
-        for beamline, bldata in beamlinedata.items():
-            # Write the beamline data to the HDF5 file.
-            bldata.to_hdf5(hf, beamline)
-
-
 # --- Object-Oriented HDF5 Figure Reconstructor ---
 class HDF5FigureReconstructor:
     """Encapsulates figure reconstruction from HDF5 files."""
