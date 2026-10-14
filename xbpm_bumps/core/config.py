@@ -86,11 +86,11 @@ class Config:
             "Data for {beamline} beamline from XBPM bumping experiments."
         ),
 
-        "Raw data": (
+        "raw_data": (
             "Raw data for {beamline} beamline from XBPM bumping experiments."
             ),
 
-        "Blade averages": (
+        "blade_averages": (
             "Averaged blade measurements for each sweep sampling"
             " from {beamline}, with standard deviations."
             ),
@@ -99,11 +99,11 @@ class Config:
             "Raw data for bump # {bumpnum} from XBPM bumping experiments."
         ),
 
-        "Blade data" : (
+        "blade_data" : (
             "Raw blade measurements for the bump # {bumpnum}."
             ),
 
-        "BPM data" : (
+        "bpm_data" : (
             "All BPM registered positions for the bump # {bumpnum}."
             ),
 
@@ -111,11 +111,11 @@ class Config:
             "RMS statistics for {case}."
             ),
 
-        "BPM Analysis" : (
+        "bpm_analysis" : (
             "Analysis of BPM positions for {beamline}."
             ),
 
-        "BladeMap": (
+        "blade_map": (
             "Blade map for {beamline} beamline from XBPM bumping experiments."
             ),    
     }
@@ -298,7 +298,7 @@ class Config:
 
         all_names["BeamlineData"] = {
             "prm"      : "Beamline parameters",
-            "raw_data" : "Raw data",
+            "raw_data" : "raw_data",
             "analysis" : "Analysis",
         }
 
@@ -314,13 +314,13 @@ class Config:
         }
 
         all_names["AverageData"] = {
-            "blades"  : "Blade averages",
+            "blades"  : "blade_averages",
             "prm"     : "Beamline parameters",
             "pos_nom" : "Nominal positions",
         }
 
         all_names["BladeMap"] = {
-            "blades"  : "Blade values",
+            "blades"  : "blade_map",
             "prm"     : "Beamline parameters",
             "pos_nom" : "Nominal positions",
         }

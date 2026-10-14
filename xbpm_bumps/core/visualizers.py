@@ -13,13 +13,12 @@ from typing import Optional
 from .constants import FIGDPI
 from .config import Config
 from .data_structure import (
-    GenPrm,
     BPMAnalysis,
     CentralSweeps,
     Positions,
     BeamlinePrm,
     DataAnalysis,
-    BladeMap,
+    BladeAvgData,
     RMSStatistics,
     ROISlice,
     BCA_HV,
@@ -402,7 +401,7 @@ class BladeMapVisualizer:
     """
 
     def __init__(self,
-                 bmap : BladeMap,
+                 bmap : BladeAvgData,
                  ) -> None:
         """Initialize visualizer with data and parameters.
 
