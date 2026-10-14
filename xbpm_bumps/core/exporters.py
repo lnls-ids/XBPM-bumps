@@ -1,13 +1,11 @@
 """HDF5 backend for XBPM DataReader."""
 
 import h5py
-import logging
 from matplotlib.figure import Figure
 # import numpy as np
 # import sys
-import matplotlib
 
-from .config import Config as Cfg
+# from .config import Config as Cfg
 from . import data_structure as DStr
 
 

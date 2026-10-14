@@ -1820,7 +1820,6 @@ class DataAnalysis:
  
     Classmethods may read analysis from HDF5 and compute analysis.
 
-    prm          : beamline parameters
     bpm          : BPM calculated positions at XBPM site
     blademap     : blade map of positions
     bladecenter  : h and v blade center analyses
@@ -1909,8 +1908,7 @@ class DataAnalysis:
         flds = {
             f.name: getattr(self, f.name)
             for f in fields(self)
-            if f.name != "beamline_prm" and
-            f.name != "blademap"
+            if f.name != "blademap"
             }
         for f, v in flds.items():
             grp_name = dan_names[f]

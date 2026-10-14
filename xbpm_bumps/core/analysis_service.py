@@ -14,7 +14,7 @@ class AnalysisService:
         runtime_prm  : DStr.GenPrm,
         ) -> DStr.DataAnalysis:
         # Initialize the analysis result container.
-        analysis = DStr.DataAnalysis(beamline_prm = beamlinedata.prm)
+        analysis = DStr.DataAnalysis()
 
         # BPM tab.
         if runtime_prm.show_bpmpositions:
