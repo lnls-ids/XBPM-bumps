@@ -108,7 +108,7 @@ class Config:
             ),
 
         "RMS statistics": (
-            "RMS statistics for {case}."
+            "RMS statistics for {roi_or_all}."
             ),
 
         "bpm_analysis" : (
