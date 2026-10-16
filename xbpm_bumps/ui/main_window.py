@@ -30,6 +30,8 @@ from ..core.config            import Config
 from ..core.analysis_service  import AnalysisService
 from ..core.reader_hdf5       import read_hdf5
 from ..core.visualizers       import render_data_analysis
+from ..core                   import exporters as exporter
+
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +52,13 @@ class XBPMMainWindow(QMainWindow):
         self.canvases          = {}
         self.beamlinedata      = None  # Canonical DataReader instance
         self.workbeamline      = None
-        self.workdata          = None  # Effective BeamlineData instance
+        self.workdatum         = None  # Effective BeamlineData instance
         self._last_inputfile   = ""
         self._last_roisize     = None
         self._analysis_running = False
 
         self.analysis          = None
-        self._tab_info         = {}
+        self.tab_info          = {}
 
         self.setup_ui()
         self.resize(1920, 1080)
@@ -65,7 +67,7 @@ class XBPMMainWindow(QMainWindow):
 
     @pyqtSlot()
     def _on_run_clicked(self) -> None:
-        if self.workdata is None:
+        if self.workdatum is None:
             self.show_error("No data loaded", "Open an HDF5 file first.")
             return
 
@@ -74,7 +76,7 @@ class XBPMMainWindow(QMainWindow):
 
         try:
             analysis = AnalysisService.run(
-                self.workdata,
+                self.workdatum,
                 self.runtime_prm,
             )
         except Exception as exc:
@@ -90,13 +92,13 @@ class XBPMMainWindow(QMainWindow):
         self.log_message("Analysis completed.")
 
         # Render every populated tab via the single orchestrator.
-        figures = render_data_analysis(
+        self.analysis.figures = render_data_analysis(
             self.pos_nom,
             analysis,
             self.beamline_prm,
             self.runtime_prm.bmap_global_scale,
             )
-        for key, fig in figures.items():
+        for key, fig in self.analysis.figures.items():
             self._embed_figure(self.canvases[key], fig)
 
     def setup_ui(self) -> None:
@@ -316,10 +318,10 @@ class XBPMMainWindow(QMainWindow):
         self._select_beamline()
 
         # Define links to effective beamline data. 
-        self.workdata     = self.beamlinedata[self.workbeamline]
-        self.analysis     = self.workdata.analysis
-        self.beamline_prm = self.workdata.prm
-        self.pos_nom      = self.workdata.raw_data.blade_avg.pos_nom
+        self.workdatum    = self.beamlinedata[self.workbeamline]
+        self.analysis     = self.workdatum.analysis
+        self.beamline_prm = self.workdatum.prm
+        self.pos_nom      = self.workdatum.raw_data.blade_avg.pos_nom
         self._build_tab_info()
 
         # Update BPM distance.
@@ -328,7 +330,7 @@ class XBPMMainWindow(QMainWindow):
             )
 
         # Calculate grid shape from nominal positions.
-        self.nom_pos = self.workdata.raw_data.blade_avg.pos_nom
+        self.nom_pos = self.workdatum.raw_data.blade_avg.pos_nom
         self.grid_shape = (
             len(np.unique(self.nom_pos.y)),  # vertical dimension
             len(np.unique(self.nom_pos.x)),  # horizontal dimension
@@ -370,7 +372,7 @@ class XBPMMainWindow(QMainWindow):
     def _on_parameters_changed(self) -> None:
         """React to parameter changes; pre-select beamline on input set."""
         # If data was not imported yet.
-        if self.workdata is None or self.grid_shape is None:
+        if self.workdatum is None or self.grid_shape is None:
             return
 
         # Check and reread parameter set.
@@ -416,7 +418,7 @@ class XBPMMainWindow(QMainWindow):
     def _on_export_hdf5_clicked(self) -> None:
         """Export data to HDF5 file (with or without analysis results)."""
         # Ensure data is loaded (analysis is optional)
-        if self.workdata is None:
+        if self.workdatum is None:
             QMessageBox.warning(
                 self,
                 "No Data Loaded",
@@ -431,30 +433,24 @@ class XBPMMainWindow(QMainWindow):
             default_name = (
                 f"xbpm_{self.workbeamline}.h5"
             )
-            path, _ = QFileDialog.getSaveFileName(
+            filepath, _ = QFileDialog.getSaveFileName(
                 self,
                 "Export to HDF5",
                 default_name,
                 "HDF5 Files (*.h5 *.hdf5);;All Files (*)",
             )
-            if not path:
+            if not filepath:
                 return
 
-            # Export using current data and last results
-            from ..core.exporters import Exporter
-            exporter = Exporter(self.workbeamline)
-
             # Include raw_data for complete re-analysis capability
-            raw_data = getattr(self.workdata, 'raw_data', None)
-            exporter.write_hdf5(
-                path,
-                self.workdata,
-                self.analysis,
-                include_figures=True,
-                raw_data=raw_data
+            # raw_data = getattr(self.workdata, 'raw_data', None)
+            exporter.export_hdf5(
+                filepath     = filepath,
+                runtime_prm  = self.runtime_prm,
+                beamlinedata = self.beamlinedata,
                 )
 
-            self.log_message(f"HDF5 export written: {path}")
+            self.log_message(f"HDF5 export written: {filepath}")
             QMessageBox.information(
                 self,
                 "Export Complete",
@@ -462,6 +458,36 @@ class XBPMMainWindow(QMainWindow):
             )
         except Exception as exc:  # pragma: no cover
             self.show_error("Export to HDF5 Failed", str(exc))
+
+    @pyqtSlot()
+    def _on_export_plain_clicked(self) -> None:
+        """Handle the 'Export Plain' button click event."""
+        if not hasattr(self, 'tab_info') or not self.tab_info:
+            QMessageBox.warning(
+                self,
+                "No Data Available",
+                "Please perform analysis before exporting plain data."
+            )
+            return
+
+        dirpath = QFileDialog.getExistingDirectory(
+            self,
+            "Select Directory for Plain Export"
+        )
+        if not dirpath:
+            return
+
+        exporter.export_plain(
+            dirpath  = dirpath,
+            tab_info = self.tab_info,
+            figures  = self.analysis.figures,
+        )
+        self.log_message(f"Plain export written to: {dirpath}")
+        QMessageBox.information(
+            self,
+            "Export Complete",
+            f"Exported analysis and figures to {dirpath}."
+        )
 
     @pyqtSlot()
     def _on_help_clicked(self) -> None:
@@ -519,7 +545,7 @@ class XBPMMainWindow(QMainWindow):
 
     def _build_tab_info(self) -> None:
         """Place holder."""
-        self._tab_info = format_analysis_info(self.analysis)
+        self.tab_info = format_analysis_info(self.analysis)
 
     def _refresh_analysis_info(self) -> None:
         """Update the analysis info panel based on the current tab."""
@@ -529,7 +555,7 @@ class XBPMMainWindow(QMainWindow):
             return
 
         key =  getattr(self.results_tabs.currentWidget(), "_info_key", None)
-        self.analysis_info.setText(self._tab_info.get(key, ""))
+        self.analysis_info.setText(self.tab_info.get(key, ""))
 
     @pyqtSlot(int)
     def _on_tab_changed(self, index: int):

@@ -5,15 +5,13 @@ from matplotlib.figure import Figure
 # import numpy as np
 # import sys
 
-# from .config import Config as Cfg
 from . import data_structure as DStr
-
+from . import constants      as Cts
 
 def export_hdf5(
     filepath     : str,
     runtime_prm  : DStr.GenPrm,
-    beamlinedata : dict[str, DStr.BeamlineData],
-    figures      : dict[str, Figure] | None = None,
+    beamlinedata : dict[str, DStr.BeamlineDatum],
     ) -> None:
     """Write runtime parameters, per-beamline raw/analysis data and figures.
     
@@ -29,36 +27,57 @@ def export_hdf5(
         runtime_prm.to_hdf5(hf)
 
         # /<beamline>/{attrs,raw_data,analysis}
-        for beamline, bldata in beamlinedata.items():
-            bldata.to_hdf5(hf)
-
-        # /figures/<tab key>
-        if figures:
-            # write_figures(hf.require_group("figures"), figures)
-            pass
+        for beamline, bldatum in beamlinedata.items():
+            # Create a group for the beamline data.
+            bldatum.to_hdf5(hf.require_group(beamline))
 
 
-class Exporter:
-    @staticmethod
-    def to_hdf5(
-        filepath     : str,
-        runtime_prm  : DStr.GenPrm,
-        beamlinedata : dict[str, DStr.BeamlineData],
-        figures      : dict[str, Figure] | None = None,
-        ) -> None:
-        export_hdf5(filepath, runtime_prm, beamlinedata, figures)
-        return None
+def export_plain(
+    dirpath  : str,
+    tab_info : dict[str, str],
+    figures  : dict[str, Figure] = None,
+    ) -> None:
+    if figures is None:
+        return
 
-    def write_figures(
-        fig_grp : "h5py.Group",
-        figures : dict[str, Figure]
-        ) -> None:
-        """Write figures to the /figures group in the HDF5 file.
+    for key, fig in figures.items():
+        # Export the figure to a PNG file.
+        figname = _filename(key, dirpath, prefix="fig", ext="png")
+        fig.savefig(
+            figname,
+            dpi = Cts.FIGDPI,
+            bbox_inches = "tight"
+            )
 
-        Args:
-            fig_grp (h5py.Group): HDF5 group for figures.
-            figures (dict[str, Figure]): Dictionary of figures to write.
-        """
-        for key, fig in figures.items():
-            # Implement figure writing logic here
-            pass
+        # Export the plain information to a text file.
+        txtname   = _filename(key, dirpath, prefix="info", ext="txt")
+        info_data = tab_info.get(key)
+        _write_plain_txt(txtname, info_data)
+
+
+def _write_plain_txt(
+    path       : str,
+    info_data  : str | None,
+    ) -> None:
+    """Write plain information to a text file.
+
+    Args:
+        path      : Path to the output text file.
+        info_data : The plain information to write.
+    """
+    # Export plain information to a text file
+    if info_data is not None:
+        with open(path, "w") as f:
+            f.write(info_data)
+
+
+def _filename(
+        key     : str,
+        path    : str = "",
+        prefix  : str = "file",
+        ext     : str = "png",
+        ) -> str:
+    """Generate a filename for a figure based on the base path and key."""
+    if not path:
+        return f"{prefix}_{key}.{ext}"
+    return f"{path}/{prefix}_{key}.{ext}"

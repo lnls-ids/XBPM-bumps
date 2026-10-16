@@ -80,11 +80,11 @@ def format_analysis_info(
     }
 
     # Add position statistics to the tab information.
+    anpos = analysis.xpositions
     if analysis.xpositions is None:
         return tab_info
 
     # Table for pairwise and cross position statistics.
-    anpos = analysis.xpositions
     stat_table = {
         "xbpm_pairwise_raw" : (
         "Pairwise Standard Deviation, not transformed",
@@ -112,10 +112,14 @@ def format_analysis_info(
         ),
     }
 
+    # Suppression matrix information.
     supmat_lines = _supmat(analysis.supmat, analysis.gl2r)
+
+    # Format and add the positions and suppression matrix information
+    # to the tab info.
     for tab_name, (description, scales, stat, mat) in stat_table.items():
         tab_info[tab_name] = (
-            description + '\n' +
+            f"###\n### {description}\n###\n\n" +
             _scales(scales) +
             _xbpm_stats(stat) +
             supmat_lines.get(mat, "")

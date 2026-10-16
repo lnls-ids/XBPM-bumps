@@ -23,7 +23,7 @@ class XBPMProcessor:
     """
 
     def __init__(self,
-                 beamlinedata : DStr.BeamlineData,
+                 beamlinedata : DStr.BeamlineDatum,
                  beamline_prm : DStr.BeamlinePrm,
                  runtime_prm  : DStr.GenPrm,
                  analysis     : DStr.DataAnalysis,

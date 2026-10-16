@@ -12,7 +12,7 @@ from . import data_structure as DStr
 # from typing import Optional, Any, List
 
 def read_hdf5(filepath: str) -> tuple[DStr.GenPrm,
-                                      dict[str, DStr.BeamlineData]]:
+                                      dict[str, DStr.BeamlineDatum]]:
     beamlinedata ={}
     with h5py.File(filepath, 'r') as hf:
         runtime_prm = DStr.GenPrm.from_hdf5(
@@ -27,7 +27,7 @@ def read_hdf5(filepath: str) -> tuple[DStr.GenPrm,
                 continue
 
             # Assemble the extracted data in the raw_data dictionary.
-            beamlinedata[beamline] = DStr.BeamlineData.from_hdf5(bldata)
+            beamlinedata[beamline] = DStr.BeamlineDatum.from_hdf5(bldata)
     return runtime_prm, beamlinedata
 
 

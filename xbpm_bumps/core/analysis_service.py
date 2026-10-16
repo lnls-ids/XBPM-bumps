@@ -10,7 +10,7 @@ class AnalysisService:
 
     @staticmethod
     def run(
-        beamlinedata : DStr.BeamlineData,
+        beamlinedatum : DStr.BeamlineDatum,
         runtime_prm  : DStr.GenPrm,
         ) -> DStr.DataAnalysis:
         # Initialize the analysis result container.
@@ -19,16 +19,16 @@ class AnalysisService:
         # BPM tab.
         if runtime_prm.show_bpmpositions:
             bprocessor   = BPMProcessor(
-                raw_data = beamlinedata.raw_data,
-                prm_bml  = beamlinedata.prm,
+                raw_data = beamlinedatum.raw_data,
+                prm_bml  = beamlinedatum.prm,
                 )
             analysis.bpm = bprocessor.bpmanalysis
 
         # Create a processor instance to perform the calculations.
         try:
             xprocessor = XBPMProcessor(
-                beamlinedata = beamlinedata,
-                beamline_prm = beamlinedata.prm,
+                beamlinedata = beamlinedatum,
+                beamline_prm = beamlinedatum.prm,
                 runtime_prm  = runtime_prm,
                 analysis     = analysis,
             )
@@ -39,9 +39,9 @@ class AnalysisService:
         # Blade map.
         if runtime_prm.show_blademap:
             analysis.blademap = DStr.BladeAvgData(
-                prm     = {"beamline" : beamlinedata.prm.beamline},
-                blades  = beamlinedata.raw_data.blade_avg.blades,
-                pos_nom = beamlinedata.raw_data.blade_avg.pos_nom 
+                prm     = {"beamline" : beamlinedatum.prm.beamline},
+                blades  = beamlinedatum.raw_data.blade_avg.blades,
+                pos_nom = beamlinedatum.raw_data.blade_avg.pos_nom 
             )
 
         # Blades at center are necessary for the suppression matrix.

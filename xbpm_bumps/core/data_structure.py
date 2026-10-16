@@ -1,10 +1,12 @@
 """Parameter handling and CLI parsing."""
 
+from io import BytesIO
 from typing import ClassVar, Optional, Iterator, List
 # from curses import raw
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 import logging
+from matplotlib.figure import Figure
 # from typing import List, Optional
 
 import h5py
@@ -13,7 +15,7 @@ import xarray as xr
 
 # from xbpm_bumps.core.config import Config
 from .config import Config
-from .constants import ROI_SIZE_H, ROI_SIZE_V, MAX_RAD_ANGLE
+from .constants import ROI_SIZE_H, ROI_SIZE_V, MAX_RAD_ANGLE, FIGDPI
 
 
 @dataclass
@@ -1827,6 +1829,7 @@ class DataAnalysis:
     centralsweep : Central sweep positions with errors
     scales       : Scaling factors
     supmat       : Suppression matrices
+    figures      : dict              # Rendered figures for analysis tabs
     """
     # Beamline, description and XBPM-source distance.
     bpm           : BPMAnalysis       | None = None
@@ -1837,7 +1840,7 @@ class DataAnalysis:
     scales        : AllScales         | None = None
     supmat        : SuppressionMatrix | None = None
     gl2r          : GL2RMatrix        | None = None
-
+    figures       : dict              | None = None
 
     @classmethod
     def from_hdf5(cls,
@@ -1908,7 +1911,7 @@ class DataAnalysis:
         flds = {
             f.name: getattr(self, f.name)
             for f in fields(self)
-            if f.name != "blademap"
+            if f.name != "blademap" and f.name != "figures"
             }
         for f, v in flds.items():
             grp_name = dan_names[f]
@@ -1923,9 +1926,46 @@ class DataAnalysis:
                 bladeset_name = "BladeMap"
                 )
 
+        # /figures/<tab key>
+        if self.figures:
+            fig_group = dan_grp.require_group("figures")
+            for key, fig in self.figures.items():
+                fig_name  = f"{key}.png"
+                self._figure_export(
+                    figure      = fig,
+                    fig_grp     = fig_group,
+                    figure_name = fig_name
+                    )
+
+
+    def _figure_export(
+            self,
+            figure      : Figure,
+            fig_grp     : h5py.Group,
+            figure_name : str
+            ) -> None:
+        """Save the figure to memory as PNG and store it in the HDF5 group."""
+        buf = BytesIO()
+        figure.savefig(
+            buf,
+            format      = 'png',
+            dpi         = FIGDPI,
+            bbox_inches = 'tight'
+            )
+
+        # Store the PNG bytes as a uint8 dataset
+        buf.seek(0)
+        png_bytes = np.frombuffer(
+            buf.getvalue(),
+            dtype = np.uint8
+            )
+
+        fig_grp.create_dataset(figure_name, data=png_bytes)
+        buf.close()    
+
 
 @dataclass
-class BeamlineData:
+class BeamlineDatum:
     """Encapsulates all data for a single beamline extracted from HDF5.
     
     A structure is created to contain the raw data measured (BeamlineRawData)
@@ -1942,7 +1982,7 @@ class BeamlineData:
     @classmethod
     def from_hdf5(cls,
                   bd_grp: "h5py.Group"
-                  ) -> "BeamlineData":
+                  ) -> "BeamlineDatum":
         """Extract the beamline data from an HDF5 group."""
         # Data storage.
         kwargs = {}
@@ -1974,7 +2014,7 @@ class BeamlineData:
         return cls(**kwargs)
 
     def to_hdf5(self,
-                bld_grp : "h5py.Group",
+                bl_grp : "h5py.Group",
                 ) -> None:
         """Serialize the BeamlineData instance to an HDF5 file.
 
@@ -1984,21 +2024,20 @@ class BeamlineData:
             analysis (DataAnalysis): Analysis data for the beamline.
 .
         """
-        # Create a group for the beamline data.
-        bl_group = bld_grp.require_group(self.prm.beamline)
-
         # Store beamline parameters.
-        self.prm.to_hdf5(bl_group)
+        self.prm.to_hdf5(bl_grp)
 
         # Rewrite raw data only if explicitly requested.
         if self.raw_data is not None:
+            bl_raw_grp = bl_grp.require_group(self._names["raw_data"])
             self.raw_data.to_hdf5(
-                bl_raw_grp = bl_group.require_group(self._names["raw_data"]),
+                bl_raw_grp = bl_raw_grp,
                 beamline = self.prm.beamline,
-                )
+                ) 
 
         # Store analysis data if present.
         if self.analysis is not None:
-            self.analysis.to_hdf5(
-                dan_grp = bl_group.require_group(self._names["analysis"])
-                )
+            dan_grp = bl_grp.require_group(self._names["analysis"])
+            self.analysis.to_hdf5(dan_grp = dan_grp)
+
+        return bl_raw_grp, dan_grp

@@ -9,7 +9,7 @@ from .data_structure import (
     GenPrm,
     BeamlinePrm,
     DataAnalysis,
-    BeamlineData
+    BeamlineDatum
     )
 from .visualizers import (
     BPMVisualizer,
@@ -18,7 +18,6 @@ from .visualizers import (
     CentralSweepVisualizer,
     render_data_analysis,
 )
-from .exporters import Exporter
 
 __all__ = [
     "Config",
@@ -28,11 +27,10 @@ __all__ = [
     "BladeMapVisualizer",
     "PositionVisualizer",
     "CentralSweepVisualizer",
-    "Exporter",
     "GenPrm",
     "BeamlinePrm",
     "DataAnalysis",
-    "BeamlineData",
+    "BeamlineDatum",
     "render_data_analysis"
 ]
 
