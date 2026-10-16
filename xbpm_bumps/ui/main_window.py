@@ -101,6 +101,10 @@ class XBPMMainWindow(QMainWindow):
         for key, fig in self.analysis.figures.items():
             self._embed_figure(self.canvases[key], fig)
 
+        # Make the computed analysis (figures included)
+        # the canonical one for export.
+        self.workdatum.analysis = self.analysis
+
     def setup_ui(self) -> None:
         """Initialize the main window layout."""
         # Central widget with splitter

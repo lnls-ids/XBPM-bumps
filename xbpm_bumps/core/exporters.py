@@ -2,8 +2,6 @@
 
 import h5py
 from matplotlib.figure import Figure
-# import numpy as np
-# import sys
 
 from . import data_structure as DStr
 from . import constants      as Cts
@@ -19,8 +17,6 @@ def export_hdf5(
         filepath     : Path to the output HDF5 file.
         runtime_prm  : Runtime parameters to be written to the root attributes.
         beamlinedata : Dictionary containing per-beamline raw and analysis data.
-        figures      : Optional dictionary of figures to be written under the
-                        /figures group.
     """
     with h5py.File(filepath, "w") as hf:
         # root attrs; read_hdf5() reads these
