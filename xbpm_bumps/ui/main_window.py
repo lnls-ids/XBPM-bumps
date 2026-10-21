@@ -446,6 +446,11 @@ class XBPMMainWindow(QMainWindow):
             if not filepath:
                 return
 
+            # Ensure runtime parameters have beamline and description set.
+            self.runtime_prm.beamline = self.workbeamline
+            if self.runtime_prm.description is None:
+                self.runtime_prm.description = self.beamline_prm.description
+
             # Include raw_data for complete re-analysis capability
             # raw_data = getattr(self.workdata, 'raw_data', None)
             exporter.export_hdf5(

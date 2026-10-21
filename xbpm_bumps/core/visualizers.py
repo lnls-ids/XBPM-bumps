@@ -436,12 +436,6 @@ class BladeMapVisualizer:
 
         # --- Unify the color scale across the four blades so the colorbar
         #     is a meaningful reference. ---
-
-        # DEBUG
-        print("\n ##### (plot blade map) \t"
-              f"  bmap_global_scale = {bmap_global_scale}")
-        # DEBUG
-
         if bmap_global_scale:
             vmin = min(np.nanmin(to), np.nanmin(ti),
                        np.nanmin(bi), np.nanmin(bo))

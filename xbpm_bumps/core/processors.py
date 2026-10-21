@@ -796,9 +796,15 @@ class BPMProcessor:
             y = self.meas_y
             )
 
+        pos_nom  = DStr.Positions(
+            x = self.nom_x,
+            y = self.nom_y
+            )
+
         bpmanalysis  = DStr.BPMAnalysis(
-            pos_meas = pos_meas,
             prm      = self.prm_bml,
+            pos_nom  = pos_nom,
+            pos_meas = pos_meas,
             rms_diff = self.rms_grid_stats,
         )
 
