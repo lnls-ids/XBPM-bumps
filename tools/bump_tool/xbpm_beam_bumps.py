@@ -3,7 +3,9 @@
 import argparse
 import math
 import os
+import sys
 import time
+import traceback
 from datetime import datetime
 
 import epics
@@ -62,17 +64,6 @@ acq_data = {
     'min_y': -10,
     'max_y':  10,
 }
-
-# Define Devices
-sofb = SOFB(SOFB.DEVICES.SI)
-currinfo = CurrInfoSI()
-
-# Define IDs
-apu_mnc = APU(APU.DEVICES.APU22_09SA)
-vpu_cnb = VPU(VPU.DEVICES.VPU29_06SB)
-vpu_cat = VPU(VPU.DEVICES.VPU29_07SP)
-
-idlist = [apu_mnc, vpu_cnb, vpu_cat]
 
 def cmd_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -402,37 +393,53 @@ def run_bump_scan(bump: Bump, beamline_name: str) -> None:
 
 
 if __name__ == '__main__':
-    args = cmd_args()
+    try:
+        sofb = SOFB(SOFB.DEVICES.SI)
+        currinfo = CurrInfoSI()
 
-    parameter_read(args.parameter_file)
+        apu_mnc = APU(APU.DEVICES.APU22_09SA)
+        vpu_cnb = VPU(VPU.DEVICES.VPU29_06SB)
+        vpu_cat = VPU(VPU.DEVICES.VPU29_07SP)
+        idlist = [apu_mnc, vpu_cnb, vpu_cat]
 
-    set_id_position(bl_params['name'], bl_params['gap_phase'])
-    beamline_config = BEAMLINES[bl_params['name']]
-    angsx, angsy = configure_grid(show=True)
+        args = cmd_args()
+        parameter_read(args.parameter_file)
 
-    bump_param = BumpParams()
-    bump_param.subsec = beamline_config['subsec']
-    bump_param.pts_agx = angsx
-    bump_param.pts_agy = angsy
-    bump_param.do_angular_bumps = True
-    bump_param.closed_loops = True
-    bump_param.n_bpms_outx = 2
-    bump_param.n_bpms_outy = 2
-    bump_param.minsingval = 1
-    bump_param.bump_residue = 1
-    bump_param.bump_max_residue = 10
-    bump_param.wait_meas = 0.5
-    bump_param.meas_func = get_xbpm_readings
-    bump_param.kwargs = {
-        'nr_meas': 10,
-        'tinterval': 1,
-        'subsec': beamline_config['subsec'],
-    }
+        set_id_position(bl_params['name'], bl_params['gap_phase'])
+        beamline_config = BEAMLINES[bl_params['name']]
+        angsx, angsy = configure_grid(show=True)
 
-    xbpm_numbers = beamline_config['xbpm_numbers']
-    xbpms = [XBPM(bl_params['name'], number) for number in xbpm_numbers]
-    xbpm_names = [f"{bl_params['name']}{number}" for number in xbpm_numbers]
-    bump_param.args = [xbpms, xbpm_names]
+        bump_param = BumpParams()
+        bump_param.subsec = beamline_config['subsec']
+        bump_param.pts_agx = angsx
+        bump_param.pts_agy = angsy
+        bump_param.do_angular_bumps = True
+        bump_param.closed_loops = True
+        bump_param.n_bpms_outx = 2
+        bump_param.n_bpms_outy = 2
+        bump_param.minsingval = 1
+        bump_param.bump_residue = 1
+        bump_param.bump_max_residue = 10
+        bump_param.wait_meas = 0.5
+        bump_param.meas_func = get_xbpm_readings
+        bump_param.kwargs = {
+            'nr_meas': 10,
+            'tinterval': 1,
+            'subsec': beamline_config['subsec'],
+        }
 
-    bump = Bump(bump_param)
-    run_bump_scan(bump, bl_params['name'])
+        xbpm_numbers = beamline_config['xbpm_numbers']
+        xbpms = [XBPM(bl_params['name'], number) for number in xbpm_numbers]
+        xbpm_names = [f"{bl_params['name']}{number}" for number in xbpm_numbers]
+        bump_param.args = [xbpms, xbpm_names]
+
+        bump = Bump(bump_param)
+        run_bump_scan(bump, bl_params['name'])
+    except SystemExit as exc:
+        if exc.code not in (0, None):
+            sys.exit(1)
+        raise
+    except Exception as exc:
+        print(f"Erro durante a execução do script: {exc}", file=sys.stderr)
+        traceback.print_exc()
+        sys.exit(1)
