@@ -81,45 +81,6 @@ class Config:
         "MNC" : ["subsec:09SA", 9]
     }
 
-    GROUP_DESCRIPTION = {
-        "Beamline" : (
-            "Data for {beamline} beamline from XBPM bumping experiments."
-        ),
-
-        "raw_data": (
-            "Raw data for {beamline} beamline from XBPM bumping experiments."
-            ),
-
-        "blade_averages": (
-            "Averaged blade measurements for each sweep sampling"
-            " from {beamline}, with standard deviations."
-            ),
-
-        "Bumps": (
-            "Raw data for bump # {bumpnum} from XBPM bumping experiments."
-        ),
-
-        "blade_data" : (
-            "Raw blade measurements for the bump # {bumpnum}."
-            ),
-
-        "bpm_data" : (
-            "All BPM registered positions for the bump # {bumpnum}."
-            ),
-
-        "RMS statistics": (
-            "RMS statistics for {roi_or_all}."
-            ),
-
-        "bpm_analysis" : (
-            "Analysis of BPM positions for {beamline}."
-            ),
-
-        "blade_map": (
-            "Blade map for {beamline} beamline from XBPM bumping experiments."
-            ),    
-    }
-
     # -----------------------------------------------------------------------
     # Graph titles, grouped by tab / figure.
     # Keys within each tab are the subplot role: 'total', 'roi', 'heatmap',
@@ -179,27 +140,302 @@ class Config:
         "scaled"  : "transformed",
     }
 
+    # ------------------------------------------------------------------
+    # HDF5 registry: key -> (stored name, description template).
+    # Templates may use {beamline}, {bumpnum}, {figure}. Stored names must
+    # not contain "/" (HDF5 path separator).
+    # ------------------------------------------------------------------
+    H5_GROUPS = {
+        # Beamline level.
+        "raw_data": (
+            "Raw data",
+            "Raw data for {beamline} beamline from XBPM bumping experiments."),
+        "analysis": (
+            "Analysis",
+            "Results of the analysis of {beamline} XBPM bumping experiments."),
+
+        # Raw data.
+        "blade_averages": (
+            "Blade averages",
+            "Averaged blade currents at each grid position, with standard"
+            " deviations."),
+        "bump": (
+            "Bump", "Measurements for bump #{bumpnum} of {beamline}."),
+        "bpm_data": (
+            "BPM data",
+            "Positions registered by the BPMs during bump #{bumpnum}."),
+        "blade_data": (
+            "Blade data",
+            "Currents, ranges and saturation levels of the four blades during"
+            " bump #{bumpnum}."),
+
+        # BPM analysis.
+        "bpm_analysis": (
+            "BPM analysis",
+            "Beam positions at the XBPM site derived from BPM tangents and"
+            " compared with the nominal grid."),
+        "bpm_positions": (
+            "Positions", "Nominal and measured positions at the XBPM site."),
+        "rms_diff": (
+            "RMS differences",
+            "Differences between the reference and the calculated positions."),
+        "rms_all":  ("All grid", "Differences over the full grid."),
+        "rms_roi":  ("ROI",      "Differences inside the ROI."),
+        "diff_h":   ("Horizontal differences",
+                     "Horizontal component of the differences."),
+        "diff_v":   ("Vertical differences",
+                     "Vertical component of the differences."),
+        "diff_tot": ("Total differences",
+                     "Total (horizontal and vertical) differences."),
+        "summary":  ("Summary",
+                     "Minimum, mean and maximum of the differences."),
+
+        # Blade map.
+        "blade_map": (
+            "Blade map", "Averaged blade currents mapped on the grid."),
+        "blades": (
+            "Blades",
+            "Blade currents and their standard deviations at each grid"
+            " position."),
+
+        # Blade central sweep.
+        "blade_center": (
+            "Blade central sweep",
+            "Linear fits to the blade currents along the central sweep lines."),
+        "direction_h": (
+            "Horizontal", "Blade behavior along the horizontal central line."),
+        "direction_v": (
+            "Vertical", "Blade behavior along the vertical central line."),
+        "fit_data": (
+            "Fit data",
+            "Sweep positions and the measured, error and fitted currents of"
+            " the four blades."),
+        "coefficients": (
+            "Coefficients",
+            "Slope and intercept of the linear fit of each blade, with"
+            " standard deviations."),
+
+        # XBPM calculated positions.
+        "xbpm_positions": (
+            "XBPM calculated positions",
+            "Positions calculated with the delta-sigma and partial"
+            " delta-sigma formulae, before and after transformation."),
+        "pairwise": (
+            "Delta-Sigma", "Positions from the delta/sigma (pairwise) formula."),
+        "cross": (
+            "Partial Delta-Sigma",
+            "Positions from the partial delta/sigma (cross-blade) formula."),
+        "xbpm_std": (
+            "Standard", "Positions from the standard formulae."),
+        "xbpm_transformed": (
+            "Transformed",
+            "Positions after the suppression-matrix / GL2R transformation."),
+        "std_positions": (
+            "Standard positions",
+            "Scaled standard positions, with the nominal reference."),
+        "trn_positions": (
+            "Transformed positions",
+            "Scaled transformed positions, with the nominal reference."),
+        "pos_scales": (
+            "Scales", "Scaling coefficients applied to these positions."),
+        "statistics": (
+            "Statistics",
+            "RMS statistics of these positions against the reference."),
+
+        # Central sweeps.
+        "central_sweeps": (
+            "Central sweeps",
+            "Blade and position behavior along the central sweeps."),
+        "sweep_h": ("Horizontal sweep",
+                    "Measurements along the horizontal central sweep."),
+        "sweep_v": ("Vertical sweep",
+                    "Measurements along the vertical central sweep."),
+        "sweep_data": ("Sweep data",
+                       "Blade currents and positions along the sweep."),
+        "sweep_coeffs": ("Fit coefficients",
+                         "Slope and intercept of the fixed-coordinate fit."),
+        "sweep_sigmas": ("Fit errors",
+                         "Standard deviations of the fit coefficients."),
+
+        # Scale factors.
+        "scales": ("Scale factors",
+                   "Scaling factors of the four position calculations."),
+        "scales_pairwise": ("Delta-Sigma",
+                            "Scaling factors for the delta/sigma positions."),
+        "scales_cross": ("Partial Delta-Sigma",
+                         "Scaling factors for the partial delta/sigma"
+                         " positions."),
+        "scales_std": ("Standard",
+                       "Scaling factors for the standard positions."),
+        "scales_trn": ("Transformed",
+                       "Scaling factors for the transformed positions."),
+
+        # Matrices.
+        "suppression": ("Suppression matrices",
+                        "Standard, calculated and optimized suppression"
+                        " matrices."),
+        "sup_standard": ("Standard",
+                         "Standard suppression matrix (fixed 1/-1 pattern)."),
+        "sup_calculated": ("Calculated",
+                           "Suppression matrix calculated from the blade"
+                           " fits."),
+        "sup_stddev": ("Standard deviations",
+                       "Standard deviations of the calculated suppression"
+                       " matrix."),
+        "sup_optimized": ("Optimized",
+                          "Suppression matrix optimized against the"
+                          " reference positions."),
+        "gl2r": ("GL2R matrices",
+                 "GL2R transformation matrices for the cross-blade"
+                 " positions."),
+        "gl2r_std":  ("Standard",   "Standard (identity) GL2R matrix."),
+        "gl2r_calc": ("Calculated", "Calculated GL2R matrix."),
+
+        # Figures (dataset names are given explicitly: "<tab>.png").
+        "figures": ("Figures",
+                    "Figures of the analysis, stored as PNG byte streams."),
+        "figure":  ("{figure}", "Figure '{figure}' of the analysis."),
+    }
+
+    # DataAnalysis field -> registry key.
+    H5_SECTIONS = {
+        "DataAnalysis": {
+            "bpm"           : "bpm_analysis",
+            "blademap"      : "blade_map",
+            "bladecenter"   : "blade_center",
+            "xpositions"    : "xbpm_positions",
+            "centralsweeps" : "central_sweeps",
+            "scales"        : "scales",
+            "supmat"        : "suppression",
+            "gl2r"          : "gl2r",
+        },
+    }
+
+    # ------------------------------------------------------------------
+    # Column names: <axis | blade | PV> + <kind>.
+    # ------------------------------------------------------------------
+    BLADES = ("to", "ti", "bi", "bo")
+
+    BLADE_LABELS = {
+        "to": "Top outer",    "ti": "Top inner",
+        "bi": "Bottom inner", "bo": "Bottom outer",
+    }
+
+    H5_AXES = {"x": "X", "y": "Y"}
+
+    H5_COLUMNS = {
+        # Position kinds (with an axis: "X nominal", "Y BPM", ...).
+        "nom"   : "nominal",    "meas"  : "measured",   "bpm"  : "BPM",
+        "std"   : "standard",   "trn"   : "transformed",
+        # Table kinds (with a blade or an axis).
+        "mean"  : "mean",       "err"   : "error",
+        "raw"   : "raw",        "fit"   : "fit",        "fit_err": "fit error",
+        "index" : "index",      "fixed" : "fixed",      "calc" : "calculated",
+        "val"   : "value",      "range" : "range",      "saturation": "saturation",
+        "pos"   : "Position",
+        # Fit coefficients (blade or axis): slope, intercept, quadratic.
+        "k"     : "slope",      "sk"    : "slope error",
+        "d"     : "intercept",  "sd"    : "intercept error",
+        "q"     : "quadratic",  "sq"    : "quadratic error",
+        # RMS summary: <direction> <kind>.
+        "min"   : "minimum",    "max"   : "maximum",
+        "h"     : "Horizontal", "v"     : "Vertical",   "tot"  : "Total",
+    }
+
+    # -------------------------- name helpers --------------------------
+    @classmethod
+    def group_name(cls, key: str) -> str:
+        """Stored (human-readable) name of a registry key."""
+        return cls.H5_GROUPS[key][0]
+
+    @classmethod
+    def indexed_name(cls, key: str, num: int) -> str:
+        """Indexed object name, e.g. 'Bump 0007'."""
+        return f"{cls.group_name(key)} {num:04d}"
+
+    @classmethod
+    def parse_index(cls, key: str, name: str) -> int | None:
+        """Inverse of `indexed_name`; None when `name` does not match."""
+        prefix = cls.group_name(key) + " "
+        tail   = name[len(prefix):]
+        if name.startswith(prefix) and tail.isdigit():
+            return int(tail)
+        return None
+
+    @classmethod
+    def group_names(cls, section: str) -> dict[str, str]:
+        """Map dataclass field -> stored name for one section."""
+        return {fld: cls.group_name(key)
+                for fld, key in cls.H5_SECTIONS.get(section, {}).items()}
+
+    @classmethod
+    def get_description(cls, key: str, **fmt) -> str:
+        """Description of a registry key; unknown placeholders become ''."""
+        template = cls.H5_GROUPS.get(key, (None, None))[1]
+        if template is None:
+            return "N/A"
+
+        class _Missing(dict):
+            def __missing__(self, name):
+                return ""
+
+        return template.format_map(_Missing(fmt))
+
+    @classmethod
+    def describe(cls, h5obj, key: str, **fmt) -> None:
+        """Write the registry description of `key` on a group or dataset."""
+        h5obj.attrs["Description"] = cls.get_description(key, **fmt)
+
+    # ------------------------- h5py helpers ---------------------------
+    @classmethod
+    def h5_group(cls, parent, key: str, name: str | None = None, **fmt):
+        """Get/create the child group of a registry key, described."""
+        grp = parent.require_group(name or cls.group_name(key))
+        cls.describe(grp, key, **fmt)
+        return grp
+
+    @classmethod
+    def h5_dataset(cls, parent, key: str, data,
+                   name: str | None = None, **fmt):
+        """Create (replacing any previous one) a described dataset."""
+        name = name or cls.group_name(key)
+        if name in parent:
+            del parent[name]
+        ds = parent.create_dataset(name, data=data)
+        cls.describe(ds, key, **fmt)
+        return ds
+
+    # ------------------------- column helpers -------------------------
+    @classmethod
+    def axis_column(cls, axis: str, kind: str) -> str:
+        """'X nominal', 'Y BPM', 'Y fit error', ..."""
+        return f"{cls.H5_AXES[axis]} {cls.H5_COLUMNS[kind]}"
+
+    @classmethod
+    def blade_column(cls, blade: str, kind: str) -> str:
+        """'Top outer mean', 'Bottom inner slope error', ..."""
+        return f"{cls.BLADE_LABELS[blade]} {cls.H5_COLUMNS[kind]}"
+
+    @classmethod
+    def pv_column(cls, pv: str, kind: str) -> str:
+        """'Blade A value', 'Blade C saturation', ..."""
+        return f"Blade {pv} {cls.H5_COLUMNS[kind]}"
+
+    @classmethod
+    def coef_column(cls, field: str) -> str:
+        """Scales field -> column: 'kx' -> 'X slope', 'sqy' -> 'Y quadratic error'."""
+        return f"{cls.H5_AXES[field[-1]]} {cls.H5_COLUMNS[field[:-1]]}"
+
+    @classmethod
+    def rms_column(cls, field: str) -> str:
+        """RMSStatistics field -> column: 'min_h' -> 'Horizontal minimum'."""
+        kind, direction = field.split("_")
+        return f"{cls.H5_COLUMNS[direction]} {cls.H5_COLUMNS[kind]}"
+
     @classmethod
     def get_beamline_name(cls, code: str) -> str:
         """Get full beamline name from code."""
         return cls.BEAMLINENAME.get(code, "N/A")
-
-    @classmethod
-    def get_description(cls,
-                        group      : str,
-                        beamline   : str = "",
-                        bumpnum    : int = None,
-                        roi_or_all : str = "",
-                        ) -> str:
-        """Get the description for a given group."""
-        template = cls.GROUP_DESCRIPTION.get(group, None)
-        if template is None:
-            return "N/A"
-        return template.format(
-            beamline   = beamline,
-            bumpnum    = bumpnum,
-            roi_or_all = roi_or_all
-        )
 
     @classmethod
     def get_plot_title(cls,
@@ -290,39 +526,3 @@ class Config:
         # No standard deviation for fixed matrix
         stddevmat = np.zeros_like(supmat)
         return supmat, stddevmat
-
-    @staticmethod
-    def _h5_group_name(group: str) -> str:
-        """Return the HDF5 group name for a given field."""
-        all_names ={}
-
-        all_names["BeamlineData"] = {
-            "prm"      : "Beamline parameters",
-            "raw_data" : "raw_data",
-            "analysis" : "Analysis",
-        }
-
-        all_names["DataAnalysis"] = {
-            "bpm"           : "bpm_analysis",
-            "blademap"      : "blade_map",
-            "bladecenter"   : "blade_center",
-            "xpositions"    : "xbpm_positions",
-            "centralsweeps" : "central_sweeps",
-            "scales"        : "scales",
-            "supmat"        : "suppression_matrices",
-            "gl2r"          : "gl2r",
-        }
-
-        all_names["AverageData"] = {
-            "blades"  : "blade_averages",
-            "prm"     : "Beamline parameters",
-            "pos_nom" : "Nominal positions",
-        }
-
-        all_names["BladeMap"] = {
-            "blades"  : "blade_map",
-            "prm"     : "Beamline parameters",
-            "pos_nom" : "Nominal positions",
-        }
-
-        return all_names.get(group, {})
