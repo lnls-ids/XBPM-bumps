@@ -1051,6 +1051,7 @@ class RMSStatistics:
             del rms_grp['summary']
         rms_grp.create_dataset('summary', data=row)
 
+
 @dataclass
 class RMSGridStatistics:
     """Statistics calculated at a given ROI."""
@@ -1105,7 +1106,7 @@ class BPMAnalysis:
             bpm and nom positions.
     """
     prm      : BeamlinePrm
-    pos_nom  : Positions | None = None
+    pos_nom  : Positions
     pos_meas : Positions
     rms_diff : RMSGridStatistics
 
@@ -1333,6 +1334,7 @@ class BladeLineFit:
             if name in blf_grp:
                 del blf_grp[name]
             blf_grp.create_dataset(name, data=arr)
+
 
 @dataclass
 class BladeCenterAnalysis:
@@ -1783,22 +1785,43 @@ class CalculatedPositions:
 
         # Standard positions.
         grs     = pos_grp["xbpm_std"]
-        xs      = grs["Standard positions"]["std_x"][:]
-        ys      = grs["Standard positions"]["std_y"][:]
+        data_s  = grs["Standard positions"][()]
+        shape_s = None
+        if "positions_shape" in grs["Standard positions"].attrs:
+            shape_s = tuple(
+                int(s)
+                for s in grs["Standard positions"].attrs["positions_shape"]
+                )
+        xs = data_s["std_x"][:]
+        ys = data_s["std_y"][:]
+        if shape_s is not None:
+            xs = xs.reshape(shape_s)
+            ys = ys.reshape(shape_s)
         pos_std = Positions(x=xs, y=ys)
 
-        # Scales.
         scale_std = Scales.from_hdf5(grs["scales"])
         stat_std  = RMSGridStatistics.from_hdf5(grs["statistics"])
 
         # Transformed positions.
         grt     = pos_grp["xbpm_transformed"]
-        xt      = grt["Transformed positions"]["trn_x"][:]
-        yt      = grt["Transformed positions"]["trn_y"][:]
+        data_t  = grt["Transformed positions"][()]
+        shape_t = None
+        if "positions_shape" in grt["Transformed positions"].attrs:
+            shape_t = tuple(
+                int(s)
+                for s in grt["Transformed positions"].attrs["positions_shape"]
+                )
+        xt = data_t["trn_x"][:]
+        yt = data_t["trn_y"][:]
+        if shape_t is not None:
+            xt = xt.reshape(shape_t)
+            yt = yt.reshape(shape_t)
         pos_trn = Positions(x=xt, y=yt)
 
         # Scales.
         scale_trn = Scales.from_hdf5(grt["scales"])
+        
+        # Statistics.
         stat_trn  = RMSGridStatistics.from_hdf5(grt["statistics"])
 
         return cls(
@@ -1808,52 +1831,78 @@ class CalculatedPositions:
             scale_std = scale_std,
             scale_trn = scale_trn,
             stat_std  = stat_std,
-            stat_trn  = stat_trn
+            stat_trn  = stat_trn,
         )
 
     def to_hdf5(self,
-                pos_grp  : "h5py.Group",
+                pos_grp : "h5py.Group",
+                pos_nom : "Positions" = None,
                 ) -> None:
         """Write CalculatedPositions instance to an HDF5 group."""
         # Standard positions.
         std_grp = pos_grp.require_group("xbpm_std")
-        dt = np.dtype([
-            ("std_x", self.pos_std.x.dtype),
-            ("std_y", self.pos_std.y.dtype)
-        ])
-        table_s = np.empty(self.pos_std.x.shape, dtype=dt)
-        table_s["std_x"] = self.pos_std.x
-        table_s["std_y"] = self.pos_std.y
-        std_grp.require_dataset(
+        self._write_position_table(
+            std_grp,
             "Standard positions",
-            data  = table_s,
-            dtype = table_s.dtype,
-            shape = table_s.shape,
+            pos_meas = self.pos_std,
+            pos_nom  = pos_nom,
+            xf = "std_x",
+            yf = "std_y",
             )
-
-        # Scaling and statistics for the standard positions.
         self.scale_std.to_hdf5(std_grp, ds_name="scales")
         self.stat_std.to_hdf5(std_grp.require_group("statistics"))
 
         # Transformed positions.
         trn_grp = pos_grp.require_group("xbpm_transformed")
-        dt = np.dtype([
-            ("trn_x", self.pos_trn.x.dtype),
-            ("trn_y", self.pos_trn.y.dtype)
-        ])
-        table_t = np.empty(self.pos_trn.x.shape, dtype=dt)
-        table_t["trn_x"] = self.pos_trn.x
-        table_t["trn_y"] = self.pos_trn.y
-        trn_grp.require_dataset(
+        self._write_position_table(
+            trn_grp,
             "Transformed positions",
-            data  = table_t,
-            dtype = table_t.dtype,
-            shape = table_t.shape,
+            pos_meas = self.pos_trn,
+            pos_nom  = pos_nom,
+            xf = "trn_x",
+            yf = "trn_y",
             )
-
-        # Scaling and statistics for the transformed positions.
         self.scale_trn.to_hdf5(trn_grp, ds_name="scales")
         self.stat_trn.to_hdf5(trn_grp.require_group("statistics"))
+
+    @staticmethod
+    def _write_position_table(
+            grp      : "h5py.Group",
+            ds_name  : str,
+            pos_meas : "Positions",
+            pos_nom  : "Positions" = None,
+            xf       : str = "x",
+            yf       : str = "y",
+            ) -> h5py.Dataset:
+        """Write measured (and optional nominal) positions as a flat table."""
+        if pos_nom is not None and pos_nom.x.shape != pos_meas.x.shape:
+            raise ValueError(
+                f"Nominal shape {pos_nom.x.shape} does not match measured"
+                f" shape {pos_meas.x.shape}."
+                )
+
+        cols = []
+        if pos_nom is not None:
+            cols += [
+                ('x_nom', pos_nom.x.dtype, pos_nom.x),
+                ('y_nom', pos_nom.y.dtype, pos_nom.y),
+                ]
+        cols += [
+            (xf, pos_meas.x.dtype, pos_meas.x),
+            (yf, pos_meas.y.dtype, pos_meas.y),
+            ]
+
+        dt = np.dtype([(name, typ) for name, typ, _ in cols])
+        table = np.empty(pos_meas.x.size, dtype=dt)
+        for name, _, arr in cols:
+            table[name] = arr.ravel()
+
+        if ds_name in grp:
+            del grp[ds_name]
+        ds = grp.create_dataset(ds_name, data=table)
+        if pos_meas.x.ndim > 1:
+            ds.attrs['positions_shape'] = pos_meas.x.shape
+        return ds
 
 
 @dataclass
@@ -1870,10 +1919,11 @@ class XBPMPositions:
     cross : CalculatedPositions
 
     @classmethod
-    def from_hdf5(cls,
-                  pos_grp  : "h5py.Group",
-                  roislice : "ROISlice",
-                  ) -> "XBPMPositions":
+    def from_hdf5(
+        cls,
+        pos_grp  : "h5py.Group",
+        roislice : "ROISlice",
+        ) -> "XBPMPositions":
         """Create an XBPMPositions instance from an HDF5 group."""
         nom   = Positions.from_hdf5(pos_grp["nominal"])
         pairw = CalculatedPositions.from_hdf5(
@@ -1884,7 +1934,6 @@ class XBPMPositions:
             pos_grp["cross"],
             roislice
             )
-
         return cls(
             nom   = nom,
             pairw = pairw,
@@ -1892,20 +1941,26 @@ class XBPMPositions:
         )
 
     def to_hdf5(self,
-                pos_grp    : "h5py.Group",
+                pos_grp : "h5py.Group",
                 ) -> None:
         """Write the current XBPMPositions instance to an HDF5 group."""
-        # Nominal positions.
+        # Nominal positions (flat x, y).
         self.nom.to_hdf5(
             pos_grp      = pos_grp,
             dataset_name = "nominal"
             )
 
-        # Pairwise analyzed positions.
-        self.pairw.to_hdf5(pos_grp.require_group("pairwise"))
+        # Pairwise analyzed positions (with nominal reference).
+        self.pairw.to_hdf5(
+            pos_grp.require_group("pairwise"),
+            pos_nom = self.nom
+            )
 
-        # Cross-blade analyzed positions.
-        self.cross.to_hdf5(pos_grp.require_group("cross"))
+        # Cross-blade analyzed positions (with nominal reference).
+        self.cross.to_hdf5(
+            pos_grp.require_group("cross"),
+            pos_nom = self.nom
+            )
 
 
 @dataclass
