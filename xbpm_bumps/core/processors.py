@@ -128,10 +128,10 @@ class XBPMProcessor:
             roi       = deepcopy(self.roi),
             pos_std   = pw_pos_std,
             scale_std = pw_scale_std,
-            stat_std  = rms_pw_std,
+            stats_std  = rms_pw_std,
             pos_trn   = pw_pos_sup,
             scale_trn = pw_scale_sup,
-            stat_trn  = rms_pw_sup
+            stats_trn  = rms_pw_sup
         )
 
         # Compute suppression matrix at the ROI.
@@ -182,10 +182,10 @@ class XBPMProcessor:
             # pos_std   = self.cr_pos_std,
             pos_std   = cr_pos_std_scaled,
             scale_std = cr_scale_std,
-            stat_std  = rms_cr_std,
+            stats_std  = rms_cr_std,
             pos_trn   = pos_cr_lintr_scaled,
             scale_trn = cr_scale_lintr,
-            stat_trn  = rms_cr_lintr
+            stats_trn  = rms_cr_lintr
         )
 
         # Store all scales.

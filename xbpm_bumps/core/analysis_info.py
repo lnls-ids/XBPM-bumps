@@ -89,25 +89,25 @@ def format_analysis_info(
         "xbpm_pairwise_raw" : (
         "Pairwise Standard Deviation, not transformed",
         anpos.pairw.scale_std,
-        anpos.pairw.stat_std,
+        anpos.pairw.stats_std,
         "std"
         ),
         "xbpm_pairwise_trn" : (
         "Pairwise Standard Deviation, transformed",
         anpos.pairw.scale_trn,
-        anpos.pairw.stat_trn,
+        anpos.pairw.stats_trn,
         "pw_tr"
         ),
         "xbpm_cross_raw" : (
         "Cross Standard Deviation, not transformed",
         anpos.cross.scale_std,
-        anpos.cross.stat_std,
+        anpos.cross.stats_std,
         "cr_std"
         ),
         "xbpm_cross_trn" : (
         "Cross Standard Deviation, transformed",
         anpos.cross.scale_trn,
-        anpos.cross.stat_trn,
+        anpos.cross.stats_trn,
         "cr_rot"
         ),
     }

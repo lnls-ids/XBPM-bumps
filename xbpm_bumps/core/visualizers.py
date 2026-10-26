@@ -102,16 +102,16 @@ def render_data_analysis(
 
         tab_table = {
             "xbpm_pairwise_raw" : (
-                prw.roi, pos.nom, prw.pos_std, prw.stat_std.roi
+                prw.roi, pos.nom, prw.pos_std, prw.stats_std.roi
                 ),
             "xbpm_pairwise_trn" : (
-                prw.roi, pos.nom, prw.pos_trn, prw.stat_trn.roi
+                prw.roi, pos.nom, prw.pos_trn, prw.stats_trn.roi
                 ),
             "xbpm_cross_raw"    : (
-                crs.roi, pos.nom, crs.pos_std, crs.stat_std.roi
+                crs.roi, pos.nom, crs.pos_std, crs.stats_std.roi
                 ),
             "xbpm_cross_trn"    : (
-                crs.roi, pos.nom, crs.pos_trn, crs.stat_trn.roi
+                crs.roi, pos.nom, crs.pos_trn, crs.stats_trn.roi
                 ),
         }
 

@@ -417,21 +417,21 @@ class Positions:
 
     def to_hdf5(
             self,
-            pos_grp      : h5py.Group,
-            key  : str,
-            xcol : str = "X",
-            ycol : str = "Y",
+            pos_grp : h5py.Group,
+            key     : str,
+            xcol    : str = "X",
+            ycol    : str = "Y",
             **fmt,
             ) -> "h5py.Dataset":
         """Write the positions as a flat table named after registry 'key'.
         
         Args:
-            self        : The Positions instance to write.
-            pos_grp     : The HDF5 group where the attributes will be stored.
-            key         : The registry key for naming the dataset.
-            xcol        : Column name for x positions.
-            ycol        : Column name for y positions.
-            fmt         : Additional formatting options for the HDF5 dataset.
+            self    : The Positions instance to write.
+            pos_grp : The HDF5 group where the attributes will be stored.
+            key     : The registry key for naming the dataset.
+            xcol    : Column name for x positions.
+            ycol    : Column name for y positions.
+            fmt     : Additional formatting options for the HDF5 dataset.
         """
         xytab = [
             (xcol, self.x),
@@ -1499,10 +1499,12 @@ class CentralSweepLine:
         parent    : "h5py.Group",
         direction : str = "",
         ) -> None:
+        """Create the 'Horizontal sweep' / 'Vertical sweep' group."""
         ind, fix = {'h': ('x', 'y'), 'v': ('y', 'x')}[direction]
         sln_grp  = H5Writer.group(parent, f"sweep_{direction}")
         col, blds = Config.column, self.blades
 
+        # Define dataset columns and corresponding data.
         cols = [
             (col("x",  "nom"),     blds.pos_nom.x),
             (col("y",  "nom"),     blds.pos_nom.y),
@@ -1521,23 +1523,21 @@ class CentralSweepLine:
             (col(fix,  "fit_err"), self.pos_fit_err),
             ]
 
+        # Build the structured array table for sweep data.
         dt = np.dtype([(name, 'f8') for name, _ in cols])
         table = np.full(self.pos_index.size, np.nan, dtype=dt)
         for name, arr in cols:
             if arr is not None:
                 table[name] = arr
-        H5Writer.dataset(
-            sln_grp,
-            "sweep_data",
-            table
-        )
+        H5Writer.dataset(sln_grp, "sweep_data", table)
 
         # Fit coefficients -> single-row named fields.
         if self.coeffs is not None:
-            sigmas = (self.sigmas
-                      if self.sigmas is not None
-                      else (np.nan, np.nan)
-                      )
+            sigmas = (
+                self.sigmas
+                if self.sigmas is not None
+                else (np.nan, np.nan)
+                )
             dtc = np.dtype([
                 (col(fix, c), 'f8')
                 for c in ("k", "sk", "d", "sd")
@@ -1545,11 +1545,7 @@ class CentralSweepLine:
             row = np.zeros(1, dtype=dtc)
             row[col(fix, 'k')],  row[col(fix, 'd')]  = self.coeffs
             row[col(fix, 'sk')], row[col(fix, 'sd')] = sigmas
-            H5Writer.dataset(
-                sln_grp,
-                "sweep_coeffs",
-                row
-            )
+            H5Writer.dataset(sln_grp, "sweep_coeffs", row)
 
 
 @dataclass
@@ -1564,23 +1560,24 @@ class CentralSweeps:
     v : CentralSweepLine | None = None
 
     @classmethod
-    def from_hdf5(cls,
-                  swp_grp : "h5py.Group"
-                  ) -> "CentralSweeps":
+    def from_hdf5(
+        cls,
+        swp_grp : "h5py.Group"
+        ) -> "CentralSweeps":
         """Create a CentralSweep instance from an HDF5 group."""
         name_h = Config.group_name("sweep_h")
         h = (
             CentralSweepLine.from_hdf5(swp_grp[name_h], direction = 'h')
             if name_h in swp_grp
             else None
-        )
+            )
 
         name_v = Config.group_name("sweep_v")
         v = (
             CentralSweepLine.from_hdf5(swp_grp[name_v], direction = 'v')
             if name_v in swp_grp
             else None
-        )
+            )
         return cls(h=h, v=v)
 
     def to_hdf5(
@@ -1740,73 +1737,63 @@ class CalculatedPositions:
 
         pos_std    : positions calculated from standard formulae
         scale_std  : scaling factors for standard positions
-        stat_std   : RMS statistics of the differences between standard
+        stats_std  : RMS statistics of the differences between standard
                  positions and nominal or BPM-calculated positions.
 
         pos_trn    : positions calculated from transformed formulae, through
                  the suppression matrix or the GL2R transformation matrix.
         scale_trn  : scaling factors for transformed positions
-        stat_trn   : RMS statistics of the differences between transformed
+        stats_trn  : RMS statistics of the differences between transformed
                  positions and nominal or BPM-calculated positions.
     """
     roi       : np.ndarray
 
     pos_std   : Positions
     scale_std : Scales
-    stat_std  : RMSGridStatistics
+    stats_std : RMSGridStatistics
 
     pos_trn   : Positions
     scale_trn : Scales
-    stat_trn  : RMSGridStatistics
+    stats_trn : RMSGridStatistics
 
     @classmethod
-    def from_hdf5(cls,
-                  pos_grp  : "h5py.Group",
-                  roislice : ROISlice,
-                  ) -> "CalculatedPositions":
+    def from_hdf5(
+        cls,
+        pos_grp  : "h5py.Group",
+        roislice : ROISlice,
+        ) -> "CalculatedPositions":
         """Create a CalculatedPositions instance from an HDF5 group."""
-        roi = np.array([roislice.size_h, roislice.size_v])
+        name = Config.group_name
+        col  = Config.column
+        roi  = np.array([roislice.size_h, roislice.size_v])
 
         # Standard positions.
-        grs     = pos_grp["xbpm_std"]
-        data_s  = grs["Standard positions"][()]
-        shape_s = None
-        if "positions_shape" in grs["Standard positions"].attrs:
-            shape_s = tuple(
-                int(s)
-                for s in grs["Standard positions"].attrs["positions_shape"]
-                )
-        xs = data_s["std_x"][:]
-        ys = data_s["std_y"][:]
-        if shape_s is not None:
-            xs = xs.reshape(shape_s)
-            ys = ys.reshape(shape_s)
-        pos_std = Positions(x=xs, y=ys)
+        std_grp = pos_grp[name("xbpm_std")]
+        pos_std = Positions.from_hdf5(
+            std_grp[name("std_positions")],
+            col("x", "std"),
+            col("y", "std")
+            )
 
-        scale_std = Scales.from_hdf5(grs["scales"])
-        stat_std  = RMSGridStatistics.from_hdf5(grs["statistics"])
+        # Scales for standard positions.
+        scale_std = Scales.from_hdf5(std_grp[name("pos_scales")])
+
+        # Statistics for standard positions.
+        stats_std  = RMSGridStatistics.from_hdf5(std_grp[name("statistics")])
 
         # Transformed positions.
-        grt     = pos_grp["xbpm_transformed"]
-        data_t  = grt["Transformed positions"][()]
-        shape_t = None
-        if "positions_shape" in grt["Transformed positions"].attrs:
-            shape_t = tuple(
-                int(s)
-                for s in grt["Transformed positions"].attrs["positions_shape"]
-                )
-        xt = data_t["trn_x"][:]
-        yt = data_t["trn_y"][:]
-        if shape_t is not None:
-            xt = xt.reshape(shape_t)
-            yt = yt.reshape(shape_t)
-        pos_trn = Positions(x=xt, y=yt)
+        trn_grp = pos_grp[name("xbpm_transformed")]
+        pos_trn = Positions.from_hdf5(
+            trn_grp[name("trn_positions")],
+            col("x", "trn"),
+            col("y", "trn")
+            )
 
-        # Scales.
-        scale_trn = Scales.from_hdf5(grt["scales"])
+        # Scales for transformed positions.
+        scale_trn = Scales.from_hdf5(trn_grp[name("pos_scales")])
         
-        # Statistics.
-        stat_trn  = RMSGridStatistics.from_hdf5(grt["statistics"])
+        # Statistics for transformed positions.
+        stats_trn  = RMSGridStatistics.from_hdf5(trn_grp[name("statistics")])
 
         return cls(
             roi       = roi,
@@ -1814,79 +1801,47 @@ class CalculatedPositions:
             pos_trn   = pos_trn,
             scale_std = scale_std,
             scale_trn = scale_trn,
-            stat_std  = stat_std,
-            stat_trn  = stat_trn,
-        )
+            stats_std = stats_std,
+            stats_trn = stats_trn,
+            )
 
-    def to_hdf5(self,
-                pos_grp : "h5py.Group",
-                pos_nom : "Positions" = None,
-                ) -> None:
-        """Write CalculatedPositions instance to an HDF5 group."""
+    def to_hdf5(
+        self,
+        parent  : "h5py.Group",
+        key     : str,
+        pos_nom : Positions | None = None,
+        ) -> None:
+        """Create the 'Delta-Sigma' / 'Partial Delta-Sigma' group."""
+        pos_grp = H5Writer.group(parent, key)
+        col     = Config.column
+
         # Standard positions.
-        std_grp = pos_grp.require_group("xbpm_std")
-        self._write_position_table(
-            std_grp,
-            "Standard positions",
-            pos_meas = self.pos_std,
-            pos_nom  = pos_nom,
-            xf = "std_x",
-            yf = "std_y",
-            )
-        self.scale_std.to_hdf5(std_grp, ds_name="scales")
-        self.stat_std.to_hdf5(std_grp.require_group("statistics"))
-
-        # Transformed positions.
-        trn_grp = pos_grp.require_group("xbpm_transformed")
-        self._write_position_table(
-            trn_grp,
-            "Transformed positions",
-            pos_meas = self.pos_trn,
-            pos_nom  = pos_nom,
-            xf = "trn_x",
-            yf = "trn_y",
-            )
-        self.scale_trn.to_hdf5(trn_grp, ds_name="scales")
-        self.stat_trn.to_hdf5(trn_grp.require_group("statistics"))
-
-    @staticmethod
-    def _write_position_table(
-            grp      : "h5py.Group",
-            ds_name  : str,
-            pos_meas : "Positions",
-            pos_nom  : "Positions" = None,
-            xf       : str = "x",
-            yf       : str = "y",
-            ) -> h5py.Dataset:
-        """Write measured (and optional nominal) positions as a flat table."""
-        if pos_nom is not None and pos_nom.x.shape != pos_meas.x.shape:
-            raise ValueError(
-                f"Nominal shape {pos_nom.x.shape} does not match measured"
-                f" shape {pos_meas.x.shape}."
-                )
-
+        std_grp = H5Writer.group(pos_grp, "xbpm_std")
         cols = []
         if pos_nom is not None:
-            cols += [
-                ('x_nom', pos_nom.x.dtype, pos_nom.x),
-                ('y_nom', pos_nom.y.dtype, pos_nom.y),
-                ]
-        cols += [
-            (xf, pos_meas.x.dtype, pos_meas.x),
-            (yf, pos_meas.y.dtype, pos_meas.y),
-            ]
+            cols += [(col("x", "nom"), pos_nom.x),
+                     (col("y", "nom"), pos_nom.y)]
+        cols += [(col("x", "std"), self.pos_std.x),
+                 (col("y", "std"), self.pos_std.y)]
+        # checks equal shapes
+        Positions.write_table(std_grp,  "std_positions", cols)
 
-        dt = np.dtype([(name, typ) for name, typ, _ in cols])
-        table = np.empty(pos_meas.x.size, dtype=dt)
-        for name, _, arr in cols:
-            table[name] = arr.ravel()
+        self.scale_std.to_hdf5(std_grp, "pos_scales")
+        self.stats_std.to_hdf5(std_grp, "statistics")
 
-        if ds_name in grp:
-            del grp[ds_name]
-        ds = grp.create_dataset(ds_name, data=table)
-        if pos_meas.x.ndim > 1:
-            ds.attrs['positions_shape'] = pos_meas.x.shape
-        return ds
+        # Transformed positions.
+        trn_grp = H5Writer.group(pos_grp, "xbpm_transformed")
+        cols = []
+        if pos_nom is not None:
+            cols += [(col("x", "nom"), pos_nom.x),
+                     (col("y", "nom"), pos_nom.y)]
+        cols += [(col("x", "trn"), self.pos_trn.x),
+                 (col("y", "trn"), self.pos_trn.y)]
+        # checks equal shapes
+        Positions.write_table(trn_grp, "trn_positions", cols)
+
+        self.scale_trn.to_hdf5(trn_grp, "pos_scales")
+        self.stats_trn.to_hdf5(trn_grp, "statistics")
 
 
 @dataclass
@@ -1909,42 +1864,48 @@ class XBPMPositions:
         roislice : "ROISlice",
         ) -> "XBPMPositions":
         """Create an XBPMPositions instance from an HDF5 group."""
-        nom   = Positions.from_hdf5(pos_grp["nominal"])
-        pairw = CalculatedPositions.from_hdf5(
-            pos_grp["pairwise"],
-            roislice
+        name      = Config.group_name
+        col       = Config.column
+        pairw_grp = pos_grp[name("pairwise")]
+
+        # Read nominal positions from the standard positions group.
+        nom   = Positions.from_hdf5(
+            pairw_grp[name("xbpm_std")][name("std_positions")],
+            col("x", "nom"),
+            col("y", "nom")
             )
+
+        # Read pairwise analyzed positions.
+        pairw = CalculatedPositions.from_hdf5(pairw_grp, roislice)
+
+        # Read cross-blade analyzed positions.
         cross = CalculatedPositions.from_hdf5(
-            pos_grp["cross"],
+            pos_grp[name("cross")],
             roislice
             )
+
         return cls(
             nom   = nom,
             pairw = pairw,
             cross = cross
         )
 
-    def to_hdf5(self,
-                pos_grp : "h5py.Group",
-                ) -> None:
+    def to_hdf5(
+        self,
+        parent : "h5py.Group",
+        ) -> None:
         """Write the current XBPMPositions instance to an HDF5 group."""
-        # Nominal positions (flat x, y).
-        self.nom.to_hdf5(
-            pos_grp      = pos_grp,
-            dataset_name = "nominal"
-            )
+        if self.nom is None:  # without it the file could not be read back
+            raise ValueError("XBPMPositions.nom is required to export.")
+
+        # Create HDF5 group for XBPM positions.
+        pos_grp = H5Writer.group(parent, "xbpm_positions")
 
         # Pairwise analyzed positions (with nominal reference).
-        self.pairw.to_hdf5(
-            pos_grp.require_group("pairwise"),
-            pos_nom = self.nom
-            )
+        self.pairw.to_hdf5(pos_grp, "pairwise", pos_nom = self.nom)
 
         # Cross-blade analyzed positions (with nominal reference).
-        self.cross.to_hdf5(
-            pos_grp.require_group("cross"),
-            pos_nom = self.nom
-            )
+        self.cross.to_hdf5(pos_grp, "cross",    pos_nom = self.nom)
 
 
 @dataclass
@@ -1974,52 +1935,42 @@ class DataAnalysis:
     figures       : dict              | None = None
 
     @classmethod
-    def from_hdf5(cls,
-                  anl_grp: "h5py.Group",
-                  roislice : ROISlice,
-                  prm_bml  : BeamlinePrm,
-                  ) -> "DataAnalysis":
+    def from_hdf5(
+        cls,
+        anl_grp: "h5py.Group",
+        roislice : ROISlice,
+        prm_bml  : BeamlinePrm,
+        ) -> "DataAnalysis":
         """Create a DataAnalysis instance from an HDF5 group."""
-        # Get reference name dictionary.
-        dan_names = Config._h5_group_name("DataAnalysis")
+        # Helper function to get HDF5 group for a given key.
+        def grp(key: str) -> h5py.Group:
+            return anl_grp[Config.group_name(key)]
 
         # Extract BPM analysis data.
-        bpm_name = dan_names["bpm"]
-        bpm = BPMAnalysis.from_hdf5(anl_grp[bpm_name], prm_bml)
+        bpm = BPMAnalysis.from_hdf5(grp("bpm_analysis"), prm_bml)
 
         # Extract blade map.
-        blademap_name = dan_names["blademap"]
-        dataset_name  = Config._h5_group_name("BladeMap")["blades"]
         blademap = BladeAvgData.from_hdf5(
-            anl_grp[blademap_name][dataset_name]
+            grp("blade_map")[Config.group_name("blades")]
             )
 
         # Extract blade center analysis for h/v directions.
-        bc_name = dan_names["bladecenter"]
-        bladecenter = BCA_HV.from_hdf5(anl_grp[bc_name])
+        bladecenter = BCA_HV.from_hdf5(grp("blade_center"))
 
         # Extract other analysis data.
-        xpos_name = dan_names["xpositions"]
-        xpositions = XBPMPositions.from_hdf5(
-            anl_grp[xpos_name],
-            roislice = roislice
-            )
+        xpositions = XBPMPositions.from_hdf5(grp("xbpm_positions"), roislice)
 
         # Central sweeps.
-        cs_name = dan_names["centralsweeps"]
-        centralsweeps = CentralSweeps.from_hdf5(anl_grp[cs_name])
+        centralsweeps = CentralSweeps.from_hdf5(grp("central_sweeps"))
 
         # Extract scaling factors and suppression matrices.
-        scales_name = dan_names["scales"]
-        scales = AllScales.from_hdf5(anl_grp[scales_name])
+        scales = AllScales.from_hdf5(grp("scales"))
 
         # Extract suppression matrix.
-        supmat_name = dan_names["supmat"]
-        supmat = SuppressionMatrix.from_hdf5(anl_grp[supmat_name])
+        supmat = SuppressionMatrix.from_hdf5(grp("suppression"))
 
         # Extract GL2R matrix.
-        gl2r_name = dan_names["gl2r"]
-        gl2r = GL2RMatrix.from_hdf5(anl_grp[gl2r_name])
+        gl2r = GL2RMatrix.from_hdf5(grp("gl2r"))
 
         return cls(
             bpm           = bpm,
@@ -2041,37 +1992,26 @@ class DataAnalysis:
         if prm_bml is not None:
             prm_bml.to_hdf5_analysis(dan_grp)
 
-        # Get reference from dictionary names.
-        dan_names = Config._h5_group_name("DataAnalysis")
+        # Each section creates its own HDF5 group.
+        for fld in fields(self):
+            if fld.name in ("blademap", "figures"):
+                continue
+            val = getattr(self, fld.name)
+            if val is not None:
+                val.to_hdf5(dan_grp)
 
-        flds = {
-            f.name: getattr(self, f.name)
-            for f in fields(self)
-            if f.name != "blademap" and f.name != "figures"
-            }
-        for f, v in flds.items():
-            grp_name = dan_names[f]
-            if v is not None:
-                v.to_hdf5(dan_grp.require_group(grp_name))
-
-        # Blade map is a specific case for BladeAvgData.
+        # 'Blade map' only holds the 'Blades' table.
         if self.blademap is not None:
-            grp_name = dan_names["blademap"]
             self.blademap.to_hdf5(
-                dan_grp.require_group(grp_name),
-                bladeset_name = "BladeMap"
+                H5Writer.group(dan_grp, "blade_map"),
+                "blades"
                 )
 
         # /figures/<tab key>
         if self.figures:
-            fig_group = dan_grp.require_group("figures")
+            fig_grp = H5Writer.group(dan_grp, "figures")
             for key, fig in self.figures.items():
-                fig_name  = f"{key}.png"
-                self._figure_export(
-                    figure      = fig,
-                    fig_grp     = fig_group,
-                    figure_name = fig_name
-                    )
+                self._figure_export(fig, fig_grp, f"{key}.png")
 
 
     def _figure_export(
@@ -2080,24 +2020,17 @@ class DataAnalysis:
             fig_grp     : h5py.Group,
             figure_name : str
             ) -> None:
-        """Save the figure to memory as PNG and store it in the HDF5 group."""
+        """Save the figure as PNG bytes (byte-identical to the .png file)."""
         buf = BytesIO()
-        figure.savefig(
-            buf,
-            format      = 'png',
-            dpi         = FIGDPI,
-            bbox_inches = 'tight'
-            )
-
-        # Store the PNG bytes as a uint8 dataset
-        buf.seek(0)
-        png_bytes = np.frombuffer(
-            buf.getvalue(),
-            dtype = np.uint8
-            )
-
-        fig_grp.create_dataset(figure_name, data=png_bytes)
+        figure.savefig(buf, format='png', dpi=FIGDPI, bbox_inches='tight')
+        png = np.frombuffer(buf.getvalue(), dtype=np.uint8)
         buf.close()    
+
+        ds = H5Writer.dataset(
+            fig_grp, "figure", png, name=figure_name, figure=figure_name
+        )
+        ds.attrs["format"] = "image/png"
+        ds.attrs["dpi"]    = FIGDPI
 
 
 @dataclass
@@ -2112,25 +2045,23 @@ class BeamlineDatum:
     raw_data : BeamlineRawData
     analysis : DataAnalysis     = field(default=None)
 
-    # Class-level, shared by all instances (not a dataclass field).
-    _names : ClassVar[dict] = Config._h5_group_name("BeamlineData")
-    
     @classmethod
-    def from_hdf5(cls,
-                  bd_grp: "h5py.Group"
-                  ) -> "BeamlineDatum":
+    def from_hdf5(
+        cls,
+        bd_grp: "h5py.Group"
+        ) -> "BeamlineDatum":
         """Extract the beamline data from an HDF5 group."""
         # Data storage.
         kwargs = {}
 
         # Beamline parameters (analysis attributes merged when present).
-        name_an = cls._names["analysis"]
+        name_an = Config.group_name("analysis")
         anl_grp = bd_grp[name_an] if name_an in bd_grp else None
         kwargs["prm"] = BeamlinePrm.from_hdf5(bd_grp, anl_grp)
 
         # Raw data.
         kwargs["raw_data"] = BeamlineRawData.from_hdf5(
-            bd_grp[cls._names["raw_data"]],
+            bd_grp[Config.group_name("raw_data")],
             beamline = kwargs["prm"].beamline,
             )
 
@@ -2153,29 +2084,25 @@ class BeamlineDatum:
             kwargs["analysis"] = DataAnalysis()
         return cls(**kwargs)
 
-    def to_hdf5(self,
-                bl_grp : "h5py.Group",
-                ) -> None:
+    def to_hdf5(
+        self,
+        bl_grp : "h5py.Group",
+        ) -> None:
         """Serialize the BeamlineData instance to an HDF5 file.
 
         Args:
-            prm (BeamlinePrm): Beamline parameters.
-            raw_data (BeamlineRawData): Raw data for the beamline.
-            analysis (DataAnalysis): Analysis data for the beamline.
+            bl_grp (h5py.Group): HDF5 group to store the beamline data.
 .
         """
         # Store beamline parameters.
         self.prm.to_hdf5(bl_grp)
+        beamline = self.prm.beamline
 
         # Rewrite raw data only if explicitly requested.
         if self.raw_data is not None:
-            bl_raw_grp = bl_grp.require_group(self._names["raw_data"])
-            self.raw_data.to_hdf5(
-                bl_raw_grp = bl_raw_grp,
-                beamline = self.prm.beamline,
-                ) 
+            self.raw_data.to_hdf5(bl_grp=bl_grp, beamline=beamline) 
 
         # Store analysis data if present.
         if self.analysis is not None:
-            dan_grp = bl_grp.require_group(self._names["analysis"])
-            self.analysis.to_hdf5(dan_grp = dan_grp, prm_bml = self.prm)
+            dan_grp = H5Writer.group(bl_grp, "analysis", beamline=beamline)
+            self.analysis.to_hdf5(dan_grp=dan_grp, prm_bml=self.prm)

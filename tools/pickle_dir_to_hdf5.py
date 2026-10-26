@@ -9,10 +9,15 @@ import os
 import pickle  # noqa: S403
 import sys
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
+# script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from xbpm_bumps.core.config import Config      #noqa: E402
+from xbpm_bumps.core.config import Config       # noqa: E402
+from xbpm_bumps.core.data_structure import (    # noqa: E402
+    H5Writer,
+    BumpRawData
+    )
+
 
 HELP_DESCRIPTION = (
 """This program extract data from pickle files created by
@@ -212,31 +217,28 @@ def extract_and_average_blade_data(
     revmap = _reverse_blade_map(beamline)
 
     # Run through each PV.
-    pvs    = ['A', 'B', 'C', 'D']
-    for pv in pvs:
+    for pv in ['A', 'B', 'C', 'D']:
         # Get average, std dev, and raw values for the blade.
         avg, std, vals = blade_average(rawdata0[pv + "_val"])
 
         # Store raw values: _val, _range, _saturation.
-        rawblades[pv + "_val"]   = np.array(vals)
-        rawblades[pv + "_range"] = np.array(
+        rawblades[Config.column(pv, "val")] = np.array(vals)
+        rawblades[Config.column(pv, "range")] = np.array(
             rawdata0.get(pv + "_range", None)
             )
-        rawblades[pv + "_saturation"] = np.array(
+        rawblades[Config.column(pv, "saturation")] = np.array(
             rawdata0.get(pv + "_saturation", None)
             )
 
         # Store each avg / std. dev. value.
-        bl     = revmap.get(pv)
-
-        blname = f"{bl.lower()}_"
-        avgblades[blname + "mean"] = avg
-        avgblades[blname + "err"]  = std
+        blade  = revmap[pv].lower()
+        avgblades[Config.column(blade, "mean")] = avg
+        avgblades[Config.column(blade, "err")]  = std
 
     return rawblades, avgblades
 
 
-def parse_rawdata(rawdata: list, beamline: str) -> list:
+def parse_rawdata(rawdata: list, beamline: str) -> dict:
     """Parse rawdata to extract beamline-specific data for each bump.
 
     Args:
@@ -244,13 +246,14 @@ def parse_rawdata(rawdata: list, beamline: str) -> list:
             beamline, corresponding to each bump.
 
     Returns:
-        blade_data: List of (meta, grid, bpm_dict) tuples for the selected
+        blade_data: Dict containing parsed data for the selected
             beamline, corresponding to each bump (same as rawdata but only
             blade info).
     """
     # Electronics PV.
     pv_meter = rawdata[0][0][beamline].get('prefix', None)
     xbpmdist = Config.XBPMDISTS.get(beamline, 1.0)
+    col      = Config.column
 
     # Data dictionaries: raw parsed data and averaged blade data.
     bpm_data   = {}
@@ -286,8 +289,8 @@ def parse_rawdata(rawdata: list, beamline: str) -> list:
         orbx    = record[2].get('orbx', "N/A")
         orby    = record[2].get('orby', "N/A")
         bpm_data[jj] = {
-            'x_bpm' : orbx,
-            'y_bpm' : orby
+            col('x', 'bpm') : orbx,
+            col('y', 'bpm') : orby
             }
 
         # Extract and average blade data for the current beamline.
@@ -300,18 +303,13 @@ def parse_rawdata(rawdata: list, beamline: str) -> list:
 
         # Store averaged blade data.
         avgblades.setdefault(jj, {})
-        avgblades[jj]['x_nom'] = angle_x * xbpmdist
-        avgblades[jj]['y_nom'] = angle_y * xbpmdist
+        avgblades[jj][col('x', 'nom')] = angle_x * xbpmdist
+        avgblades[jj][col('y', 'nom')] = angle_y * xbpmdist
         avgblades[jj].update(avgbld)
 
         # Create metadata dictionary.
-        # Description.
-        description = (
-            f"Raw data for bump {jj:04d} from XBPM-bumps experiments."
-            )
         rawmeta[jj] = {
             'Bump #'          : jj,
-            'Description'     : description,
             'Timestamp'       : timestamp,
             'PV meter'        : pv_meter,
             'Angle x'         : angle_x,
@@ -331,29 +329,34 @@ def parse_rawdata(rawdata: list, beamline: str) -> list:
             }
         rawmeta[jj].update(gap_phase)
 
-    return (rawmeta, bpm_data, blade_data, avgblades)
+    return {
+        "metadata"  : rawmeta,
+        "bpmdata"   : bpm_data,
+        "bladedata" : blade_data,
+        "avgblades" : avgblades
+        }
 
 
-def _write_group_data(groupname, group: h5py.Group, data: dict) -> None:
-    """Write datasets to the given HDF5 group."""
+def _write_group_data(
+        group: "h5py.Group",
+        key  : str,
+        data : dict,
+        **fmt
+        ) -> "h5py.Dataset":
+    """Write 'data' (column name -> array) as table 'key', with description."""
     # Convert data dictionary to structured array for HDF5 export.
-    names    = list(data.keys())
-    arrays   = list(data.values())
-
-    # automatic dtype deduction
-    rec_data = np.rec.fromarrays(arrays, names=names)
-    dset     = group.create_dataset(groupname, data=rec_data)
-    return dset
+    rec = np.rec.fromarrays(list(data.values()), names=list(data.keys()))
+    return H5Writer.dataset(group, key, rec, **fmt)
 
 
 def export_rawdata_to_hdf5(
-        dataset: tuple,
+        dataset: dict,
         outname: str,
         append=False) -> None:
     """Export parsed rawdata to HDF5 file.
 
     Args:
-        dataset    : tuple, Containing rawmeta, bpm_data, blade_data, and
+        dataset    : dict, Containing rawmeta, bpm_data, blade_data, and
                      avgblades.
         outname    : str,  Output HDF5 file name.
         append     : bool, Whether to append to the existing HDF5 file.
@@ -364,25 +367,22 @@ def export_rawdata_to_hdf5(
     w_or_a = "a" if append else "w"
     with h5py.File(outname, w_or_a) as h5file:
         for beamline in beamlines:
-            metadata  = dataset[beamline][0]
-            bpmdata   = dataset[beamline][1]
-            bladedata = dataset[beamline][2]
-            avgblades = dataset[beamline][3]
+            metadata  = dataset[beamline]["metadata"]
+            bpmdata   = dataset[beamline]["bpmdata"]
+            bladedata = dataset[beamline]["bladedata"]
+            avgblades = dataset[beamline]["avgblades"]
 
             # One raw data set per beamline.
-            mastergrp = h5file.create_group(f"{beamline}")
+            mastergrp = h5file.require_group(beamline)
 
-            # Set metadata attributes for the beamline group.
-            descr = (
-                f"Data for {beamline} beamline from XBPM bumping experiments."
-                )
-
+            # Beamline-group attributes.
             lenmeta = len(metadata)
-    
             mastermeta = {
                 "# Bumps"          : lenmeta,
                 "Beamline"         : beamline,
-                "Description"      : descr,
+                "Description"      : (
+                    f"Data for {beamline} beamline from XBPM bumping"
+                    " experiments."),
                 "HDF5 updated on"  : (
                     datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     ),
@@ -391,13 +391,10 @@ def export_rawdata_to_hdf5(
             mastergrp.attrs.update(mastermeta)
 
             # Set metadata attributes for the raw data group (per bump).
-            rawgrp   = mastergrp.create_group("raw_data")
-            descr    = (
-                f"Raw data for {beamline} beamline from XBPM"
-                " bumping experiments."
-                )
+            rawgrp = H5Writer.group(mastergrp, "raw_data", beamline=beamline)
+
             ts_first = metadata[1].get('Timestamp', "N/A")
-            ts_last  = metadata[lenmeta - 1].get('Timestamp', "N/A")
+            ts_last  = metadata[lenmeta].get('Timestamp', "N/A")
             duration = str(
                 datetime.strptime(ts_last, "%Y-%m-%d %H:%M:%S") -
                 datetime.strptime(ts_first, "%Y-%m-%d %H:%M:%S")
@@ -405,73 +402,64 @@ def export_rawdata_to_hdf5(
             rawmeta  = {
                 "# Bumps"          : lenmeta,
                 "Beamline"         : beamline,
-                "Description"      : descr,
                 "Experience start" : ts_first,
                 "Experience end"   : ts_last,
                 "Duration"         : duration,
                 }
             rawgrp.attrs.update(rawmeta)
 
-            # Write raw data.
+            # One bump subgroup per record.
             avg_sr_current = 0.
             for ii in metadata.keys():
                 # Create a subgroup for each bump and write its attributes.
-                grp_bump = rawgrp.create_group(f"bump_{ii:04d}")
+                grp_bump = H5Writer.group(
+                    rawgrp, "bump",
+                    name     = BumpRawData.bump_name(ii),
+                    beamline = beamline,
+                    bumpnum  = ii,
+                    )
                 grp_bump.attrs.update(metadata[ii])
 
                 # Subgroup for BPM data.
-                datasetname = "bpm_data"
-                dset = _write_group_data(datasetname, grp_bump, bpmdata[ii])
-                dset.attrs['Description'] =  (
-                    f"All BPM registered positions for the bump {ii:04d}."
+                _write_group_data(
+                    grp_bump, "bpm_data", bpmdata[ii], bumpnum=ii
                     )
 
                 # Subgroup for raw blade data.
-                datasetname = "blade_data"
-                dset = _write_group_data(datasetname, grp_bump, bladedata[ii])
-                dset.attrs['Description'] = (
-                    f"Raw blade measurements for the bump {ii:04d}."
+                _write_group_data(
+                    grp_bump, "blade_data", bladedata[ii], bumpnum=ii
                     )
 
                 avg_sr_current += metadata[ii].get('SR current', 0.)
             avg_sr_current /= lenmeta
 
-            # Write averaged data.
-            datasetname = "blade_averages"
-            
-            # Data must be put into a table structure.
-            # Extract column names from the first entry of avgdata,
-            # and sort rows by bump index.
+            # Averaged blade data: one descbribed table per beamline.
             columns     = list(next(iter(avgblades.values())).keys()) 
             rows_sorted = [avgblades[k] for k in sorted(avgblades)]
 
-            # Extract column arrays.
-            col_arrays  = {
-                col: np.array([
-                    row[col]
-                    for row in rows_sorted])
-                    for col in columns
-                    }
-
             # Create a structured array for HDF5 export.
             struct_array = np.rec.fromarrays(
-                [col_arrays[col] for col in columns],
+                [np.array([
+                    row[c]
+                    for row in rows_sorted
+                    ]) for c in columns],
                 names=columns
                 )
-            dset = rawgrp.create_dataset(datasetname, data=struct_array)
+            dset = H5Writer.dataset(
+                rawgrp, "blade_averages", data=struct_array
+                )
 
             # Select some metadata attributes to define the averaged data.
             avg_meta = {
                 'PV meter'        : metadata[1]['PV meter'],
                 'Avg. SR current' : avg_sr_current,
                 }
-            avg_meta.update({k: v for k, v in metadata[1].items()
-                             if k.startswith('gap')})
+            avg_meta.update({
+                k : v
+                for k, v in metadata[1].items()
+                if k.startswith('Gap/Ph.')
+                })
             dset.attrs.update(avg_meta)
-            dset.attrs['Description'] = (
-                "Averaged blade measurements for each bump sampling "
-                f"from {beamline}, with standard deviations."
-                )
 
 
 def hdf5_handler(blines: str, init_time: str) -> tuple:
@@ -530,7 +518,9 @@ def main() -> None:
 
     # Set file name and handle overwrite/append.
     # Set initial timestamp from the first record of the first beamline.
-    init_time = str(dataset[beamlines[0]][0][1].get('Timestamp', "N/A"))
+    init_time = str(
+        dataset[beamlines[0]]["metadata"][1].get('Timestamp', "N/A")
+        )
     blines = '_'.join(beamlines)
     outfile, append = hdf5_handler(blines, init_time)
 
