@@ -895,7 +895,7 @@ class BumpRawData:
 
             # Blade raw data.
             self.blades.to_hdf5(
-                bld_grp  = bump_grp,
+                brd_grp  = bump_grp,
                 beamline = beamline,
                 bumpnum  = bumpnum
                 )
