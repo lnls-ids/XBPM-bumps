@@ -335,12 +335,8 @@ class Config:
 
         "sweep_coeffs": (
             "Fit coefficients",
-            "Slope and intercept of the fixed-coordinate fit."
-            ),
-
-        "sweep_sigmas": (
-            "Fit errors",
-            "Standard deviations of the fit coefficients."
+            "Slope and intercept of the fixed-coordinate fit,"
+            " with their standard deviations."
             ),
 
         # Scale factors.

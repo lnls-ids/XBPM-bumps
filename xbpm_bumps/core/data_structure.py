@@ -261,7 +261,7 @@ class BeamlinePrm:
         if "grid_shape" not in attrs:
             attrs["grid_shape"] = None
 
-        attrs["updated"] = attrs.pop("HDF5 updated on", None)
+        attrs["updated"] = attrs.pop("hdf5 updated on", None)
 
         # --- dict 2: analysis attributes (merged below) ---
         an_attrs = (
@@ -768,7 +768,7 @@ class BladeRawData:
         bmap  = Config.BLADEMAP[beamline]
         table = blade_ds[()]
         bl_rd = {
-            name.upper() : BladeRawVals.from_hdf5(table, bmap[name])
+            name.upper() : BladeRawVals.from_hdf5(table, bmap[name.upper()])
             for name in Config.BLADES
         }
         return cls(**bl_rd)
@@ -781,7 +781,7 @@ class BladeRawData:
         ) -> "h5py.Dataset":
         """Write a BladeRawData instance to an HDF5 group."""
         bmap  = Config.BLADEMAP[beamline]
-        names = (bld.upper() for bld in Config.BLADES)
+        names = tuple(bld.upper() for bld in Config.BLADES)
 
         # Prepare the structured array table for storing blade data.
         # ('val', 'range', 'saturation')
@@ -880,7 +880,8 @@ class BumpRawData:
             bumpnum = self.meta.get("Bump #")
         try:
             bump_grp = H5Writer.group(
-                raw_grp  = raw_grp,
+                parent   = raw_grp,
+                key      = "bump",
                 name     = self.bump_name(bumpnum),
                 beamline = beamline,
                 bumpnum  = bumpnum,
@@ -892,16 +893,16 @@ class BumpRawData:
                     bump_grp.attrs[name] = val
             bump_grp.attrs["Bump #"] = bumpnum
 
+            # Blade raw data.
+            self.blades.to_hdf5(
+                bld_grp  = bump_grp,
+                beamline = beamline,
+                bumpnum  = bumpnum
+                )
+
             # BPM data.
             self.bpm.to_hdf5(
                 bpm_grp  = bump_grp,
-                beamline = beamline,
-                bumpnum  = bumpnum,
-                )
-
-            # Blade raw data.
-            ds = self.blades.to_hdf5(
-                brd_grp  = bump_grp,
                 beamline = beamline,
                 bumpnum  = bumpnum,
                 )
@@ -1048,19 +1049,19 @@ class RMSStatistics:
         ) -> "RMSStatistics":
         """Create an RMSStatistics instance from an HDF5 group."""
         row      = rms_grp[Config.group_name("summary")][0]
-        diff_h   = rms_grp[Config.group_name("diff_h")][()],
-        diff_v   = rms_grp[Config.group_name("diff_v")][()],
-        diff_tot = rms_grp[Config.group_name("diff_tot")][()],
+        diff_h   = rms_grp[Config.group_name("diff_h")][()]
+        diff_v   = rms_grp[Config.group_name("diff_v")][()]
+        diff_tot = rms_grp[Config.group_name("diff_tot")][()]
         stats    = {
             f : float(row[cls._column(f)])
             for f in cls._SUMMARY
-            },
+            }
 
         return cls(
             diff_h   = diff_h,
             diff_v   = diff_v,
             diff_tot = diff_tot,
-            **stats,
+            **stats
             )
 
     def to_hdf5(
@@ -1144,12 +1145,13 @@ class BPMAnalysis:
     rms_diff : RMSGridStatistics
 
     @classmethod
-    def from_hdf5(cls,
-                  bpm_grp : "h5py.Group",
-                  prm_bml : BeamlinePrm,
-                  ) -> "BPMAnalysis":
+    def from_hdf5(
+        cls,
+        bpm_grp : "h5py.Group",
+        prm_bml : BeamlinePrm,
+        ) -> "BPMAnalysis":
         """Create a BPMAnalysis instance from an HDF5 group."""
-        name = Config.group_name('positions')
+        name = Config.group_name('bpm_positions')
         col  = Config.column
         ds   = bpm_grp[name]
 
@@ -1258,6 +1260,7 @@ class Scales:
             row[self._column(name)] = getattr(self, name)
         H5Writer.dataset(parent, key, row)
 
+
 @dataclass
 class BladeLineFit:
     """Container for the results of a linear fit to blade data.
@@ -1346,7 +1349,7 @@ class BladeCenterAnalysis:
         ) -> "BladeCenterAnalysis":
         """Create a BladeCenterAnalysis instance from an HDF5 group."""
         data   = bca_grp[Config.group_name('fit_data')][()]
-        coeffs = bca_grp[Config.group_name('coefficients')][()]
+        coeffs = bca_grp[Config.group_name('coefficients')][0]
         blades = {
             bld: BladeLineFit.from_hdf5(data, coeffs, bld)
             for bld in Config.BLADES
@@ -1449,95 +1452,73 @@ class CentralSweepLine:
     sigmas      : np.ndarray | None = None
 
     @classmethod
-    def from_hdf5(cls,
-                  sln_grp: h5py.Group,
-                  dir: str
-                  ) -> "CentralSweepLine":
-        if dir == 'h':
-            ind, fix = 'x', 'y'
-        elif dir == 'v':
-            ind, fix = 'y', 'x'
-        else:
-            raise ValueError(" Invalid direction. Use 'h' or 'v'.")
-
-        sweep = sln_grp['sweep_data'][:]
+    def from_hdf5(
+        cls,
+        sln_grp   : h5py.Group,
+        direction : str
+        ) -> "CentralSweepLine":
+        ind, fix = {'h': ('x', 'y'), 'v': ('y', 'x')}[direction]
+        col      = Config.column
+        sweep    = sln_grp[Config.group_name("sweep_data")][()]
 
         blades = Blades(
-            to      = sweep['to_mean'],
-            ti      = sweep['ti_mean'],
-            bi      = sweep['bi_mean'],
-            bo      = sweep['bo_mean'],
-            sto     = sweep['to_err'],
-            sti     = sweep['ti_err'],
-            sbi     = sweep['bi_err'],
-            sbo     = sweep['bo_err'],
-            pos_nom = Positions(x = sweep['x_nom'], y = sweep['y_nom']),
+            to      = sweep[col("to", "mean")],
+            ti      = sweep[col("ti", "mean")],
+            bi      = sweep[col("bi", "mean")],
+            bo      = sweep[col("bo", "mean")],
+            sto     = sweep[col("to", "err")],
+            sti     = sweep[col("ti", "err")],
+            sbi     = sweep[col("bi", "err")],
+            sbo     = sweep[col("bo", "err")],
+            pos_nom = Positions(
+                x = sweep[col("x", "nom")],
+                y = sweep[col("y", "nom")]
+                ),
             )
 
-        def _fit_row(ds_name: str) -> dict | None:
-            if ds_name not in sln_grp:
-                return None
-            row   = sln_grp[ds_name][()]
-            names = row.dtype.names
-            vals  = {}
-            for nm in names:
-                v = row[nm]
-                if isinstance(v, np.ndarray):
-                    v = v.item()
-                vals[nm] = v
-            return vals
-
-        coeffs = None
-        cname  = f"{fix}_fit_coeffs"
-        if cname in sln_grp:
-            c = _fit_row(cname)
-            coeffs = np.array([c['k'], c['d']])
-
-        sigmas = None
-        sname  = f"{fix}_fit_sigmas"
-        if sname in sln_grp:
-            s = _fit_row(sname)
-            sigmas = np.array([s['sk'], s['sd']])
+        coeffs = sigmas = None
+        name   = Config.group_name("sweep_coeffs")
+        if name in sln_grp:
+            row    = sln_grp[name][0]
+            coeffs = np.array([row[col(fix, "k")],  row[col(fix, "d")]])
+            sigmas = np.array([row[col(fix, "sk")], row[col(fix, "sd")]])
 
         return cls(
             blades      = blades,
-            pos_index   = sweep[f"{ind}_index"],
-            pos_fixed   = sweep[f"{fix}_fix"],
-            pos_calc    = sweep[f"{fix}_calc"],
-            pos_fit     = sweep[f"{fix}_fit"],
-            pos_fit_err = sweep[f"s_{fix}_fit"],
+            pos_index   = sweep[col(ind, "index")],
+            pos_fixed   = sweep[col(fix, "fixed")],
+            pos_calc    = sweep[col(fix, "calc")],
+            pos_fit     = sweep[col(fix, "fit")],
+            pos_fit_err = sweep[col(fix, "fit_err")],
             coeffs      = coeffs,
             sigmas      = sigmas,
         )
 
-    def to_hdf5(self,
-                sln_grp   : "h5py.Group",
-                direction : str = "",
-                ) -> None:
-        if direction == 'h':
-            ind, fix = 'x', 'y'
-        elif direction == 'v':
-            ind, fix = 'y', 'x'
-        else:
-            raise ValueError("Invalid direction. Use 'h' or 'v'.")
+    def to_hdf5(
+        self,
+        parent    : "h5py.Group",
+        direction : str = "",
+        ) -> None:
+        ind, fix = {'h': ('x', 'y'), 'v': ('y', 'x')}[direction]
+        sln_grp  = H5Writer.group(parent, f"sweep_{direction}")
+        col, blds = Config.column, self.blades
 
-        b = self.blades
         cols = [
-            ('x_nom',        b.pos_nom.x),
-            ('y_nom',        b.pos_nom.y),
-            ('to_mean',      b.to),
-            ('ti_mean',      b.ti),
-            ('bi_mean',      b.bi),
-            ('bo_mean',      b.bo),
-            ('to_err',       b.sto),
-            ('ti_err',       b.sti),
-            ('bi_err',       b.sbi),
-            ('bo_err',       b.sbo),
-            (f"{ind}_index", self.pos_index),
-            (f"{fix}_fix",   self.pos_fixed),
-            (f"{fix}_calc",  self.pos_calc),
-            (f"{fix}_fit",   self.pos_fit),
-            (f"s_{fix}_fit", self.pos_fit_err),
+            (col("x",  "nom"),     blds.pos_nom.x),
+            (col("y",  "nom"),     blds.pos_nom.y),
+            (col("to", "mean"),    blds.to),
+            (col("ti", "mean"),    blds.ti),
+            (col("bi", "mean"),    blds.bi),
+            (col("bo", "mean"),    blds.bo),
+            (col("to", "err"),     blds.sto),
+            (col("ti", "err"),     blds.sti),
+            (col("bi", "err"),     blds.sbi),
+            (col("bo", "err"),     blds.sbo),
+            (col(ind,  "index"),   self.pos_index),
+            (col(fix,  "fixed"),   self.pos_fixed),
+            (col(fix,  "calc"),    self.pos_calc),
+            (col(fix,  "fit"),     self.pos_fit),
+            (col(fix,  "fit_err"), self.pos_fit_err),
             ]
 
         dt = np.dtype([(name, 'f8') for name, _ in cols])
@@ -1545,35 +1526,30 @@ class CentralSweepLine:
         for name, arr in cols:
             if arr is not None:
                 table[name] = arr
-
-        # Drop legacy per-array datasets.
-        for legacy in (
-                'blade_averages',
-                f"{ind}_index", f"{fix}_fix", f"{fix}_calc",
-                f"{fix}_fit", f"s_{fix}_fit",
-                ):
-            if legacy in sln_grp:
-                del sln_grp[legacy]
-        sln_grp.create_dataset('sweep_data', data=table)
+        H5Writer.dataset(
+            sln_grp,
+            "sweep_data",
+            table
+        )
 
         # Fit coefficients -> single-row named fields.
         if self.coeffs is not None:
-            dtc = np.dtype([('k', 'f8'), ('d', 'f8')])
+            sigmas = (self.sigmas
+                      if self.sigmas is not None
+                      else (np.nan, np.nan)
+                      )
+            dtc = np.dtype([
+                (col(fix, c), 'f8')
+                for c in ("k", "sk", "d", "sd")
+                ])
             row = np.zeros(1, dtype=dtc)
-            row['k'] = self.coeffs[0]
-            row['d'] = self.coeffs[1]
-            if f"{fix}_fit_coeffs" in sln_grp:
-                del sln_grp[f"{fix}_fit_coeffs"]
-            sln_grp.create_dataset(f"{fix}_fit_coeffs", data=row)
-
-        if self.sigmas is not None:
-            dts = np.dtype([('sk', 'f8'), ('sd', 'f8')])
-            row = np.zeros(1, dtype=dts)
-            row['sk'] = self.sigmas[0]
-            row['sd'] = self.sigmas[1]
-            if f"{fix}_fit_sigmas" in sln_grp:
-                del sln_grp[f"{fix}_fit_sigmas"]
-            sln_grp.create_dataset(f"{fix}_fit_sigmas", data=row)
+            row[col(fix, 'k')],  row[col(fix, 'd')]  = self.coeffs
+            row[col(fix, 'sk')], row[col(fix, 'sd')] = sigmas
+            H5Writer.dataset(
+                sln_grp,
+                "sweep_coeffs",
+                row
+            )
 
 
 @dataclass
