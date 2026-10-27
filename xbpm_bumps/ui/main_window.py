@@ -4,7 +4,8 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTextEdit, QSplitter, QTabWidget,
-    QStatusBar, QProgressBar, QMessageBox, QFileDialog
+    QStatusBar, QProgressBar, QMessageBox, QFileDialog,
+    QLabel, QGroupBox
 )
 from PyQt5.QtCore import Qt, pyqtSlot
 from PyQt5.QtGui  import QFont
@@ -23,7 +24,6 @@ import sys
 
 from .widgets.parameter_panel import ParameterPanel
 from .widgets.mpl_canvas      import MatplotlibCanvas
-from .dialogs.beamline_dialog import BeamlineSelectionDialog
 from .dialogs.help_dialog     import HelpDialog
 from ..core                   import data_structure as DStr
 from ..core.analysis_info     import format_analysis_info
@@ -200,8 +200,6 @@ class XBPMMainWindow(QMainWindow):
         logging.getLogger().addHandler(handler)
         logging.getLogger("xbpm_bumps").setLevel(logging.INFO)
 
-
-
     def _create_control_panel(self) -> QWidget:
         """Create the left control panel with parameters, info, and buttons."""
         from PyQt5.QtWidgets import QScrollArea
@@ -214,6 +212,20 @@ class XBPMMainWindow(QMainWindow):
         self.param_panel.parametersChanged.connect(
             self._on_parameters_changed
         )
+
+        # Beamline switch: name + XBPM 1/2 toggle (fixed row, top-left).
+        bl_group = QGroupBox("Beamline")
+        bl_hbox  = QHBoxLayout(bl_group)
+
+        self.beamline_name_label = QLabel("—")
+        self.beamline_switch     = QPushButton("XBPM —")
+        self.beamline_switch.setCheckable(True)
+        self.beamline_switch.setEnabled(False)
+        self.beamline_switch.toggled.connect(self._on_beamline_switch_toggled)
+
+        bl_hbox.addWidget(self.beamline_name_label, 1)
+        bl_hbox.addWidget(self.beamline_switch)
+        layout.addWidget(bl_group)
 
         # Wrap parameter panel in scroll area to handle many widgets
         scroll = QScrollArea()
@@ -349,70 +361,165 @@ class XBPMMainWindow(QMainWindow):
         # Validate selected path and read data.
         try:
             self.runtime_prm, self.beamlinedata = read_hdf5(h5file)
-        except OSError as exc:
+        except Exception as exc:
             self.show_error(
                 f"cannot open HDF5 file {h5file}:", f"\n{str(exc)}"
                 )
             return
 
         # Store inputfile in parameter panel and update status bar
-        self.param_panel.show_inputfile(h5file)
+        # self.param_panel.show_inputfile(h5file)
         self.status_bar.showMessage(f"Opened: {h5file}")
 
-        # Select beamline and create effective links to
-        # data and analysis objects.
-        self._select_beamline()
-
-        # Define links to effective beamline data. 
-        self.workdatum    = self.beamlinedata[self.workbeamline]
-        self.analysis     = self.workdatum.analysis
-        self.beamline_prm = self.workdatum.prm
-        self.pos_nom      = self.workdatum.raw_data.blade_avg.pos_nom
-        self._build_tab_info()
-
-        # Update BPM distance.
-        self.beamline_prm.bpmdist = Config.BPMDISTS.get(
-            self.workbeamline[:3], None
-            )
-
-        # Calculate grid shape from nominal positions.
-        self.nom_pos = self.workdatum.raw_data.blade_avg.pos_nom
-        self.grid_shape = (
-            len(np.unique(self.nom_pos.y)),  # vertical dimension
-            len(np.unique(self.nom_pos.x)),  # horizontal dimension
-        )
-
-        # Update parameter panel.
-        self.param_panel.load_beamline_data(
-            self.runtime_prm,
-            self.beamline_prm,
-            self.grid_shape,
-        )
+        # Fill the selector and activate the first beamline.
+        self._populate_beamline_selector()
+        self._activate_beamline(self.beamlines[0])
 
         self.log_message(
             f"Loading data from: {h5file} "
             f"(beamline: {self.workbeamline})"
         )
 
-    def _select_beamline(self) -> str:
-        """Centralized beamline selection: returns the chosen beamline."""
-        # Set beamline list from dataset keys.
-        self.beamlines = list(self.beamlinedata.keys())
+        # # Select beamline and create effective links to
+        # # data and analysis objects.
+        # self._select_beamline()
 
-        if len(self.beamlines) == 1:
-            self.workbeamline = self.beamlines[0]
-            self.log_message(f"Auto-selected beamline: {self.workbeamline}")
-        else:
-            dialog = BeamlineSelectionDialog(sorted(self.beamlines))
-            if dialog.exec_() != dialog.Accepted:
-                raise RuntimeError("Beamline selection cancelled by user.")
-            self.workbeamline = dialog.get_selection()
-            if not self.workbeamline:
-                raise RuntimeError("No beamline selected.")
-            self.log_message(f"Selected beamline: {self.workbeamline}")
+        # # Define links to effective beamline data. 
+        # self.workdatum    = self.beamlinedata[self.workbeamline]
+        # self.analysis     = self.workdatum.analysis
+        # self.beamline_prm = self.workdatum.prm
+        # self.pos_nom      = self.workdatum.raw_data.blade_avg.pos_nom
+        # self._build_tab_info()
 
-        # Persist in parameter panel for future get_parameters() calls
-        self.param_panel.set_beamline(self.workbeamline)
+        # Update BPM distance.
+        # self.beamline_prm.bpmdist = Config.BPMDISTS.get(
+        #     self.workbeamline[:3], None
+        #     )
+
+        # # Calculate grid shape from nominal positions.
+        # self.nom_pos = self.workdatum.raw_data.blade_avg.pos_nom
+        # self.grid_shape = (
+        #     len(np.unique(self.nom_pos.y)),  # vertical dimension
+        #     len(np.unique(self.nom_pos.x)),  # horizontal dimension
+        # )
+
+        # # Update parameter panel.
+        # self.param_panel.load_beamline_data(
+        #     self.runtime_prm,
+        #     self.beamline_prm,
+        #     self.grid_shape,
+        # )
+
+        # self.log_message(
+        #     f"Loading data from: {h5file} "
+        #     f"(beamline: {self.workbeamline})"
+        # )
+
+    # def _select_beamline(self) -> str:
+    #     """Centralized beamline selection: returns the chosen beamline."""
+    #     # Set beamline list from dataset keys.
+    #     self.beamlines = list(self.beamlinedata.keys())
+
+    #     if len(self.beamlines) == 1:
+    #         self.workbeamline = self.beamlines[0]
+    #         self.log_message(f"Auto-selected beamline: {self.workbeamline}")
+    #     else:
+    #         dialog = BeamlineSelectionDialog(sorted(self.beamlines))
+    #         if dialog.exec_() != dialog.Accepted:
+    #             raise RuntimeError("Beamline selection cancelled by user.")
+    #         self.workbeamline = dialog.get_selection()
+    #         if not self.workbeamline:
+    #             raise RuntimeError("No beamline selected.")
+    #         self.log_message(f"Selected beamline: {self.workbeamline}")
+
+    #     # Persist in parameter panel for future get_parameters() calls
+    #     self.param_panel.set_beamline(self.workbeamline)
+
+
+    # Populate and manage the beamline selector toggle.
+
+    def _populate_beamline_selector(self) -> None:
+        """Set up the toggle for the beamlines present in the dataset."""
+        self.beamlines = sorted(self.beamlinedata.keys())
+        if not self.beamlines:
+            raise ValueError(
+                "No known beamlines found in this HDF5 file "
+                "(is it in the old pre-migration format?)"
+            )        
+        # The toggle is only meaningful for exactly two beamlines
+        # (XBPM 1 and 2 of the same beamline).
+        self.beamline_switch.setEnabled(len(self.beamlines) == 2)
+        if self.beamlines:
+            self._sync_beamline_switch(self.beamlines[0])
+
+    def _sync_beamline_switch(self, beamline: str) -> None:
+        """Reflect a beamline on the toggle without emitting signals."""
+        idx   = self.beamlines.index(beamline)
+        base  = beamline[:3]
+        name  = Config.BEAMLINENAME.get(base, base)
+        label = f"XBPM {beamline[-1]}" if beamline[-1].isdigit() else beamline
+        self.beamline_switch.blockSignals(True)
+        self.beamline_switch.setChecked(idx == 1)
+        self.beamline_switch.setText(label)
+        self.beamline_switch.blockSignals(False)
+        self.beamline_name_label.setText(name)
+
+    @pyqtSlot(bool)
+    def _on_beamline_switch_toggled(self, checked: bool) -> None:
+        if not self.beamlines or len(self.beamlines) != 2:
+            return
+        beamline = self.beamlines[1] if checked else self.beamlines[0]
+        self._activate_beamline(beamline)
+
+    def _activate_beamline(self, beamline: str) -> None:
+        """Point the window at one beamline and refresh everything."""
+        self.workbeamline = beamline
+        self.workdatum    = self.beamlinedata[beamline]
+        self.analysis     = self.workdatum.analysis
+        self.beamline_prm = self.workdatum.prm
+        self.pos_nom      = self.workdatum.raw_data.blade_avg.pos_nom
+        self.nom_pos      = self.pos_nom
+
+        # BPM distance lookup (was done in _on_open_hdf5).
+        self.beamline_prm.bpmdist = Config.BPMDISTS.get(beamline[:3], None)
+
+        # Grid shape from nominal positions.
+        self.grid_shape = (
+            len(np.unique(self.pos_nom.y)),
+            len(np.unique(self.pos_nom.x)),
+        )
+
+        # Reflect into the parameter panel (loads this beamline's prm).
+        self.param_panel.load_beamline_data(
+            self.runtime_prm,
+            self.beamline_prm,
+            self.grid_shape,
+        )
+
+        self._build_tab_info()
+        self._refresh_analysis_info()
+
+        # Sync toggle + name label without re-entering the slot.
+        self._sync_beamline_switch(beamline)
+
+        # Re-render the stored analysis for this beamline, if present.
+        self._render_current_analysis()
+
+        self.log_message(f"Activated beamline: {beamline}")
+
+    def _render_current_analysis(self) -> None:
+        """Render/refresh figures for the active beamline's analysis."""
+        if self.analysis is None:
+            return
+        self.analysis.figures = render_data_analysis(
+            self.pos_nom,
+            self.analysis,
+            self.beamline_prm,
+            self.runtime_prm.bmap_global_scale,
+        )
+        for key, fig in self.analysis.figures.items():
+            if key in self.canvases:
+                self._embed_figure(self.canvases[key], fig)
 
     @pyqtSlot()
     def _on_parameters_changed(self) -> None:
@@ -566,6 +673,9 @@ class XBPMMainWindow(QMainWindow):
         self.stop_btn.setEnabled(running)
         self.param_panel.setEnabled(not running)
         self.progress_bar.setVisible(running)
+        self.beamline_switch.setEnabled(
+            not running and len(getattr(self, 'beamlines', [])) == 2
+            )
 
         if running:
             self.status_bar.showMessage("Analysis running...")
