@@ -761,7 +761,7 @@ class BPMProcessor:
         self.meta        = raw_data.meta
         self.prm_bml     = prm_bml
         self.roi         = prm_bml.roislice
-        self._print_bpm_info()
+        # self._print_bpm_info()
         self.bpmanalysis = self.calculate_positions()
 
     def _print_bpm_info(self) -> None:

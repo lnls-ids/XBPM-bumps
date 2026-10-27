@@ -2,12 +2,10 @@
 
 from io import BytesIO
 from typing import ClassVar, Optional, Iterator, List
-# from curses import raw
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 import logging
 from matplotlib.figure import Figure
-# from typing import List, Optional
 
 import h5py
 import numpy as np
@@ -2021,28 +2019,28 @@ class DataAnalysis:
         if self.figures:
             fig_grp = H5Writer.group(dan_grp, "figures")
             for key, fig in self.figures.items():
-                self._figure_export(fig, fig_grp, f"{key}.png")
+                self._figure_export(fig, fig_grp, f"{key}")
 
 
     def _figure_export(
             self,
-            figure      : Figure,
-            fig_grp     : h5py.Group,
+            figure      : "Figure",
+            fig_grp     : "h5py.Group",
             figure_name : str
             ) -> None:
-        """Save the figure as PNG bytes (byte-identical to the .png file)."""
+        """Save the figure as PNG byte stream (byte-identical to the .png)."""
         buf = BytesIO()
-        figure.savefig(buf, format='png', dpi=FIGDPI, bbox_inches='tight')
+        figure.savefig(buf, format="png", dpi=FIGDPI, bbox_inches="tight")
         png = np.frombuffer(buf.getvalue(), dtype=np.uint8)
-        buf.close()    
+        buf.close()
 
         ds = H5Writer.dataset(
-            fig_grp, "figure",
+            fig_grp,
+            "figure",
             png,
-            name=figure_name,
+            name=f"{figure_name}.png",
             figure=figure_name,
-            compression="gzip"
-        )
+            )
         ds.attrs["format"] = "image/png"
         ds.attrs["dpi"]    = FIGDPI
 

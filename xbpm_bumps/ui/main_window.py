@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import logging
 import os
+import sys
 
 # import traceback
 
@@ -64,6 +65,24 @@ class XBPMMainWindow(QMainWindow):
         self.resize(1920, 1080)
         self._refresh_analysis_info()
         self.setWindowTitle("XBPM Calibration and Analysis Tool")
+
+
+    class _ConsoleWriter:
+        """File-like object that forwards writes to the Console tab."""
+
+        def __init__(self, console: QTextEdit) -> None:
+            self.console = console
+
+        def write(self, text: str) -> int:
+            text = text.rstrip("\n")
+            if text:
+                self.console.append(text)
+            return len(text)
+
+        def flush(self) -> None:
+            """Compatibility no-op (file-like API)."""
+            pass
+
 
     @pyqtSlot()
     def _on_run_clicked(self) -> None:
@@ -166,6 +185,22 @@ class XBPMMainWindow(QMainWindow):
         # set_legacy_action.triggered.connect(
         #     self._on_set_legacy_blade_map
         #     )
+
+        # Route terminal output (print, warnings, logging) into the
+        # Console tab.
+        self._stdout = self._ConsoleWriter(self.console)
+        sys.stdout = self._stdout
+        sys.stderr = self._stdout
+
+        handler = logging.StreamHandler(self._stdout)
+        handler.setFormatter(logging.Formatter(
+            "\n%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+            ))
+        logging.getLogger().addHandler(handler)
+        logging.getLogger("xbpm_bumps").setLevel(logging.INFO)
+
+
 
     def _create_control_panel(self) -> QWidget:
         """Create the left control panel with parameters, info, and buttons."""
