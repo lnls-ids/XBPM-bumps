@@ -380,62 +380,6 @@ class XBPMMainWindow(QMainWindow):
             f"(beamline: {self.workbeamline})"
         )
 
-        # # Select beamline and create effective links to
-        # # data and analysis objects.
-        # self._select_beamline()
-
-        # # Define links to effective beamline data. 
-        # self.workdatum    = self.beamlinedata[self.workbeamline]
-        # self.analysis     = self.workdatum.analysis
-        # self.beamline_prm = self.workdatum.prm
-        # self.pos_nom      = self.workdatum.raw_data.blade_avg.pos_nom
-        # self._build_tab_info()
-
-        # Update BPM distance.
-        # self.beamline_prm.bpmdist = Config.BPMDISTS.get(
-        #     self.workbeamline[:3], None
-        #     )
-
-        # # Calculate grid shape from nominal positions.
-        # self.nom_pos = self.workdatum.raw_data.blade_avg.pos_nom
-        # self.grid_shape = (
-        #     len(np.unique(self.nom_pos.y)),  # vertical dimension
-        #     len(np.unique(self.nom_pos.x)),  # horizontal dimension
-        # )
-
-        # # Update parameter panel.
-        # self.param_panel.load_beamline_data(
-        #     self.runtime_prm,
-        #     self.beamline_prm,
-        #     self.grid_shape,
-        # )
-
-        # self.log_message(
-        #     f"Loading data from: {h5file} "
-        #     f"(beamline: {self.workbeamline})"
-        # )
-
-    # def _select_beamline(self) -> str:
-    #     """Centralized beamline selection: returns the chosen beamline."""
-    #     # Set beamline list from dataset keys.
-    #     self.beamlines = list(self.beamlinedata.keys())
-
-    #     if len(self.beamlines) == 1:
-    #         self.workbeamline = self.beamlines[0]
-    #         self.log_message(f"Auto-selected beamline: {self.workbeamline}")
-    #     else:
-    #         dialog = BeamlineSelectionDialog(sorted(self.beamlines))
-    #         if dialog.exec_() != dialog.Accepted:
-    #             raise RuntimeError("Beamline selection cancelled by user.")
-    #         self.workbeamline = dialog.get_selection()
-    #         if not self.workbeamline:
-    #             raise RuntimeError("No beamline selected.")
-    #         self.log_message(f"Selected beamline: {self.workbeamline}")
-
-    #     # Persist in parameter panel for future get_parameters() calls
-    #     self.param_panel.set_beamline(self.workbeamline)
-
-
     # Populate and manage the beamline selector toggle.
 
     def _populate_beamline_selector(self) -> None:
