@@ -160,6 +160,13 @@ class XBPMMainWindow(QMainWindow):
         help_action = help_menu.addAction("Help…")
         help_action.triggered.connect(self._on_help_clicked)
 
+        # Menubar: Tools
+        # tools_menu = self.menuBar().addMenu("Tools")
+        # set_legacy_action = tools_menu.addAction("Legacy Blade Map")
+        # set_legacy_action.triggered.connect(
+        #     self._on_set_legacy_blade_map
+        #     )
+
     def _create_control_panel(self) -> QWidget:
         """Create the left control panel with parameters, info, and buttons."""
         from PyQt5.QtWidgets import QScrollArea

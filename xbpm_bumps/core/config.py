@@ -22,25 +22,32 @@ class Config:
     # Map of blades positions in each XBPM.
     # TO, TI, BO, BI : top/bottom, in/out, relative to the storage ring;
     # A, B, C, D : names of respective P.V.s
-    #
-    # OBS.: the current blade map is based on machine studies, in which the
-    # blades were identified by bumping the beam. Cables were reconnected 
-    # accordingly.
+    XBPM_BEAMLINES = [
+        "CAT", "CAT1",
+        "CNB", "CNB1",
+        "MGN", "MGN1", "MGN2",
+        "MNC", "MNC1", "MNC2",
+        "SIMUL"
+        ]
     BLADEMAP = {
-        "CAT"  : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
-        "CNB"  : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
-        "MNC1" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
-        # "MNC1" : {"TO": 'D', "TI": 'C', "BI": 'B', "BO": 'A'},
-        "MNC2" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
-        "MGN1" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
-        "MGN2" : {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
-
-        # Set for simulation.
-        "SIMUL": {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+        key : {"TO": "A", "TI": "B", "BI": "C", "BO": "D"}
+        for key in XBPM_BEAMLINES
     }
-    # Repeat map for synonymous beamline names.
-    BLADEMAP["CNB1"] = BLADEMAP["CNB"]
-    BLADEMAP["CAT1"] = BLADEMAP["CAT"]
+
+    LEGACY_BLADEMAP = {
+        "MNC1" : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+        "MNC2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+        "CAT1" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+        "CNB1" : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+        "CNB2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+        # "MGN"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
+        "MGN1" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
+        "MGN2" : {"TO": 'B', "TI": 'C', "BI": 'A', "BO": 'D'},
+        "SIMUL": {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
+        }
+    # The name of the beamline equals to first XBPM id.
+    for blade in ["CAT", "CNB", "MGN", "MNC"]:
+        LEGACY_BLADEMAP[blade] = LEGACY_BLADEMAP[blade + "1"]
 
     # The XBPM beamlines.
     BEAMLINENAME = {
@@ -433,10 +440,10 @@ class Config:
         "x": "X",
         "y": "Y",
 
-        "to": "Top outer",
-        "ti": "Top inner",
-        "bi": "Bottom inner",
-        "bo": "Bottom outer",
+        "to": "TO",
+        "ti": "TI",
+        "bi": "BI",
+        "bo": "BO",
     
         "A": "Blade A",
         "B": "Blade B",
@@ -473,12 +480,12 @@ class Config:
         "pos"   : "Position",
 
         # Fit coefficients (blade or axis): slope, intercept, quadratic.
-        "k"     : "slope",
-        "sk"    : "slope error",
-        "d"     : "intercept",
-        "sd"    : "intercept error",
-        "q"     : "quadratic",
-        "sq"    : "quadratic error",
+        "k"     : "slope (k)",
+        "sk"    : "slope err. (sk)",
+        "d"     : "offset (d)",
+        "sd"    : "offset err. (sd)",
+        "q"     : "quad. (q)",
+        "sq"    : "quad. err. (sq)",
 
         # RMS summary: <direction> <kind>.
         "min"   : "minimum",

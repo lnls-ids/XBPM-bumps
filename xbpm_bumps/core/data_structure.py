@@ -39,17 +39,26 @@ class H5Writer:
 
     @staticmethod
     def dataset(
-        parent : "h5py.Group",
-        key    : str,
-        data,
-        name   : str | None = None,
+        parent   : "h5py.Group",
+        key      : str,
+        data     : np.ndarray | xr.DataArray,
+        name     : str | None = None,
+        compress : str | None = None,
         **fmt,
         ) -> "h5py.Dataset":
         """Create the dataset of registry `key`, replacing any previous one."""
         name = name or Config.group_name(key)
         if name in parent:
             del parent[name]
-        ds = parent.create_dataset(name, data=data)
+        if compress:
+            ds = parent.create_dataset(
+                name,
+                data=data,
+                compression=compress,
+                compression_opts=6,
+                )
+        else:
+            ds = parent.create_dataset(name, data=data)
         ds.attrs["Description"] = Config.get_description(key, **fmt)
         return ds
 
@@ -221,6 +230,7 @@ class BeamlinePrm:
     grid_shape   : tuple[int, int] | None = None
     roislice     : ROISlice        = None
     updated      : str             | None = None
+    legacy_bmap  : bool            | None = None
 
     # Extra parameters not explicitly defined above.
     extras       : dict | None = None
@@ -2027,7 +2037,11 @@ class DataAnalysis:
         buf.close()    
 
         ds = H5Writer.dataset(
-            fig_grp, "figure", png, name=figure_name, figure=figure_name
+            fig_grp, "figure",
+            png,
+            name=figure_name,
+            figure=figure_name,
+            compression="gzip"
         )
         ds.attrs["format"] = "image/png"
         ds.attrs["dpi"]    = FIGDPI

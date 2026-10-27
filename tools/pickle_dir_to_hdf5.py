@@ -48,6 +48,13 @@ def cmd_line() -> argparse.Namespace:
         '-d', '--dir', type=str, default='./', required=True,
         help='Directory containing pickle files.'
     )
+
+    # Legacy blade map flag.
+    parser.add_argument(
+        '-l', '--legacy', action='store_true',
+        help='Use legacy blade map.'
+    )
+
     return parser.parse_args(sys.argv[1:])
 
 
@@ -158,7 +165,10 @@ def extract_beamlines(rawdata: list) -> list:
         return []
 
 
-def _reverse_blade_map(beamline: str) -> dict:
+def _reverse_blade_map(
+        beamline: str,
+        legacy: bool = False,
+        ) -> dict:
     """Return the blade mapping for the beamline from the blade letter.
     
     Reverse blade mapping from TO → A to A → TO etc.
@@ -169,7 +179,10 @@ def _reverse_blade_map(beamline: str) -> dict:
     Returns:
         revmap: dict, Mapping of blade names to their corresponding PVs.
     """
-    bmap = Config.BLADEMAP.get(beamline, {})
+    if legacy:
+        bmap = Config.LEGACY_BLADEMAP.get(beamline, {})
+    else:
+        bmap = Config.BLADEMAP.get(beamline, {})
     return {v: k for k, v in bmap.items()}
 
 
@@ -196,8 +209,9 @@ def blade_average(blade: list) -> tuple:
 
 
 def extract_and_average_blade_data(
-        rawdata0: dict,
-        beamline: str
+        rawdata0 : dict,
+        beamline : str,
+        legacy   : bool = False,
         ) -> tuple[dict, dict]:
     """Extract and average blade data for the given beamline.
     
@@ -214,7 +228,7 @@ def extract_and_average_blade_data(
     rawblades = {}
     avgblades = {}
     # Reversed blade map (get ).
-    revmap = _reverse_blade_map(beamline)
+    revmap = _reverse_blade_map(beamline, legacy=legacy)
 
     # Run through each PV.
     for pv in ['A', 'B', 'C', 'D']:
@@ -238,12 +252,18 @@ def extract_and_average_blade_data(
     return rawblades, avgblades
 
 
-def parse_rawdata(rawdata: list, beamline: str) -> dict:
+def parse_rawdata(
+        rawdata: list,
+        beamline: str,
+        legacy: bool = False
+        ) -> dict:
     """Parse rawdata to extract beamline-specific data for each bump.
 
     Args:
         rawdata: List of (meta, grid, bpm_dict) tuples for the selected
             beamline, corresponding to each bump.
+        beamline: str, Selected beamline name.
+        legacy: bool, Whether to use the legacy blade map.
 
     Returns:
         blade_data: Dict containing parsed data for the selected
@@ -295,7 +315,7 @@ def parse_rawdata(rawdata: list, beamline: str) -> dict:
 
         # Extract and average blade data for the current beamline.
         rawblades, avgbld = extract_and_average_blade_data(
-            record[0][beamline], beamline
+            record[0][beamline], beamline, legacy=legacy
             )
 
         # Store raw blade data.
@@ -514,7 +534,7 @@ def main() -> None:
     # Data is extracted as-is and averaged data is also computed.
     dataset = {}
     for bline in beamlines:
-        dataset[bline] = parse_rawdata(rawdata, bline)
+        dataset[bline] = parse_rawdata(rawdata, bline, legacy=args.legacy)
 
     # Set file name and handle overwrite/append.
     # Set initial timestamp from the first record of the first beamline.
