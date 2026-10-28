@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import QApplication
 from xbpm_bumps.ui.main_window import XBPMMainWindow
 
 
-def main():
+def main() -> None:
     """Launch the XBPM GUI application."""
     app = QApplication(sys.argv)
     app.setApplicationName("XBPM Analysis")

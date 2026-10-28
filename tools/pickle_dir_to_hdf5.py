@@ -1,0 +1,650 @@
+#!/usr/bin/env python3
+
+import argparse
+from datetime import datetime
+from pathlib import Path
+import h5py
+import numpy as np
+import os
+import pickle  # noqa: S403
+import sys
+
+# script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from xbpm_bumps.core.config import Config       # noqa: E402
+from xbpm_bumps.core.data_structure import (    # noqa: E402
+    H5Writer,
+    BumpRawData
+    )
+
+
+HELP_DESCRIPTION = (
+"""This program extract data from pickle files created by
+XBPM-bumps experiments. The pickle files must be provided
+in a directory.
+
+The data is parsed and an HDF5 is created with the
+same name as the directory, containing the data in a
+structured format.
+"""
+)
+
+
+def cmd_line() -> argparse.Namespace:
+    """Parse command-line arguments using argparse.
+
+    Args:
+        argv: List of command-line arguments. If None, uses sys.argv[1:].
+    """
+    parser = argparse.ArgumentParser(
+        prog="pickle_dir_to_hdf5",
+        description="Convert XBPM data from pickle files to HDF5.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"{HELP_DESCRIPTION}\n")
+
+    # Boolean flags
+    parser.add_argument(
+        '-d', '--dir', type=str, default='./', required=True,
+        help='Directory containing pickle files.'
+    )
+
+    # Legacy blade map flag.
+    parser.add_argument(
+        '-r', '--rewire', action='store_true',
+        help='Use legacy blade map.'
+    )
+
+    return parser.parse_args(sys.argv[1:])
+
+
+def pick_beamline(beamlines: list) -> str:
+    """Prompt user to select a beamline from the list.
+
+    Default is to select all beamlines if no input is provided.
+
+    Args:
+        beamlines: List of unique beamline names.
+
+    Returns:
+        beamline: str, Selected beamline name.
+    """
+    print(f"### Unique beamlines found: {', '.join(beamlines)}")
+    for i, beamline in enumerate(beamlines, start=1):
+        print(f"{i}. {beamline}")
+    print(f"{i+1}. All beamlines (default)")
+    while True:
+        try:
+            choice = input("Select a beamline by number: ")
+
+            # If default.
+            if choice == "":
+                return beamlines
+
+            # Otherwise.
+            choice = int(choice)
+            if 1 <= choice <= len(beamlines):
+                break
+            elif choice == len(beamlines) + 1:
+                return beamlines
+            else:
+                print("\nInvalid choice. Please select a number"
+                      f" between 1 and {len(beamlines) + 1}.")
+        except ValueError:
+            print("Invalid input. Please enter a number.")
+    return [beamlines[choice - 1]]
+
+
+def _get_timestamp_from_filename(filename: str) -> str:
+    ts = filename.strip('.pickle').split('_')[-1]
+    ts = datetime.fromtimestamp(float(ts)).strftime('%Y-%m-%d %H:%M:%S')
+    return ts
+
+
+def read_pickle_dir(path: str) -> list:
+    """Read pickle directory and return rawdata as a list of tuples.
+
+    Args:
+        path: Directory path.
+
+    Returns:
+        rawdata: List of (meta, grid, bpm_dict) tuples.
+    """
+    # List pickle files
+    allfiles = os.listdir(path)
+    picklefiles = [pf for pf in allfiles if pf.endswith("pickle")]
+    if len(picklefiles) == 0:
+        print(f"No pickle files found in directory '{path}'. Aborting.")
+        sys.exit(0)
+    sfiles = sorted(picklefiles, key=lambda name: name.split('_')[-1])
+
+    rawdata = []
+
+    # Run through each pickle file and load the data.
+    for file in sfiles:
+        with open(os.path.join(path, file), 'rb') as df:
+            filedata = pickle.load(df)  # noqa: S301
+
+            # If entry is already a tuple (meta, grid, bpm_dict), use as is
+            if isinstance(filedata, (list, tuple)) and len(filedata) == 3:
+                filedata[2]['timestamp'] = _get_timestamp_from_filename(file)
+                rawdata.append(filedata)
+
+            elif isinstance(filedata, dict):
+                # Otherwise, try to wrap in expected structure
+                # Add timestamp to meta data in the appropriate dict.
+                if 'current' in filedata.keys():
+                    filedata['timestamp'] = _get_timestamp_from_filename(file)
+
+                rawdata.append((filedata, None, {}))
+
+            else:
+                rawdata.append(({}, None, {}))
+
+    return rawdata
+
+
+def extract_beamlines(rawdata: list) -> list:
+    """Extract unique beamlines from pickle raw data headers."""
+    try:
+        beamlines = set()
+        for record in rawdata or []:
+            if not (isinstance(record, (list, tuple)) and len(record) > 0):
+                continue
+            header = record[0]
+            if isinstance(header, dict):
+                for key in header.keys():
+                    if isinstance(key, str):
+                        beamlines.add(key)
+            elif isinstance(header, (list, tuple)):
+                for item in header:
+                    if isinstance(item, str):
+                        beamlines.add(item)
+        return sorted(list(beamlines))
+    except Exception:
+        return []
+
+
+
+
+def blade_rewire(beamlines : list[str]):
+    """Rewire blades for the given beamlines.
+
+    Args:
+        beamlines: list of str, beamline names to rewire.
+    """
+    blade_map = {}
+    for beamline in beamlines:
+        print("\n # Rewiring blades for beamline:", beamline)
+
+        current_map = _reverse_map(Config.BLADEMAP[beamline])
+        cmap_txt = _blade_map_str(current_map)
+        print(f"Current blade map:\n{cmap_txt}\n")
+
+        choose = input(
+            "\n Do you want to rewire blades for this beamline? (Y/n): "
+            )
+        if choose.lower() not in ('y', ''):
+            continue
+
+        while True:
+            new_map = _get_new_blade_map(current_map.copy())
+            cmap_txt = _blade_map_str(new_map)
+            print(f"New blade map:\n{cmap_txt}\n")
+
+            confirm = input("\nConfirm new blade map? (Y/n): ")
+            if confirm.lower() in ('y', ''):
+                blade_map[beamline] = new_map
+                break
+
+    return blade_map
+
+
+def _blade_map_str(bmap: dict[str, str]):
+    """Print the blade map in a readable format."""
+    map_txt = (
+        f" {'B -> ':8}{bmap['B']:<15}"
+        f" {'A -> ':8}{bmap['A']}\n\n"
+        f" {'C -> ':8}{bmap['C']:<15}"
+        f" {'D -> ':8}{bmap['D']:15}"
+        )
+    return map_txt
+
+
+def _get_new_blade_map(current_map : dict[str, str]) -> dict[str, str]:
+    """Get a new blade map from user input.
+
+    Args:
+        current_map: dict[str, str], Current mapping of blades.
+
+    Returns:
+        new_map: dict[str, str], Updated mapping of blades.
+    """
+    print(" Available values are: "
+          f"{', '.join(list(current_map.values()))}"
+          )
+
+    # Define the order of blades and create a list of their current values.
+    curr_keys = ['A', 'B', 'C', 'D']
+    bladelist = [current_map[key] for key in curr_keys]
+
+    new_map, k = {}, 0
+    while True:
+        ckey = curr_keys[k]
+
+        # Assign the last remaining blade automatically and return.
+        if len(bladelist) == 1:
+            new_map[ckey] = bladelist[0]
+            return new_map
+
+        new_val = input(
+            f"Enter new mapping for '{ckey}' "
+            f"(current: {current_map[ckey]}): "
+            )
+        if new_val not in bladelist:
+            print(f"{new_val} is not valid. Available values are: "
+                    f"{', '.join(bladelist)}"
+                    "\n Try again."
+                    )
+            continue
+
+        # Assign new value and remove it from the available list.
+        new_map[ckey] = new_val
+        bladelist.remove(new_val)
+        # Next blade.
+        k += 1
+
+def _reverse_map(bmap: dict[str, str]) -> dict[str, str]:
+    """Reverse the blade map.
+
+    Args:
+        bmap: dict[str, str], Blade map to reverse.
+
+    Returns:
+        revmap: dict[str, str], Reversed blade map.
+    """
+    return {v: k for k, v in bmap.items()}
+
+
+def blade_average(blade: list) -> tuple:
+    """Calculate the average of blades' values for current beamline.
+    
+    Values are converted to Amperes using Config.AMPSUB (unit map).
+
+    Args:
+        blade: list of (value, unit) tuples for each blade.
+
+    Returns:
+        avg  : float, Average value of the blades.
+        std  : float, Standard deviation of the blades.
+        vals : np.ndarray, Array of processed blade values.
+    """
+    try:
+        vals = np.array([
+            vv * Config.AMPSUB[un] for vv, un in blade
+        ])
+        return np.average(vals), np.std(vals), vals
+    except:  # noqa: E722
+        return np.average(blade), np.std(blade), np.array(blade)
+
+
+def extract_and_average_blade_data(
+        rawdata0 : dict,
+        beamline : str,
+        blademap : dict[str, str],
+        ) -> tuple[dict, dict]:
+    """Extract and average blade data for the given beamline.
+    
+    'rawdata0' contains raw blade data for the selected beamline
+    for a single grid point. This script extracts the data for the
+    given beamline and computes the average and standard deviation
+    for each blade for that point.
+
+    Args:
+        rawdata0: dict, Raw data for a single grid point.
+        beamline: str, Selected beamline name.
+        blademap: dict[str, str], Blade map for the selected beamline.
+
+    Returns:
+        rawblades: dict, Raw blade data for the selected beamline.
+        avgblades: dict, Average and std dev for each blade.
+    """
+    rawblades = {}
+    avgblades = {}
+
+    # Reversed blade map (get ).
+    # revmap = _reverse_map(blademap)
+
+    # Run through each PV.
+    for pv in ['A', 'B', 'C', 'D']:
+        # Get average, std dev, and raw values for the blade.
+        avg, std, vals = blade_average(rawdata0[pv + "_val"])
+
+        # Store raw values: _val, _range, _saturation.
+        rawblades[Config.column(pv, "val")] = np.array(vals)
+        rawblades[Config.column(pv, "range")] = np.array(
+            rawdata0.get(pv + "_range", None)
+            )
+        rawblades[Config.column(pv, "saturation")] = np.array(
+            rawdata0.get(pv + "_saturation", None)
+            )
+
+        # Store each avg / std. dev. value.
+        blade = blademap[pv].lower()
+        avgblades[Config.column(blade, "mean")] = avg
+        avgblades[Config.column(blade, "err")]  = std
+
+    return rawblades, avgblades
+
+
+def parse_rawdata(
+        rawdata  : list,
+        beamline : str,
+        blademap : dict[str, str]
+        ) -> dict:
+    """Parse rawdata to extract beamline-specific data for each bump.
+
+    Args:
+        rawdata  : List of (meta, grid, bpm_dict) tuples for the selected
+                    beamline, corresponding to each bump.
+        beamline : str, Selected beamline name.
+        blademap   : dict[str, str], blade map for a beamline.
+
+    Returns:
+        blade_data: Dict containing parsed data for the selected
+            beamline, corresponding to each bump (same as rawdata but only
+            blade info).
+    """
+    # Electronics PV.
+    pv_meter = rawdata[0][0][beamline].get('prefix', None)
+    xbpmdist = Config.XBPMDISTS.get(beamline, 1.0)
+    col      = Config.column
+
+    # Data dictionaries: raw parsed data and averaged blade data.
+    bpm_data   = {}
+    blade_data = {}
+    avgblades  = {}
+    rawmeta    = {}
+
+    # Run through each bump record.
+    for ii, record in enumerate(rawdata):
+        # Define index for experience numbering.
+        jj = ii + 1
+
+        # Storage ring current.
+        try:
+            current = record[2].get('current', "N/A")
+        except Exception as e:
+            print(f"Error accessing current for record {jj}:\n\t {e}")
+            current = "N/A"
+
+        # Time.
+        timestamp = record[2].get('timestamp', "N/A")
+
+        # Nominal positions of the bumps by changing the beam angles.
+        angle_x = record[2].get('agx', "N/A")
+        angle_y = record[2].get('agy', "N/A")
+
+        # Alternative bumping method, by displacing the beam with defined
+        # positions. If bumps are made by angle, these are tipically zero.
+        pos_x   = record[2].get('posx', "N/A")
+        pos_y   = record[2].get('posy', "N/A")
+
+        # BPM registered positions (orbx, orby) for the current bump.
+        orbx    = record[2].get('orbx', "N/A")
+        orby    = record[2].get('orby', "N/A")
+        bpm_data[jj] = {
+            col('x', 'bpm') : orbx,
+            col('y', 'bpm') : orby
+            }
+
+        # Extract and average blade data for the current beamline.
+        rawblades, avgbld = extract_and_average_blade_data(
+            record[0][beamline], beamline, blademap=blademap
+            )
+
+        # Store raw blade data.
+        blade_data[jj] = rawblades
+
+        # Store averaged blade data.
+        avgblades.setdefault(jj, {})
+        avgblades[jj][col('x', 'nom')] = angle_x * xbpmdist
+        avgblades[jj][col('y', 'nom')] = angle_y * xbpmdist
+        avgblades[jj].update(avgbld)
+
+        # Create metadata dictionary.
+        rawmeta[jj] = {
+            'Bump #'          : jj,
+            'Timestamp'       : timestamp,
+            'PV meter'        : pv_meter,
+            'Angle x'         : angle_x,
+            'Angle y'         : angle_y,
+            'Angle unit'      : 'mrad',
+            'Disp pos x'      : pos_x,
+            'Disp pos y'      : pos_y,
+            'SR current'      : current,
+            'SR current unit' : 'mA',
+            }
+
+        # Gaps / phases of the IDs. It is originally a dict in the form
+        # {'cnb' : 80.0, 'cat' : 80.0, 'mnc' : 0.1481, etc}
+        id_gaps = record[1]
+        gap_phase = {
+            f"Gap/Ph. {key.upper()}" : value for key, value in id_gaps.items()
+            }
+        rawmeta[jj].update(gap_phase)
+
+    return {
+        "metadata"  : rawmeta,
+        "bpmdata"   : bpm_data,
+        "bladedata" : blade_data,
+        "avgblades" : avgblades
+        }
+
+
+def _write_group_data(
+        group: "h5py.Group",
+        key  : str,
+        data : dict,
+        **fmt
+        ) -> "h5py.Dataset":
+    """Write 'data' (column name -> array) as table 'key', with description."""
+    # Convert data dictionary to structured array for HDF5 export.
+    rec = np.rec.fromarrays(list(data.values()), names=list(data.keys()))
+    return H5Writer.dataset(group, key, rec, **fmt)
+
+
+def export_rawdata_to_hdf5(
+        dataset: dict,
+        outname: str,
+        append=False) -> None:
+    """Export parsed rawdata to HDF5 file.
+
+    Args:
+        dataset    : dict, Containing rawmeta, bpm_data, blade_data, and
+                     avgblades.
+        outname    : str,  Output HDF5 file name.
+        append     : bool, Whether to append to the existing HDF5 file.
+    """
+    # Create attribute lists for HDF5 export.
+    beamlines = list(dataset.keys())
+
+    w_or_a = "a" if append else "w"
+    with h5py.File(outname, w_or_a) as h5file:
+        for beamline in beamlines:
+            metadata  = dataset[beamline]["metadata"]
+            bpmdata   = dataset[beamline]["bpmdata"]
+            bladedata = dataset[beamline]["bladedata"]
+            avgblades = dataset[beamline]["avgblades"]
+
+            # One raw data set per beamline.
+            mastergrp = h5file.require_group(beamline)
+
+            # Beamline-group attributes.
+            lenmeta = len(metadata)
+            mastermeta = {
+                "# Bumps"          : lenmeta,
+                "Beamline"         : beamline,
+                "Description"      : (
+                    f"Data for {beamline} beamline from XBPM bumping"
+                    " experiments."),
+                "HDF5 updated on"  : (
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    ),
+                "Source dist. (m)" : Config.XBPMDISTS[beamline]
+                }
+            mastergrp.attrs.update(mastermeta)
+
+            # Set metadata attributes for the raw data group (per bump).
+            rawgrp = H5Writer.group(mastergrp, "raw_data", beamline=beamline)
+
+            ts_first = metadata[1].get('Timestamp', "N/A")
+            ts_last  = metadata[lenmeta].get('Timestamp', "N/A")
+            duration = str(
+                datetime.strptime(ts_last, "%Y-%m-%d %H:%M:%S") -
+                datetime.strptime(ts_first, "%Y-%m-%d %H:%M:%S")
+            )
+            rawmeta  = {
+                "# Bumps"          : lenmeta,
+                "Beamline"         : beamline,
+                "Experience start" : ts_first,
+                "Experience end"   : ts_last,
+                "Duration"         : duration,
+                }
+            rawgrp.attrs.update(rawmeta)
+
+            # One bump subgroup per record.
+            avg_sr_current = 0.
+            for ii in metadata.keys():
+                # Create a subgroup for each bump and write its attributes.
+                grp_bump = H5Writer.group(
+                    rawgrp, "bump",
+                    name     = BumpRawData.bump_name(ii),
+                    beamline = beamline,
+                    bumpnum  = ii,
+                    )
+                grp_bump.attrs.update(metadata[ii])
+
+                # Subgroup for BPM data.
+                _write_group_data(
+                    grp_bump, "bpm_data", bpmdata[ii], bumpnum=ii
+                    )
+
+                # Subgroup for raw blade data.
+                _write_group_data(
+                    grp_bump, "blade_data", bladedata[ii], bumpnum=ii
+                    )
+
+                avg_sr_current += metadata[ii].get('SR current', 0.)
+            avg_sr_current /= lenmeta
+
+            # Averaged blade data: one descbribed table per beamline.
+            columns     = list(next(iter(avgblades.values())).keys()) 
+            rows_sorted = [avgblades[k] for k in sorted(avgblades)]
+
+            # Create a structured array for HDF5 export.
+            struct_array = np.rec.fromarrays(
+                [np.array([
+                    row[c]
+                    for row in rows_sorted
+                    ]) for c in columns],
+                names=columns
+                )
+            dset = H5Writer.dataset(
+                rawgrp, "blade_averages", data=struct_array
+                )
+
+            # Select some metadata attributes to define the averaged data.
+            avg_meta = {
+                'PV meter'        : metadata[1]['PV meter'],
+                'Avg. SR current' : avg_sr_current,
+                }
+            avg_meta.update({
+                k : v
+                for k, v in metadata[1].items()
+                if k.startswith('Gap/Ph.')
+                })
+            dset.attrs.update(avg_meta)
+
+
+def hdf5_handler(blines: str, init_time: str) -> tuple:
+    """Determine HDF5 output file name and handle overwrite/append.
+    
+    Args:
+        blines: str,  Selected beamlines concatenated with underscores.
+    
+    Returns:
+        outfile : str,  Output HDF5 file name.
+        append  : bool, Whether to append to existing file or overwrite.
+    """
+    # Set file name.
+    outfile = (
+        "xbpm_bumps_" + blines + "_" +
+        init_time.replace(":", "-").replace(" ", "_") + ".h5"
+        )
+    print(f"\n### Exporting data to HDF5 file:\n '{outfile}'")
+
+    # Check whether HDF5 file already exists and ask for confirmation
+    # to overwrite.
+    append = False
+    if os.path.exists(outfile):
+        overwrite = input(f"\n### WARNING: File '{outfile}' already exists."
+                          " Overwrite? [Y/n]: ")
+        if overwrite.lower() == 'n':
+            print("\n>>> Appending data to existing file.")
+            append = True
+        else:
+            print("\n>>> Overwriting existing file.")
+
+    return outfile, append
+
+
+def main() -> None:
+    """Main function to convert pickle directory to HDF5."""
+    # Get directory from command line.
+    args = cmd_line()
+
+    # Read pickle files in the directory.
+    rawdata = read_pickle_dir(args.dir)
+
+    # Get available beamlines from the rawdata and choose each one to process.
+    # Default is to process all.
+    beamlines = extract_beamlines(rawdata)
+    beamlines = pick_beamline(beamlines)
+    print(f"\n>>> Selected beamline(s): {', '.join(beamlines)}")
+    print(f"\n### Found {len(rawdata)} pickle files in directory \n### "
+          f"'{args.dir}'")
+
+    if args.rewire:
+        blademaps = blade_rewire(beamlines)
+    else:
+        blademaps = {bl: Config.BLADEMAP[bl] for bl in beamlines}
+
+    # DEBUG
+    print(f"\n>>> Blade maps for selected beamlines:")
+    for bl, bm in blademaps.items():
+        print(f"    {bl}: {bm}")
+    # DEBUG
+
+    # Extract data for each selected beamline and store in a dictionary.
+    # Data is extracted as-is and averaged data is also computed.
+    dataset = {}
+    for beamline in beamlines:
+        dataset[beamline] = parse_rawdata(
+            rawdata, beamline, blademap=blademaps[beamline]
+            )
+
+    # Set file name and handle overwrite/append.
+    # Set initial timestamp from the first record of the first beamline.
+    init_time = str(
+        dataset[beamlines[0]]["metadata"][1].get('Timestamp', "N/A")
+        )
+    blines = '_'.join(beamlines)
+    outfile, append = hdf5_handler(blines, init_time)
+
+    export_rawdata_to_hdf5(dataset, outfile, append)
+    print("###  done.")
+
+
+if __name__ == "__main__":
+    main()

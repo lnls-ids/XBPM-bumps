@@ -1,10 +1,10 @@
 """Constants for XBPM analysis."""
 
-FILE_EXTENSION = ".pickle"    # Data file type.
-GRIDSTEP = 2                  # Default grid step.
-ROI_SIZE_V = 5                # Default vertical ROI number of sites.
-ROI_SIZE_H = 5                # Default horizontal ROI number of sites.
-FIGDPI = 300                  # Figure dpi saving parameter.
+FILE_EXTENSION = ".h5"    # Data file type.
+ROI_SIZE_V = 5            # Default vertical ROI number of sites (lines).
+ROI_SIZE_H = 5            # Default horizontal ROI number of sites (columns).
+FIGDPI = 300              # Figure dpi saving parameter.
+MAX_RAD_ANGLE = 20.0      # Maximum angle of bumps in mrad.
 
 HELP_DESCRIPTION = (
 """
@@ -37,7 +37,7 @@ The data is treated with linear transformations first, to correct for
 distortions promoted by different gains in each blade. Firstly, gains
 (or their reciprocal, 1/G, which is the suppression) are estimated by
 analyzing the slope of the line formed by central points in vertical
-and horizontal sweeping. The supression is applied to the set of points
+and horizontal sweeping. The suppression is applied to the set of points
 to correct the grid, then a linear scaling is calculated to set distances
 in micrometers.
 """)

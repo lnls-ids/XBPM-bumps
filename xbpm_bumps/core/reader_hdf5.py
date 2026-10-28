@@ -1,19 +1,46 @@
-
 """HDF5 backend for XBPM DataReader."""
+
 import h5py
 import logging
 import numpy as np
+# import sys
+import matplotlib
+
+from .config import Config as Cfg
+from . import data_structure as DStr
+
+# from typing import Optional, Any, List
+
+def read_hdf5(filepath: str) -> tuple[DStr.GenPrm,
+                                      dict[str, DStr.BeamlineDatum]]:
+    beamlinedata ={}
+    with h5py.File(filepath, 'r') as hf:
+        runtime_prm = DStr.GenPrm.from_hdf5(
+            dset_grp=hf,
+            inputfile=filepath
+        )
+
+        for beamline, bldata in hf.items():
+            if beamline not in Cfg.BLADEMAP.keys():
+                print(f" WARNING: Unknown beamline '{beamline}'"
+                        " defined in HDF5 file. Skipping.")
+                continue
+
+            # Assemble the extracted data in the raw_data dictionary.
+            beamlinedata[beamline] = DStr.BeamlineDatum.from_hdf5(bldata)
+    return runtime_prm, beamlinedata
 
 
 # --- Object-Oriented HDF5 Figure Reconstructor ---
 class HDF5FigureReconstructor:
     """Encapsulates figure reconstruction from HDF5 files."""
 
-    def __init__(self, hdf5_path):
+    def __init__(self, hdf5_path: str) -> None:
         """Initialize with the path to the HDF5 file."""
         self.hdf5_path = hdf5_path
 
-    def load_figures(self, analysis_meta_loader=None):
+    def load_figures(self,
+                     analysis_meta_loader: callable = None) -> dict:
         """Load and reconstruct figures from the HDF5 file.
 
         Args:
@@ -37,22 +64,22 @@ class HDF5FigureReconstructor:
                 logger.exception("Failed to load analysis metadata from HDF5")
 
         figure_map = {
-            'blade_map': 'blade_figure',
-            'sweeps': 'sweeps_figure',
-            'blades_center': 'blades_center_figure',
-            'blades_at_sweeps': 'blades_center_figure',
-            'blades_sweeps': 'blades_center_figure',
-            'xbpm_raw_positions': 'xbpm_raw_pairwise_figure',
-            'xbpm_scaled_positions': 'xbpm_scaled_pairwise_figure',
-            'bpm_positions': 'bpm_figure',
-            'bpm': 'bpm_figure',
+            'blade_map'             : 'blade_figure',
+            'sweeps'                : 'sweeps_figure',
+            'blades_center'         : 'blades_center_figure',
+            'blades_at_sweeps'      : 'blades_at_sweeps_figure',
+            'blade_sweeps'          : 'blade_sweeps_figure',
+            'xbpm_raw_positions'    : 'xbpm_raw_pairwise_figure',
+            'xbpm_scaled_positions' : 'xbpm_scaled_pairwise_figure',
+            'bpm_positions'         : 'bpm_figure',
+            'bpm'                   : 'bpm_figure',
         }
 
         position_variants = [
-            ('xbpm_raw_pairwise', 'xbpm_raw_pairwise_figure'),
-            ('xbpm_raw_cross', 'xbpm_raw_cross_figure'),
+            ('xbpm_raw_pairwise',    'xbpm_raw_pairwise_figure'),
+            ('xbpm_raw_cross',       'xbpm_raw_cross_figure'),
             ('xbpm_scaled_pairwise', 'xbpm_scaled_pairwise_figure'),
-            ('xbpm_scaled_cross', 'xbpm_scaled_cross_figure'),
+            ('xbpm_scaled_cross',    'xbpm_scaled_cross_figure'),
         ]
 
         for hdf5_name, result_key in figure_map.items():
@@ -83,7 +110,7 @@ class HDF5FigureReconstructor:
                 )
         return results
 
-    def reconstruct_figure(self, figure_name):
+    def reconstruct_figure(self, figure_name: str):
         """Reconstruct a matplotlib figure from stored HDF5 data.
 
         Args:
@@ -133,17 +160,18 @@ class HDF5FigureReconstructor:
                 )
 
     @staticmethod
-    def _find_analysis_group(h5_file):
+    def _find_analysis_group(h5_file: h5py.File) -> h5py.Group | None:
         """Find analysis group, prefer analysis_<beamline>."""
         for key in h5_file.keys():
-            if key.startswith('analysis_'):
+            if key.startswith('analysis'):
                 return h5_file[key]
         if 'analysis' in h5_file:
             return h5_file['analysis']
         return None
 
     @staticmethod
-    def _reconstruct_blade_map(analysis_grp):
+    def _reconstruct_blade_map(
+        analysis_grp: h5py.Group) -> "matplotlib.figure.Figure":
         """Reconstruct blade map figure from analysis group."""
         from .visualizers import BladeMapVisualizer
         if 'blade_map' not in analysis_grp:
@@ -151,9 +179,10 @@ class HDF5FigureReconstructor:
         return BladeMapVisualizer.plot_from_hdf5(analysis_grp['blade_map'])
 
     @staticmethod
-    def _reconstruct_sweeps(analysis_grp):
+    def _reconstruct_sweeps(
+        analysis_grp: h5py.Group) -> "matplotlib.figure.Figure":
         """Reconstruct sweeps figure from analysis group."""
-        from .visualizers import SweepVisualizer
+        from .visualizers import CentralSweepVisualizer
         sweeps_grp = (
             analysis_grp.get('sweeps') or
             analysis_grp.get('sweep') or
@@ -181,16 +210,17 @@ class HDF5FigureReconstructor:
                     break
         if h_data is None and v_data is None:
             raise ValueError("No sweeps datasets found in sweeps group")
-        return SweepVisualizer.plot_from_hdf5(h_data, v_data)
+        return CentralSweepVisualizer.plot_from_hdf5(h_data, v_data)
 
     @staticmethod
-    def _reconstruct_blades_center(analysis_grp):
+    def _reconstruct_blades_center(
+        analysis_grp: h5py.Group) -> "matplotlib.figure.Figure":
         """Reconstruct blades center figure from analysis group.
 
         Uses the canonical plotting function with blade data extracted
         from HDF5, ensuring consistency with live analysis.
         """
-        from .visualizers import BladeCurrentVisualizer
+        from .visualizers import CentralSweepVisualizer
 
         sweeps_grp = (analysis_grp.get('sweeps')
                       or analysis_grp.get('central_sweeps'))
@@ -199,10 +229,12 @@ class HDF5FigureReconstructor:
         h_data = sweeps_grp.get('blades_h')
         v_data = sweeps_grp.get('blades_v')
 
-        return BladeCurrentVisualizer.plot_from_hdf5(h_data, v_data)
+        return CentralSweepVisualizer.plot_from_hdf5(h_data, v_data)
 
     @staticmethod
-    def _reconstruct_positions(h5_file, analysis_grp, dataset_name):
+    def _reconstruct_positions(h5_file: h5py.File,
+                analysis_grp: h5py.Group,
+                dataset_name: str) -> "matplotlib.figure.Figure":
         """Reconstruct position figure from analysis group."""
         from .visualizers import PositionVisualizer
         if 'positions' not in analysis_grp:
@@ -270,18 +302,17 @@ class HDF5FigureReconstructor:
         )
 
     @staticmethod
-    def _reconstruct_bpm_from_raw(h5_file, analysis_grp):
+    def _reconstruct_bpm_from_raw(bpmrawdata: DStr.BPMRawData,
+                                  bpmanalysis: DStr.BPMAnalysis,
+                                  analysis_grp: h5py.Group
+                                  ) -> "matplotlib.figure.Figure":
         """Fallback reconstruction of BPM positions from raw_data sweeps."""
-        from .parameters import Prm
+        from .data_structure import BeamlinePrm
         from .processors import BPMProcessor
         from .config import Config
 
-        raw_grp = h5_file.get('raw_data')
-        if raw_grp is None:
-            raise ValueError("No BPM dataset in positions and no raw_data")
-
-        rawdata = HDF5DataReader.extract_sweeps(raw_grp)
-        if not rawdata:
+        raw_data = bpmrawdata
+        if not raw_data:
             raise ValueError("No BPM dataset in positions and raw_data is empty")
 
         beamline = analysis_grp.attrs.get('beamline', '')
@@ -291,14 +322,14 @@ class HDF5FigureReconstructor:
                 beamline = grp_name.split('analysis_', 1)[1]
 
         base_bl = beamline[:3] if beamline else ''
-        section = Config.SECTIONS.get(base_bl)
+        section = Config.SECTOR.get(base_bl)
         if not section:
             raise ValueError(
                 "No BPM dataset in positions and section is unavailable "
                 "to reconstruct from raw_data"
             )
 
-        prm = Prm()
+        prm = BeamlinePrm()
         prm.beamline = beamline
         prm.section = section
         prm.bpmdist = Config.BPMDISTS.get(base_bl)
@@ -307,151 +338,29 @@ class HDF5FigureReconstructor:
                                              Config.XBPMDISTS.get(base_bl))
         )
 
-        bpm_processor = BPMProcessor(rawdata, prm)
+        bpm_processor = BPMProcessor(raw_data, prm)
         bpm_processor.calculate_positions()
         return bpm_processor.fig
 
+    # @staticmethod
+    # def parse_measurement_dataset(raw_grp: h5py.Group,
+    #                               beamline: str) -> tuple:
+    #     """Parse measurement dataset for a given beamline."""
+    #     ds_name = f"measurements_{beamline}"
+    #     if ds_name not in raw_grp:
+    #         return None
+    #     dset = raw_grp[ds_name]
+    #     meta = dict(dset.attrs.items())
+    #     grid = None  # Not present in new structure
+    #     bpm_dict = {}
+    #     if hasattr(dset, 'dtype') and dset.dtype.names:
+    #         for name in dset.dtype.names:
+    #             bpm_dict[name] = dset[name][()]
+    #     else:
+    #         bpm_dict = np.array(dset)
+    #     return (meta, grid, bpm_dict)
 
-# --- Object-Oriented HDF5 Data Reader ---
-class HDF5DataReader:
-    """Encapsulates HDF5 file access and data extraction for XBPM."""
-
-    def __init__(self, path):
-        """Initialize HDF5DataReader with file path."""
-        self.path = path
-        self.h5 = None
-        self.rawdata = None
-        self.measured_data = None
-        self.beamlines = None
-        self.analysis_meta = None
-
-    def __enter__(self):
-        """Enter context: open HDF5 file."""
-        self.h5 = h5py.File(self.path, 'r')
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Exit context: close HDF5 file."""
-        if self.h5 is not None:
-            self.h5.close()
-            self.h5 = None
-
-    def load_all(self):
-        """Load all data: rawdata, measured_data, beamlines."""
-        if 'raw_data' not in self.h5:
-            self.rawdata, self.measured_data, self.beamlines = [], [], []
-            return
-        raw_grp = self.h5['raw_data']
-        self.beamlines = self.extract_beamlines(raw_grp)
-        self.measured_data = [
-            self.parse_measurement_dataset(raw_grp, bl)
-            for bl in self.beamlines
-        ]
-        self.rawdata = self.extract_sweeps(raw_grp)
-
-    @staticmethod
-    def extract_beamlines(raw_grp):
-        """Extract available beamlines from measurement datasets."""
-        # Always prefer the 'beamlines' attribute from raw_grp if present
-        avail = raw_grp.attrs['beamlines']
-        if isinstance(avail, bytes):
-            avail = avail.decode()
-        if isinstance(avail, str):
-            beamlines = [b.strip() for b in avail.split(',') if b.strip()]
-        elif isinstance(avail, (list, tuple, np.ndarray)):
-            beamlines = list(avail)
-        return beamlines
-
-    @staticmethod
-    def parse_measurement_dataset(raw_grp, beamline):
-        """Parse measurement dataset for a given beamline."""
-        ds_name = f"measurements_{beamline}"
-        if ds_name not in raw_grp:
-            return None
-        dset = raw_grp[ds_name]
-        meta = dict(dset.attrs.items())
-        grid = None  # Not present in new structure
-        bpm_dict = {}
-        if hasattr(dset, 'dtype') and dset.dtype.names:
-            for name in dset.dtype.names:
-                bpm_dict[name] = dset[name][()]
-        else:
-            bpm_dict = np.array(dset)
-        return (meta, grid, bpm_dict)
-
-    @staticmethod
-    def extract_sweeps(raw_grp):
-        """Extract sweep data from raw_data, enforcing canonical structure.
-
-        Args:
-            raw_grp: HDF5 group containing raw data
-
-        Returns:
-            rawdata: List of (meta, grid, bpm_dict) tuples
-        """
-        import numpy as np
-
-        rawdata = []
-        rawdata_2_keys = [
-            'current', 'agx', 'agy', 'posx', 'posy', 'orbx', 'orby',
-        ]
-
-        for key in raw_grp:
-            if not key.startswith('sweep_'):
-                continue
-
-            sweep_grp = raw_grp[key]
-
-            # --- Rebuild first element: {beamline: {param: array, ...}} ---
-            beamline_data = {}
-            for dsname in sweep_grp:
-                if dsname.startswith('rawdata_'):
-                    beamline = dsname[len('rawdata_'):]
-                    dset = sweep_grp[dsname]
-                    # Convert structured array to dict of arrays
-                    param_dict = {}
-                    if hasattr(dset, 'dtype') and dset.dtype.names:
-                        for name in dset.dtype.names:
-                            param_dict[name] = dset[name][()]
-                    else:
-                        param_dict = np.array(dset)
-                    beamline_data[beamline] = param_dict
-
-            # --- Second element: gap dictionary from attributes ---
-            gap_dict = {attr_key[:-4].strip(): attr_val
-                        for attr_key, attr_val in sweep_grp.attrs.items()
-                        if attr_key.endswith(' gap')}
-
-            # --- Third element: bpm_dict, patched to read bpm_data
-            # for orbx/orby ---
-            bpm_dict = {}
-            bpm_data = None
-            if 'bpm_data' in sweep_grp:
-                bpm_data_ds = sweep_grp['bpm_data']
-                # Should be a structured array with fields 'orbx' and 'orby'
-                bpm_data = bpm_data_ds[()]
-            for param in rawdata_2_keys:
-                arr = None
-                if param in sweep_grp:
-                    arr = np.array(sweep_grp[param])
-                elif param in sweep_grp.attrs:
-                    arr = sweep_grp.attrs[param]
-                elif param in ('orbx', 'orby'):
-                    # Patch: read from bpm_data if available
-                    if bpm_data is not None and param in bpm_data.dtype.names:
-                        arr = bpm_data[param]
-                # Flatten structured arrays with a single field
-                if (isinstance(arr, np.ndarray) and
-                    arr.dtype.names is not None and
-                    len(arr.dtype.names) == 1):
-                    arr = arr[arr.dtype.names[0]]
-                bpm_dict[param] = arr
-
-            rawdata.append((beamline_data, gap_dict, bpm_dict))
-
-        return rawdata
-
-    def get_analysis_meta(self, beamline=None):
+    def get_analysis_meta(self, beamline=None) -> dict:
         """Get analysis metadata for the given beamline."""
         meta = {}
         h5file = self.h5
@@ -482,26 +391,26 @@ class HDF5DataReader:
         return meta
 
     @staticmethod
-    def _derive_bpm_stats_from_raw(h5file, analysis, beamline):
+    def _derive_bpm_stats_from_raw(
+            h5file: h5py.File,
+            analysis: h5py.Group,
+            beamline: str
+            ) -> dict | None:
         """Derive BPM stats from /raw_data when /positions/bpm is missing."""
         raw_grp = h5file.get('raw_data') if h5file is not None else None
         if raw_grp is None:
             return None
 
-        rawdata = HDF5DataReader.extract_sweeps(raw_grp)
-        if not rawdata:
-            return None
-
-        from .parameters import Prm
-        from .processors import BPMProcessor
+        from .data_structure import BeamlinePrm as Prm
+        # from .processors import BPMProcessor
         from .config import Config
-        from contextlib import redirect_stdout, redirect_stderr
-        from io import StringIO
+        # from contextlib import redirect_stdout, redirect_stderr
+        # from io import StringIO
 
         beamline_val = beamline or analysis.attrs.get('beamline', '')
         base_bl = beamline_val[:3] if beamline_val else ''
 
-        section = analysis.attrs.get('section') or Config.SECTIONS.get(base_bl)
+        section = analysis.attrs.get('section') or Config.SECTOR.get(base_bl)
         bpmdist = analysis.attrs.get('bpmdist') or Config.BPMDISTS.get(base_bl)
         xbpmdist = (analysis.attrs.get('xbpmdist')
                     or Config.XBPMDISTS.get(beamline_val)
@@ -516,33 +425,33 @@ class HDF5DataReader:
         prm.bpmdist = float(bpmdist)
         prm.xbpmdist = float(xbpmdist)
 
-        bpm_processor = BPMProcessor(rawdata, prm)
-        sink = StringIO()
-        try:
-            with redirect_stdout(sink), redirect_stderr(sink):
-                bpm_processor.calculate_positions()
-        except Exception:
-            return None
-        return getattr(bpm_processor, 'last_stats', None)
+        # bpm_processor = BPMProcessor(bpmrawdata, prm)
+        # sink = StringIO()
+        # try:
+        #     with redirect_stdout(sink), redirect_stderr(sink):
+        #         bpm_processor.calculate_positions()
+        # except Exception:
+        #     return None
+        # return getattr(bpm_processor, 'last_stats', None)
 
     @staticmethod
-    def _load_scales_meta(analysis, meta):
-        scales = HDF5DataReader._read_scale_attrs(analysis)
+    def _load_scales_meta(analysis: h5py.Group, meta: dict) -> None:
+        scales = DStr.Scales(analysis)
         if not scales:
             scales_grp = analysis.get('scales')
             if scales_grp is not None:
-                scales = HDF5DataReader._read_scales_group(scales_grp)
+                scales = DStr.Scales.from_hdf5_group(scales_grp)
         if scales:
             meta['scales'] = scales
 
     @staticmethod
-    def _load_sweeps_meta(analysis, meta):
-        sweeps_meta = HDF5DataReader._read_sweeps_meta(analysis)
+    def _load_sweeps_meta(analysis: h5py.Group, meta: dict) -> None:
+        sweeps_meta = DStr.CentralSweeps(analysis)
         if sweeps_meta:
             meta['sweeps'] = sweeps_meta
 
     @staticmethod
-    def _load_supmat_meta(analysis, meta):
+    def _load_supmat_meta(analysis: h5py.Group, meta: dict) -> None:
         mats = analysis.get('matrices') if analysis else None
         loaded_any = False
         if mats is not None:
@@ -573,7 +482,7 @@ class HDF5DataReader:
         if opt_supmat is not None:
             meta['supmat_optimized'] = np.array(opt_supmat)
         if 'supmat_standard' not in meta:
-            from .processors import XBPMProcessor
+            from .config import Config
             import logging
             logger = logging.getLogger(__name__)
             logger.warning(
@@ -582,13 +491,13 @@ class HDF5DataReader:
                 "file contains matrices/standard dataset."
             )
             supmat_standard, stddevmat_standard = (
-                XBPMProcessor.standard_suppression_matrix()
+                Config.standard_suppression_matrix()
             )
             meta['supmat_standard'] = supmat_standard
             meta.setdefault('stddevmat', stddevmat_standard)
 
     @staticmethod
-    def _load_bpm_stats_meta(analysis, meta):
+    def _load_bpm_stats_meta(analysis: h5py.Group, meta: dict) -> None:
         positions_grp = analysis.get('positions')
         if positions_grp is None:
             return
@@ -604,16 +513,16 @@ class HDF5DataReader:
                 stats[key] = float(bpm_ds.attrs[key])
         roi_bounds = meta.get('bpm_stats', {}).get('roi_bounds')
         if not roi_bounds:
-            roi_bounds = (
-                HDF5DataReader._load_roi_bounds_fallback_attrs(positions_grp)
-                )
+            roi_bounds = DStr.ROISlice.update(positions_grp)
             if roi_bounds:
                 stats['roi_bounds'] = roi_bounds
         if stats:
             meta['bpm_stats'] = stats
 
     @staticmethod
-    def _load_roi_bounds_fallback(analysis, meta):
+    def _load_roi_bounds_fallback(
+        analysis: h5py.Group,
+        meta: dict) -> None:
         positions_grp = analysis.get('positions')
         if positions_grp is None:
             return
@@ -630,7 +539,8 @@ class HDF5DataReader:
                           exc_info=True)
 
     @staticmethod
-    def _load_roi_bounds_fallback_attrs(positions_grp):
+    def _load_roi_bounds_fallback_attrs(
+        positions_grp: h5py.Group) -> dict | None:
         try:
             rb_attrs = {
                 k: v for k, v in positions_grp.attrs.items()
@@ -642,7 +552,7 @@ class HDF5DataReader:
             return None
 
     @staticmethod
-    def _read_scales_group(scales_grp):
+    def _read_scales_group(scales_grp: h5py.Group) -> dict:
         result = {}
         for scope in ('raw', 'scaled'):
             sub = scales_grp.get(scope)
@@ -659,12 +569,13 @@ class HDF5DataReader:
         return result
 
     @staticmethod
-    def _read_scale_attrs(analysis_grp):
+    def _read_scale_attrs(analysis_grp: h5py.Group) -> dict:
         positions = analysis_grp.get('positions') if analysis_grp else None
         if positions is None:
             return {}
 
-        def extract(dset):
+        def extract(dset: h5py.Dataset | None) -> dict | None:
+            """Extract scale attributes from a dataset."""
             if dset is None:
                 return None
             attrs = {}
@@ -703,7 +614,7 @@ class HDF5DataReader:
         return result
 
     @staticmethod
-    def _read_sweeps_meta(analysis_grp):
+    def _read_sweeps_meta(analysis_grp: h5py.Group) -> dict:
         if analysis_grp is None:
             return {}
         sweeps = analysis_grp.get('sweeps') or analysis_grp.get(
@@ -715,8 +626,8 @@ class HDF5DataReader:
         h_ds = sweeps.get('blades_h')
         v_ds = sweeps.get('blades_v')
 
-        positions = HDF5DataReader._collect_sweep_positions(h_ds, v_ds)
-        blades = HDF5DataReader._collect_sweep_blade_trends(h_ds, v_ds)
+        positions = DStr.Positions(h_ds, v_ds)
+        blades = DStr.Blades(h_ds, v_ds)
 
         meta = {}
         if positions:
@@ -726,29 +637,33 @@ class HDF5DataReader:
         return meta
 
     @staticmethod
-    def _collect_sweep_positions(h_ds, v_ds):
+    def _collect_sweep_positions(
+        h_ds: h5py.Dataset | None,
+        v_ds: h5py.Dataset | None) -> dict | None:
         positions = {}
         for axis, dataset in (('horizontal', h_ds), ('vertical', v_ds)):
-            fit = HDF5DataReader._read_sweep_fit_attrs(dataset)
+            fit = DStr.CentralSweepLine(dataset)
             if fit:
                 positions[axis] = fit
         return positions
 
     @staticmethod
-    def _collect_sweep_blade_trends(h_ds, v_ds):
+    def _collect_sweep_blade_trends(
+        h_ds: h5py.Dataset | None,
+        v_ds: h5py.Dataset | None) -> dict | None:
         blades = {}
         axis_map = (
             ('horizontal', h_ds, 'x_index'),
             ('vertical', v_ds, 'y_index'),
         )
         for axis, dataset, coord_field in axis_map:
-            fits = HDF5DataReader._fit_blade_trends(dataset, coord_field)
+            fits = DStr.Blades(dataset, coord_field)
             if fits:
                 blades[axis] = fits
         return blades
 
     @staticmethod
-    def _read_sweep_fit_attrs(ds):
+    def _read_sweep_fit_attrs(ds: h5py.Dataset | None) -> dict | None:
         if ds is None:
             return None
         attrs = {key: ds.attrs[key]
@@ -757,7 +672,9 @@ class HDF5DataReader:
         return attrs or None
 
     @staticmethod
-    def _fit_blade_trends(ds, coord_field):
+    def _fit_blade_trends(
+        ds: h5py.Dataset | None,
+        coord_field: str) -> dict | None:
         if ds is None:
             return None
         try:
