@@ -87,6 +87,19 @@ def _filename(
         ext     : str = "png",
         ) -> str:
     """Generate a filename for a figure based on the base path and key."""
+    basename = FILE_BASENAMES.get(key, key)
     if not path:
-        return f"{prefix}_{key}.{ext}"
-    return os.path.join(path, f"{prefix}_{key}.{ext}")
+        return f"{prefix}_{basename}.{ext}"
+    return os.path.join(path, f"{prefix}_{basename}.{ext}")
+
+
+FILE_BASENAMES = {
+    "bpm"                     : "BPM",
+    "blade_central_sweeps"    : "Blade_Central_Sweeps",
+    "blade_map"               : "Blade_Map",
+    "position_central_sweeps" : "Position_Central_Sweeps",
+    "xbpm_pairwise_raw"       : "XBPM_Delta_Sigma_raw",
+    "xbpm_pairwise_trn"       : "XBPM_Delta_Sigma_trn",
+    "xbpm_cross_raw"          : "XBPM_Partial_Delta_Sigma_raw",
+    "xbpm_cross_trn"          : "XBPM_Partial_Delta_Sigma_trn"
+}

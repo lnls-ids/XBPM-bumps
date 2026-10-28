@@ -1740,7 +1740,7 @@ class CalculatedPositions:
         stats_trn  : RMS statistics of the differences between transformed
                  positions and nominal or BPM-calculated positions.
     """
-    roi       : np.ndarray
+    roi       : ROISlice
 
     pos_std   : Positions
     scale_std : Scales
@@ -1759,7 +1759,7 @@ class CalculatedPositions:
         """Create a CalculatedPositions instance from an HDF5 group."""
         name = Config.group_name
         col  = Config.column
-        roi  = np.array([roislice.size_h, roislice.size_v])
+        roi  = roislice
 
         # Standard positions.
         std_grp = pos_grp[name("xbpm_std")]
