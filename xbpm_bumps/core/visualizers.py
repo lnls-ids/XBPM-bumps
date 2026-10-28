@@ -138,8 +138,6 @@ class BPMVisualizer:
     - Live analysis data (from processors)
     - HDF5 stored data (from readers)
 
-    This eliminates redundancy between processors.show_bpm_at_center()
-    and readers._reconstruct_bpm_center().
     """
     def __init__(self,
                  bpm_ana : BPMAnalysis,
@@ -510,20 +508,17 @@ class BladeMapVisualizer:
 
 class CentralSweepVisualizer:
     """Unified visualizer for central sweep analysis.
-./tests/chat-deepseek-2026-09-29.json
+
     Creates sweep plots from either:
     - Live analysis data (from processors)
     - HDF5 stored data (from readers)
-
-    This eliminates redundancy between processors._central_sweeps_show()
-    and readers._reconstruct_sweeps().
     """
     @staticmethod
     def plot_central_sweep_positions(
         csweep   : CentralSweeps,
         beamline : str = "",
         ) -> "matplotlib.figure.Figure":
-        """Create sweep figure from numpy arrays (position reconstruction path).
+        """Create sweep figure from np.arrays (position reconstruction path).
 
         This is used when sweeps data is stored as pre-calculated positions
         (HDF5 or other sources). Formatting matches canonical plot_central_sweeps.
@@ -598,9 +593,6 @@ class CentralSweepVisualizer:
     Creates blade current plots from either:
     - Live analysis data (from processors)
     - HDF5 stored data (from readers)
-
-    This eliminates redundancy between processors.show_blades_at_center()
-    and readers._reconstruct_blades_center().
     """
 
     @staticmethod
