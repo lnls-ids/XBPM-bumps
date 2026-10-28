@@ -312,9 +312,6 @@ def extract_and_average_blade_data(
     rawblades = {}
     avgblades = {}
 
-    # Reversed blade map (get ).
-    # revmap = _reverse_map(blademap)
-
     # Run through each PV.
     for pv in ['A', 'B', 'C', 'D']:
         # Get average, std dev, and raw values for the blade.
@@ -618,7 +615,10 @@ def main() -> None:
     if args.rewire:
         blademaps = blade_rewire(beamlines)
     else:
-        blademaps = {bl: Config.BLADEMAP[bl] for bl in beamlines}
+        blademaps = {
+            bl: _reverse_map(Config.BLADEMAP[bl])
+            for bl in beamlines
+            }
 
     # DEBUG
     print(f"\n>>> Blade maps for selected beamlines:")
