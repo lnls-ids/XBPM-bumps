@@ -1,0 +1,11 @@
+# Beamline Parameters
+# Prefix, XBPM devices, and subsec are derived from the beamline name.
+name CNB
+gap_phase 3.0
+
+# Acquisition Grid Parameters
+n_points 15
+min_x -20
+max_x 20
+min_y -20
+max_y 20
