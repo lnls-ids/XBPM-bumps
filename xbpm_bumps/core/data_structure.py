@@ -839,20 +839,6 @@ class BumpRawData:
             meta = dict(bump_grp.attrs.items())
             meta["Bump #"] = bumpnum
 
-            # Ensure angle keys are present. Workaround for double standars.
-            # ag = {'x': None, 'y': None}
-            # ag = {
-            #     d : val
-            #     for d in ['x', 'y']
-            #     for key, val in bump_grp.attrs.items()
-            #     if key.startswith(f'Angle {d}') or
-            #     key.startswith(f'ag{d}')
-            # }
-            # meta.update({
-            #     'Angle x' : ag['x'],
-            #     'Angle y' : ag['y'],
-            # })
-
             # BPM dataset.
             bpm = BPMRawData.from_hdf5(
                 bump_grp[Config.group_name('bpm_data')]

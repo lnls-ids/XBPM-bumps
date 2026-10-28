@@ -1,5 +1,7 @@
 """HDF5 backend for XBPM DataReader."""
 
+import os
+
 import h5py
 from matplotlib.figure import Figure
 
@@ -31,24 +33,35 @@ def export_hdf5(
 def export_plain(
     dirpath  : str,
     tab_info : dict[str, str],
-    figures  : dict[str, Figure] = None,
+    figures  : dict[str, Figure] | None = None,
     ) -> None:
-    if figures is None:
-        return
+    # Ensure the output directory exists.
+    os.makedirs(dirpath, exist_ok=True)
 
-    for key, fig in figures.items():
-        # Export the figure to a PNG file.
-        figname = _filename(key, dirpath, prefix="fig", ext="png")
-        fig.savefig(
-            figname,
-            dpi = Cts.FIGDPI,
-            bbox_inches = "tight"
-            )
+    if figures is not None:
+        for key, fig in figures.items():
+            # Export the figure to a PNG file.
+            figname = _filename(key, dirpath, prefix="fig", ext="png")
+            fig.savefig(
+                figname,
+                dpi = Cts.FIGDPI,
+                bbox_inches = "tight"
+                )
+    else:
+        print("WARNING: when exporting figures, no objects were provided.")
 
-        # Export the plain information to a text file.
-        txtname   = _filename(key, dirpath, prefix="info", ext="txt")
-        info_data = tab_info.get(key)
-        _write_plain_txt(txtname, info_data)
+    if tab_info is not None:
+        for key, info_data in tab_info.items():
+            if info_data is None or info_data.strip() == "":
+                print(f"WARNING: tab '{key}' has no information to export.")
+                continue
+
+            # Export the plain information to a text file.
+            txtname = _filename(key, dirpath, prefix="info", ext="txt")
+            _write_plain_txt(txtname, info_data)
+    else:
+        print("WARNING: when exporting text table information,"
+              " no objects were provided.")
 
 
 def _write_plain_txt(
@@ -76,4 +89,4 @@ def _filename(
     """Generate a filename for a figure based on the base path and key."""
     if not path:
         return f"{prefix}_{key}.{ext}"
-    return f"{path}/{prefix}_{key}.{ext}"
+    return os.path.join(path, f"{prefix}_{key}.{ext}")

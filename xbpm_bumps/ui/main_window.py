@@ -7,6 +7,7 @@ from PyQt5.QtWidgets import (
     QStatusBar, QProgressBar, QMessageBox, QFileDialog,
     QLabel, QGroupBox
 )
+
 from PyQt5.QtCore import Qt, pyqtSlot
 from PyQt5.QtGui  import QFont
 from PyQt5.QtGui  import QCloseEvent
@@ -165,10 +166,8 @@ class XBPMMainWindow(QMainWindow):
         export_hdf5_action = file_menu.addAction("Export to HDF5…")
         export_hdf5_action.triggered.connect(self._on_export_hdf5_clicked)
 
-        # WARNING: must be implemented before enabling export to txt/png.
         export_action = file_menu.addAction("Export to txt/png…")
-        export_action.setEnabled(False)
-        # export_action.triggered.connect(self._on_export_clicked)
+        export_action.triggered.connect(self._on_export_plain_clicked)
 
         file_menu.addSeparator()
         quit_action = file_menu.addAction("Quit")
@@ -465,6 +464,8 @@ class XBPMMainWindow(QMainWindow):
             if key in self.canvases:
                 self._embed_figure(self.canvases[key], fig)
 
+    # Update analysis/rendering.
+
     @pyqtSlot()
     def _on_parameters_changed(self) -> None:
         """React to parameter changes; pre-select beamline on input set."""
@@ -510,6 +511,8 @@ class XBPMMainWindow(QMainWindow):
         self.status_bar.addPermanentWidget(self.progress_bar)
 
         self.status_bar.showMessage("Ready")
+
+    # Export handlers.
 
     @pyqtSlot()
     def _on_export_hdf5_clicked(self) -> None:
@@ -564,7 +567,16 @@ class XBPMMainWindow(QMainWindow):
     @pyqtSlot()
     def _on_export_plain_clicked(self) -> None:
         """Handle the 'Export Plain' button click event."""
-        if not hasattr(self, 'tab_info') or not self.tab_info:
+        # Render analysis figures if not already available.
+        if self.analysis is not None and not self.analysis.figures:
+            self.analysis.figures = render_data_analysis(
+                self.pos_nom,
+                self.analysis,
+                self.beamline_prm,
+                self.runtime_prm.bmap_global_scale
+            )
+
+        if self.analysis is None:
             QMessageBox.warning(
                 self,
                 "No Data Available",

@@ -51,7 +51,7 @@ def cmd_line() -> argparse.Namespace:
 
     # Legacy blade map flag.
     parser.add_argument(
-        '-l', '--legacy', action='store_true',
+        '-r', '--rewire', action='store_true',
         help='Use legacy blade map.'
     )
 
@@ -165,24 +165,104 @@ def extract_beamlines(rawdata: list) -> list:
         return []
 
 
-def _reverse_blade_map(
-        beamline: str,
-        legacy: bool = False,
-        ) -> dict:
-    """Return the blade mapping for the beamline from the blade letter.
-    
-    Reverse blade mapping from TO → A to A → TO etc.
+
+
+def blade_rewire(beamlines : list[str]):
+    """Rewire blades for the given beamlines.
 
     Args:
-        beamline: str, Selected beamline name.
+        beamlines: list of str, beamline names to rewire.
+    """
+    blade_map = {}
+    for beamline in beamlines:
+        print("\n # Rewiring blades for beamline:", beamline)
+
+        current_map = _reverse_map(Config.BLADEMAP[beamline])
+        cmap_txt = _blade_map_str(current_map)
+        print(f"Current blade map:\n{cmap_txt}\n")
+
+        choose = input(
+            "\n Do you want to rewire blades for this beamline? (Y/n): "
+            )
+        if choose.lower() not in ('y', ''):
+            continue
+
+        while True:
+            new_map = _get_new_blade_map(current_map.copy())
+            cmap_txt = _blade_map_str(new_map)
+            print(f"New blade map:\n{cmap_txt}\n")
+
+            confirm = input("\nConfirm new blade map? (Y/n): ")
+            if confirm.lower() in ('y', ''):
+                blade_map[beamline] = new_map
+                break
+
+    return blade_map
+
+
+def _blade_map_str(bmap: dict[str, str]):
+    """Print the blade map in a readable format."""
+    map_txt = (
+        f" {'B -> ':8}{bmap['B']:<15}"
+        f" {'A -> ':8}{bmap['A']}\n\n"
+        f" {'C -> ':8}{bmap['C']:<15}"
+        f" {'D -> ':8}{bmap['D']:15}"
+        )
+    return map_txt
+
+
+def _get_new_blade_map(current_map : dict[str, str]) -> dict[str, str]:
+    """Get a new blade map from user input.
+
+    Args:
+        current_map: dict[str, str], Current mapping of blades.
 
     Returns:
-        revmap: dict, Mapping of blade names to their corresponding PVs.
+        new_map: dict[str, str], Updated mapping of blades.
     """
-    if legacy:
-        bmap = Config.LEGACY_BLADEMAP.get(beamline, {})
-    else:
-        bmap = Config.BLADEMAP.get(beamline, {})
+    print(" Available values are: "
+          f"{', '.join(list(current_map.values()))}"
+          )
+
+    # Define the order of blades and create a list of their current values.
+    curr_keys = ['A', 'B', 'C', 'D']
+    bladelist = [current_map[key] for key in curr_keys]
+
+    new_map, k = {}, 0
+    while True:
+        ckey = curr_keys[k]
+
+        # Assign the last remaining blade automatically and return.
+        if len(bladelist) == 1:
+            new_map[ckey] = bladelist[0]
+            return new_map
+
+        new_val = input(
+            f"Enter new mapping for '{ckey}' "
+            f"(current: {current_map[ckey]}): "
+            )
+        if new_val not in bladelist:
+            print(f"{new_val} is not valid. Available values are: "
+                    f"{', '.join(bladelist)}"
+                    "\n Try again."
+                    )
+            continue
+
+        # Assign new value and remove it from the available list.
+        new_map[ckey] = new_val
+        bladelist.remove(new_val)
+        # Next blade.
+        k += 1
+
+def _reverse_map(bmap: dict[str, str]) -> dict[str, str]:
+    """Reverse the blade map.
+
+    Args:
+        bmap: dict[str, str], Blade map to reverse.
+
+    Returns:
+        revmap: dict[str, str], Reversed blade map.
+    """
     return {v: k for k, v in bmap.items()}
 
 
@@ -211,15 +291,19 @@ def blade_average(blade: list) -> tuple:
 def extract_and_average_blade_data(
         rawdata0 : dict,
         beamline : str,
-        legacy   : bool = False,
+        blademap : dict[str, str],
         ) -> tuple[dict, dict]:
     """Extract and average blade data for the given beamline.
     
-    'rawdata0' contains raw blade data for the selected beamline for a single grid point. This script extracts the data for the given beamline and computes the average and standard deviation for each blade for that point.
+    'rawdata0' contains raw blade data for the selected beamline
+    for a single grid point. This script extracts the data for the
+    given beamline and computes the average and standard deviation
+    for each blade for that point.
 
     Args:
         rawdata0: dict, Raw data for a single grid point.
         beamline: str, Selected beamline name.
+        blademap: dict[str, str], Blade map for the selected beamline.
 
     Returns:
         rawblades: dict, Raw blade data for the selected beamline.
@@ -227,8 +311,9 @@ def extract_and_average_blade_data(
     """
     rawblades = {}
     avgblades = {}
+
     # Reversed blade map (get ).
-    revmap = _reverse_blade_map(beamline, legacy=legacy)
+    # revmap = _reverse_map(blademap)
 
     # Run through each PV.
     for pv in ['A', 'B', 'C', 'D']:
@@ -245,7 +330,7 @@ def extract_and_average_blade_data(
             )
 
         # Store each avg / std. dev. value.
-        blade  = revmap[pv].lower()
+        blade = blademap[pv].lower()
         avgblades[Config.column(blade, "mean")] = avg
         avgblades[Config.column(blade, "err")]  = std
 
@@ -253,17 +338,17 @@ def extract_and_average_blade_data(
 
 
 def parse_rawdata(
-        rawdata: list,
-        beamline: str,
-        legacy: bool = False
+        rawdata  : list,
+        beamline : str,
+        blademap : dict[str, str]
         ) -> dict:
     """Parse rawdata to extract beamline-specific data for each bump.
 
     Args:
-        rawdata: List of (meta, grid, bpm_dict) tuples for the selected
-            beamline, corresponding to each bump.
-        beamline: str, Selected beamline name.
-        legacy: bool, Whether to use the legacy blade map.
+        rawdata  : List of (meta, grid, bpm_dict) tuples for the selected
+                    beamline, corresponding to each bump.
+        beamline : str, Selected beamline name.
+        blademap   : dict[str, str], blade map for a beamline.
 
     Returns:
         blade_data: Dict containing parsed data for the selected
@@ -315,7 +400,7 @@ def parse_rawdata(
 
         # Extract and average blade data for the current beamline.
         rawblades, avgbld = extract_and_average_blade_data(
-            record[0][beamline], beamline, legacy=legacy
+            record[0][beamline], beamline, blademap=blademap
             )
 
         # Store raw blade data.
@@ -530,11 +615,24 @@ def main() -> None:
     print(f"\n### Found {len(rawdata)} pickle files in directory \n### "
           f"'{args.dir}'")
 
+    if args.rewire:
+        blademaps = blade_rewire(beamlines)
+    else:
+        blademaps = {bl: Config.BLADEMAP[bl] for bl in beamlines}
+
+    # DEBUG
+    print(f"\n>>> Blade maps for selected beamlines:")
+    for bl, bm in blademaps.items():
+        print(f"    {bl}: {bm}")
+    # DEBUG
+
     # Extract data for each selected beamline and store in a dictionary.
     # Data is extracted as-is and averaged data is also computed.
     dataset = {}
-    for bline in beamlines:
-        dataset[bline] = parse_rawdata(rawdata, bline, legacy=args.legacy)
+    for beamline in beamlines:
+        dataset[beamline] = parse_rawdata(
+            rawdata, beamline, blademap=blademaps[beamline]
+            )
 
     # Set file name and handle overwrite/append.
     # Set initial timestamp from the first record of the first beamline.
