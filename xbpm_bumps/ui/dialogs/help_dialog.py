@@ -12,14 +12,14 @@ class HelpDialog(QDialog):
     available analyses, graphs produced, exports, and UI tips.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None) -> None:
         """Initialize the Help dialog window."""
         super().__init__(parent)
         self.setWindowTitle("XBPM Analysis - Help")
         self.resize(800, 600)
         self._setup_ui()
 
-    def _setup_ui(self):
+    def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
 
         self.text = QTextEdit()
@@ -79,7 +79,7 @@ Exports:
     (raw/scaled).
 
 UI Tips:
-- Use 'Run Analysis' after setting workdir; select beamline if
+- Use 'Run Analysis' after setting input file; select beamline if
     prompted.
 - 'Export…' writes data and figures to chosen prefix.
 - 'All' button in parameters toggles all analysis options.
