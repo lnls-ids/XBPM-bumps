@@ -161,6 +161,10 @@ class XBPM:
                 f"XBPM number {xbpm_nr} is not configured for beamline {name}"
             )
         self.prefix = BEAMLINES[name]["prefix"]
+        self.acq_rate = 10 # Hz
+
+    def photon_shutter(self, channel_number: int):
+        return None
 
     def range_value(self, channel_number: int):
         return None
@@ -228,6 +232,42 @@ class PICO(XBPM):
         )
 
 
+    def check_acq_freeze(self, period: int, threshold: int) -> bool:
+        """Return True if all channels are identical for ``threshold`` samples."""
+        if period < 1:
+            raise ValueError("period must be at least one second")
+        if threshold < 1 or threshold > period:
+            raise ValueError("threshold must be between 1 and period")
+
+        readers = (self.ampA, self.ampB, self.ampC, self.ampD)
+
+        def read_data():
+            data = tuple(read() for read in readers)
+            if any(value is None for channel in data for value in channel):
+                raise RuntimeError("Unable to read all XBPM acquisition PVs")
+            return data
+
+        previous_data = read_data()
+        identical_count = 0
+        for _ in range(period):
+            time.sleep(1)
+            data = read_data()
+            if data == previous_data:
+                identical_count += 1
+                if identical_count == threshold:
+                    print(
+                        "This XBPM electronics could be frozen or turned off. "
+                        "Please check the device."
+                    )
+                    return True
+            else:
+                identical_count = 0
+            previous_data = data
+
+        print("No freeze was detected during the observation period.")
+        return False
+
+
 def set_id_position(name, gap_phase):
     if name == 'MNC':
         apu_mnc.set_gap_phase(gap_phase)
@@ -256,6 +296,18 @@ def configure_grid(show=False):
         plt.show()
 
     return x, y
+
+# To be finished
+def check_interlocks(pvs: list) -> bool:
+    for pv in pvs:
+        value = epics.caget(pv)
+        if value is None:
+            print(f"Warning: PV {pv} is not responding.")
+            return False
+        if value != 0:
+            print(f"Interlock triggered on PV {pv}. Value: {value}")
+            return False
+    return True
 
 
 def get_meas_data(
@@ -292,12 +344,10 @@ def get_meas_data(
     acq_time = time.time()
     fname = 'xbpm_acq_subsec:'
     fname += f'{subsec}_agx:{agx:03.0f}_agy:{agy:03.0f}_'
-    fname += f'posx:{psx:03.0f}_posy:{psy:03.0f}_'
     fname += 'time_' + str(acq_time) + '.pickle'
 
     p_fname = 'xbpm_posmeas_subsec:'
     p_fname += f'{subsec}_agx:{agx:03.0f}_agy:{agy:03.0f}_'
-    p_fname += f'posx:{psx:03.0f}_posy:{psy:03.0f}_'
     p_fname += 'time_' + str(acq_time) + '.pickle'
 
     save(data, fname)
@@ -407,7 +457,14 @@ if __name__ == '__main__':
 
         set_id_position(bl_params['name'], bl_params['gap_phase'])
         beamline_config = BEAMLINES[bl_params['name']]
+        xbpm_numbers = beamline_config['xbpm_numbers']
+        xbpms = [XBPM(bl_params['name'], number) for number in xbpm_numbers]
+        xbpm_names = [f"{bl_params['name']}{number}" for number in xbpm_numbers]
         angsx, angsy = configure_grid(show=True)
+
+        check_interlocks()
+        if isinstance(xbpms[0], PICO):
+            xbpms[0].check_acq_freeze(period=120, threshold=10)
 
         bump_param = BumpParams()
         bump_param.subsec = beamline_config['subsec']
@@ -428,9 +485,6 @@ if __name__ == '__main__':
             'subsec': beamline_config['subsec'],
         }
 
-        xbpm_numbers = beamline_config['xbpm_numbers']
-        xbpms = [XBPM(bl_params['name'], number) for number in xbpm_numbers]
-        xbpm_names = [f"{bl_params['name']}{number}" for number in xbpm_numbers]
         bump_param.args = [xbpms, xbpm_names]
 
         bump = Bump(bump_param)
