@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
-"""Fetch data from any XBPMs position calculation PVs and plot them"""
+"""
+##### XBPM Position Calculation Tool #####
 
+This script calculates the positions of XBPMs based on the amplitudes of the blades, 
+adjustment parameters, and suppression matrices. It fetches data from the EPICS archiver
+for the specified time range and plots the calculated positions for analysis.
+
+The script supports calculating positions for a single XBPM or comparing positions between two XBPMs.
+"""
 import argparse
 import os
 from datetime import datetime
@@ -39,7 +46,16 @@ def get_beamline_data(name: str) -> list:
 def set_pv_names(prefix: str,
                  xbpm_number: int
                  ) -> dict:
-    """Set PV names for the specified XBPM number with the given prefix"""
+    """Set PV names for the specified XBPM number with the given prefix.
+
+    Arguments:
+        prefix (str): Prefix for the PV names.
+        xbpm_number (int): XBPM number (1 or 2).
+    
+    Returns:
+        dict: Dictionary containing PV names for blades, adjustment parameters, 
+        and suppression matrix.
+    """
     if xbpm_number not in [1, 2]:
         raise ValueError("XBPM number must be either 1 or 2.")
     
@@ -60,7 +76,17 @@ def set_pv_names(prefix: str,
 
 
 def _parse_dates(dt: datetime) -> list:
-    """Parse dates from date string."""
+    """Parse dates from date string.
+
+    Given the date in datetime format, this function extracts the 
+    year, month, day, hour, and minute components.
+
+    Arguments:
+        dt (datetime): Date in datetime format.
+
+    Returns:
+        list: List of date components [year, month, day, hour, minute].
+    """
     year, month, day = dt.year, dt.month, dt.day
     hour, minute = dt.hour, dt.minute
 
@@ -71,7 +97,18 @@ def get_pvdata(pvnames: list,
                initdate: datetime,
                enddate: datetime,
                timeout: int) -> tuple:
-    """Fetch data from the EPICS archiver for the given PV names and time range."""
+    """Fetch data from the EPICS archiver for the given PV names and time range.
+    
+    Arguments:
+        pvnames (list): List of PV names to fetch data for.
+        initdate (datetime): Initial date and time for data fetching.
+        enddate (datetime): End date and time for data fetching.
+        timeout (int): Timeout in seconds for the data fetching operation.
+
+    Returns:
+        tuple: A tuple containing the PVDataSet object, the initial timestamp,
+        and the timestamps of the fetched data.
+    """
     if isinstance(pvnames, str):
         pvnames = [pvnames]
 
@@ -94,6 +131,22 @@ def calculate_positions(blades: list,
                         matrix: list,
                         xbpm_number: int
                         ) -> list:
+    """Calculate XBPM positions based on blades amplitudes, adjustment parameters, 
+    and suppression matrix.
+    
+    Given the amplitudes of the blades (A, B, C, D), the adjustment parameters 
+    (GainX, OffsetX, GainY, OffsetY), and the suppression matrix, this function calculates 
+    the X and Y positions of the XBPM.
+
+    Arguments:
+        blades (list): List of 4 lists of blade amplitudes (A, B, C, D).
+        adj (list): List of 4 adjustment parameters (GainX, OffsetX, GainY, OffsetY).
+        matrix (list): List of 16 elements representing the suppression matrix.
+        xbpm_number (int): XBPM number (1 or 2).
+    
+    Returns:
+        list: List of calculated positions as [X, Y] pairs.
+    """
     ampA = blades[0].value
     ampB = blades[1].value
     ampC = blades[2].value
@@ -134,6 +187,18 @@ def _calculate_angle(xbpm1_pos: float,
                      xbpm2_pos: float,
                      xbpms_dist: float
                      ) -> float:
+    """
+    Calculate the angle between two XBPM positions based on their positions 
+    and the distance between them.
+    
+    Arguments:
+        xbpm1_pos (float): Position of the first XBPM.
+        xbpm2_pos (float): Position of the second XBPM.
+        xbpms_dist (float): Distance between the two XBPMs.
+    
+    Returns:
+        float: Calculated angle in µrad.
+    """
     diff = (xbpm2_pos - xbpm1_pos)
 
     if xbpms_dist == 0:
@@ -141,20 +206,29 @@ def _calculate_angle(xbpm1_pos: float,
     
     return diff / xbpms_dist
 
-def plot_simple_data(result: list,
+def plot_simple_data(positions: list,
                      idt: datetime,
                      edt: datetime,
                      beamline: str,
                      xnum: int) -> None:
+    """Plot the calculated XBPM positions over time.
+    
+    Arguments:
+        positions (list): List of calculated positions as [X, Y] pairs.
+        idt (datetime): Initial date and time for the plot.
+        edt (datetime): End date and time for the plot.
+        beamline (str): Name of the beamline.
+        xnum (int): XBPM number (1 or 2).
+    """
     x_data, y_data, time = [], [], []
 
-    ndots  = len(result)
+    ndots  = len(positions)
     ninterval = ((edt - idt) / ndots)
 
     count  = idt
     for i in range(ndots):
-        x_data.append(result[i][0])
-        y_data.append(result[i][1])
+        x_data.append(positions[i][0])
+        y_data.append(positions[i][1])
         time.append(count)
         count += ninterval
 
@@ -186,6 +260,18 @@ def plot_comparison_data(xbpm1_pos: list,
                          edt: datetime,
                          beamline: str,
                          xbpms_dist: float) -> None:
+    """Plot the calculated positions of two XBPMs and their angle comparison over time.
+    Also it plots the average position of both XBPMs with their standard deviation
+    as a shadow area.
+
+    Arguments:
+        xbpm1_pos (list): List of calculated positions for XBPM1 as [X, Y]
+        xbpm2_pos (list): List of calculated positions for XBPM2 as [X, Y]
+        idt (datetime): Initial date and time for the plot.
+        edt (datetime): End date and time for the plot.
+        beamline (str): Name of the beamline.
+        xbpms_dist (float): Distance between the two XBPMs.
+    """
     x1_data, y1_data = [], []
     x2_data, y2_data = [], []
     angle_x, angle_y = [], []
