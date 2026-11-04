@@ -4,19 +4,24 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 import h5py
+import matplotlib.pyplot as plt
 import numpy as np
 import os
 import pickle  # noqa: S403
 import sys
+
 
 # script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from xbpm_bumps.core.config import Config       # noqa: E402
 from xbpm_bumps.core.data_structure import (    # noqa: E402
+    BladeAvgData,
+    Blades,
     H5Writer,
     BumpRawData
     )
+from xbpm_bumps.core.visualizers import BladeMapVisualizer
 
 
 HELP_DESCRIPTION = (
@@ -49,10 +54,10 @@ def cmd_line() -> argparse.Namespace:
         help='Directory containing pickle files.'
     )
 
-    # Legacy blade map flag.
+    # Show blade map.
     parser.add_argument(
-        '-r', '--rewire', action='store_true',
-        help='Use legacy blade map.'
+        '-m', '--map', action='store_true',
+        help='Display the blade map and allow for blade re-wiring.'
     )
 
     return parser.parse_args(sys.argv[1:])
@@ -165,39 +170,37 @@ def extract_beamlines(rawdata: list) -> list:
         return []
 
 
-
-
-def blade_rewire(beamlines : list[str]):
+def _blade_rewire(
+        beamline    : list[str],
+        current_map : dict[str, str] = None
+        ) -> dict[str, dict[str, str]] | None:
     """Rewire blades for the given beamlines.
 
     Args:
-        beamlines: list of str, beamline names to rewire.
+        beamlines   : list of str, beamline names to rewire.
+        current_map : dict[str, str], current mapping of blades
+            for the beamlines.
+
+    Returns:
+        dict[str, dict[str, str]]: Mapping of beamlines to their
+            new blade maps.
     """
-    blade_map = {}
-    for beamline in beamlines:
-        print("\n # Rewiring blades for beamline:", beamline)
+    print("\n # Rewiring blades for beamline:", beamline)
+    print(f"Current blade map:\n{_blade_map_str(current_map)}\n")
 
-        current_map = _reverse_map(Config.BLADEMAP[beamline])
-        cmap_txt = _blade_map_str(current_map)
-        print(f"Current blade map:\n{cmap_txt}\n")
+    choose = input(
+        "\n Do you want to rewire blades for this beamline? (Y/n): "
+        )
+    if choose.lower() not in ('y', ''):
+        return None
 
-        choose = input(
-            "\n Do you want to rewire blades for this beamline? (Y/n): "
-            )
-        if choose.lower() not in ('y', ''):
-            continue
+    while True:
+        new_map = _get_new_blade_map(current_map.copy())
+        print(f"New blade map:\n{_blade_map_str(new_map)}\n")
 
-        while True:
-            new_map = _get_new_blade_map(current_map.copy())
-            cmap_txt = _blade_map_str(new_map)
-            print(f"New blade map:\n{cmap_txt}\n")
-
-            confirm = input("\nConfirm new blade map? (Y/n): ")
-            if confirm.lower() in ('y', ''):
-                blade_map[beamline] = new_map
-                break
-
-    return blade_map
+        confirm = input("\nConfirm new blade map? (Y/n): ")
+        if confirm.lower() in ('y', ''):
+            return new_map
 
 
 def _blade_map_str(bmap: dict[str, str]):
@@ -253,6 +256,7 @@ def _get_new_blade_map(current_map : dict[str, str]) -> dict[str, str]:
         bladelist.remove(new_val)
         # Next blade.
         k += 1
+
 
 def _reverse_map(bmap: dict[str, str]) -> dict[str, str]:
     """Reverse the blade map.
@@ -318,12 +322,13 @@ def extract_and_average_blade_data(
         avg, std, vals = blade_average(rawdata0[pv + "_val"])
 
         # Store raw values: _val, _range, _saturation.
+        nvals = len(vals)
         rawblades[Config.column(pv, "val")] = np.array(vals)
-        rawblades[Config.column(pv, "range")] = np.array(
-            rawdata0.get(pv + "_range", None)
+        rawblades[Config.column(pv, "range")] = _same_len(
+            rawdata0.get(pv + "_range"), nvals
             )
-        rawblades[Config.column(pv, "saturation")] = np.array(
-            rawdata0.get(pv + "_saturation", None)
+        rawblades[Config.column(pv, "saturation")] = _same_len(
+            rawdata0.get(pv + "_saturation"), nvals
             )
 
         # Store each avg / std. dev. value.
@@ -332,6 +337,21 @@ def extract_and_average_blade_data(
         avgblades[Config.column(blade, "err")]  = std
 
     return rawblades, avgblades
+
+
+def _same_len(value, n: int) -> np.ndarray:
+    """Return `value` as a length-n array; NaN-fill when missing."""
+    if value is None:
+        return np.full(n, np.nan)
+    arr = np.asarray(value)
+    if arr.ndim == 0:                 # scalar: broadcast to the bump length
+        return np.full(n, arr.item())
+    arr = arr.ravel()
+    if len(arr) != n:
+        raise ValueError(
+            f"Blade column length mismatch: got {len(arr)}, expected {n}."
+        )
+    return arr
 
 
 def parse_rawdata(
@@ -439,6 +459,28 @@ def parse_rawdata(
         }
 
 
+def avgblades_to_structured_array(avgblades: dict) -> np.ndarray:
+    """Flatten per-bump avgblades dicts into one structured array."""
+    columns     = list(next(iter(avgblades.values())).keys())
+    rows_sorted = [avgblades[k] for k in sorted(avgblades)]
+    return np.rec.fromarrays(
+        [np.array([row[c] for row in rows_sorted]) for c in columns],
+        names=columns,
+    )
+
+
+def build_blade_avg_data(dataset: dict, beamline: str) -> BladeAvgData:
+    """Build a BladeAvgData from parse_rawdata output for one beamline."""
+    blades = Blades.from_hdf5(
+        avgblades_to_structured_array(dataset["avgblades"])
+    )
+    return BladeAvgData(
+        prm     = {"beamline": beamline},
+        pos_nom = blades.pos_nom,
+        blades  = blades,
+    )
+
+
 def _write_group_data(
         group: "h5py.Group",
         key  : str,
@@ -478,9 +520,9 @@ def export_rawdata_to_hdf5(
             mastergrp = h5file.require_group(beamline)
 
             # Beamline-group attributes.
-            lenmeta = len(metadata)
+            nbumps     = len(metadata)
             mastermeta = {
-                "# Bumps"          : lenmeta,
+                "# Bumps"          : nbumps,
                 "Beamline"         : beamline,
                 "Description"      : (
                     f"Data for {beamline} beamline from XBPM bumping"
@@ -495,19 +537,8 @@ def export_rawdata_to_hdf5(
             # Set metadata attributes for the raw data group (per bump).
             rawgrp = H5Writer.group(mastergrp, "raw_data", beamline=beamline)
 
-            ts_first = metadata[1].get('Timestamp', "N/A")
-            ts_last  = metadata[lenmeta].get('Timestamp', "N/A")
-            duration = str(
-                datetime.strptime(ts_last, "%Y-%m-%d %H:%M:%S") -
-                datetime.strptime(ts_first, "%Y-%m-%d %H:%M:%S")
-            )
-            rawmeta  = {
-                "# Bumps"          : lenmeta,
-                "Beamline"         : beamline,
-                "Experience start" : ts_first,
-                "Experience end"   : ts_last,
-                "Duration"         : duration,
-                }
+            # Compose raw metadata for the current beamline.
+            rawmeta = compose_raw_metadata(metadata, nbumps, beamline)
             rawgrp.attrs.update(rawmeta)
 
             # One bump subgroup per record.
@@ -533,22 +564,12 @@ def export_rawdata_to_hdf5(
                     )
 
                 avg_sr_current += metadata[ii].get('SR current', 0.)
-            avg_sr_current /= lenmeta
-
-            # Averaged blade data: one descbribed table per beamline.
-            columns     = list(next(iter(avgblades.values())).keys()) 
-            rows_sorted = [avgblades[k] for k in sorted(avgblades)]
+            avg_sr_current /= nbumps
 
             # Create a structured array for HDF5 export.
-            struct_array = np.rec.fromarrays(
-                [np.array([
-                    row[c]
-                    for row in rows_sorted
-                    ]) for c in columns],
-                names=columns
-                )
             dset = H5Writer.dataset(
-                rawgrp, "blade_averages", data=struct_array
+                rawgrp, "blade_averages",
+                data=avgblades_to_structured_array(avgblades)
                 )
 
             # Select some metadata attributes to define the averaged data.
@@ -562,6 +583,37 @@ def export_rawdata_to_hdf5(
                 if k.startswith('Gap/Ph.')
                 })
             dset.attrs.update(avg_meta)
+
+
+def compose_raw_metadata(
+        metadata : dict[int, dict[str, float]],
+        nbumps   : int,
+        beamline : str
+        ) -> dict[str, float]:
+    """Compose raw metadata from individual bump metadata.
+
+    Args:
+        metadata: Dictionary containing per-bump metadata.
+        nbumps  : Total number of bumps.
+        beamline: Beamline identifier.
+
+    Returns:
+        Dictionary with composed raw metadata.
+    """
+    ts_first = metadata[1].get('Timestamp', "N/A")
+    ts_last  = metadata[nbumps].get('Timestamp', "N/A")
+    duration = str(
+        datetime.strptime(ts_last, "%Y-%m-%d %H:%M:%S") -
+        datetime.strptime(ts_first, "%Y-%m-%d %H:%M:%S")
+    )
+    rawmeta  = {
+        "# Bumps"          : nbumps,
+        "Beamline"         : beamline,
+        "Experience start" : ts_first,
+        "Experience end"   : ts_last,
+        "Duration"         : duration,
+        }
+    return rawmeta
 
 
 def hdf5_handler(blines: str, init_time: str) -> tuple:
@@ -606,25 +658,15 @@ def main() -> None:
 
     # Get available beamlines from the rawdata and choose each one to process.
     # Default is to process all.
-    beamlines = extract_beamlines(rawdata)
-    beamlines = pick_beamline(beamlines)
+    beamlines = pick_beamline(extract_beamlines(rawdata))
     print(f"\n>>> Selected beamline(s): {', '.join(beamlines)}")
     print(f"\n### Found {len(rawdata)} pickle files in directory \n### "
           f"'{args.dir}'")
 
-    if args.rewire:
-        blademaps = blade_rewire(beamlines)
-    else:
-        blademaps = {
-            bl: _reverse_map(Config.BLADEMAP[bl])
-            for bl in beamlines
-            }
-
-    # DEBUG
-    print(f"\n>>> Blade maps for selected beamlines:")
-    for bl, bm in blademaps.items():
-        print(f"    {bl}: {bm}")
-    # DEBUG
+    blademaps = {
+        bl: _reverse_map(Config.BLADEMAP[bl])
+        for bl in beamlines
+        }
 
     # Extract data for each selected beamline and store in a dictionary.
     # Data is extracted as-is and averaged data is also computed.
@@ -633,6 +675,27 @@ def main() -> None:
         dataset[beamline] = parse_rawdata(
             rawdata, beamline, blademap=blademaps[beamline]
             )
+
+        if not args.map:
+            continue
+
+        # Display -> rewire -> re-display until this map is approved.
+        while True:
+            bavg = build_blade_avg_data(dataset[beamline], beamline)
+            fig = BladeMapVisualizer(bavg).plot_blade_map()
+            plt.show(block=False)
+            plt.pause(0.1)
+
+            new_map = _blade_rewire(beamline, blademaps[beamline])
+            plt.close(fig)
+
+            if new_map is None:
+                break
+            blademaps[beamline] = new_map
+            dataset[beamline] = parse_rawdata(
+                rawdata, beamline, blademap=new_map
+            )
+        
 
     # Set file name and handle overwrite/append.
     # Set initial timestamp from the first record of the first beamline.

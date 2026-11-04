@@ -34,21 +34,6 @@ class Config:
         for key in XBPM_BEAMLINES
     }
 
-    LEGACY_BLADEMAP = {
-        "MNC1" : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-        "MNC2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-        "CAT1" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-        "CNB1" : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-        "CNB2" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-        # "MGN"  : {"TO": 'C', "TI": 'A', "BI": 'D', "BO": 'B'},
-        "MGN1" : {"TO": 'B', "TI": 'A', "BI": 'C', "BO": 'D'},
-        "MGN2" : {"TO": 'B', "TI": 'C', "BI": 'A', "BO": 'D'},
-        "SIMUL": {"TO": 'A', "TI": 'B', "BI": 'C', "BO": 'D'},
-        }
-    # The name of the beamline equals to first XBPM id.
-    for blade in ["CAT", "CNB", "MGN", "MNC"]:
-        LEGACY_BLADEMAP[blade] = LEGACY_BLADEMAP[blade + "1"]
-
     # The XBPM beamlines.
     BEAMLINENAME = {
         "CAT" : "Caterete",
