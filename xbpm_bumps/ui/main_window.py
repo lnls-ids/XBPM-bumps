@@ -1,6 +1,8 @@
 """Main window for XBPM analysis application."""
 
 # from typing import Callable, Optional
+from datetime import datetime
+
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTextEdit, QSplitter, QTabWidget,
@@ -530,8 +532,14 @@ class XBPMMainWindow(QMainWindow):
             return
 
         try:
+            timestamp_alt = self.workdatum.prm.updated
+            timestamp = self.workdatum.raw_data.meta.get(
+                'Experiment start', timestamp_alt
+                )
+            timestamp = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
             default_name = (
-                f"xbpm_{self.workbeamline}.h5"
+                f"xbpm_analysis_{self.workbeamline}"
+                f"_{timestamp.strftime('%Y-%m-%d_%H-%M-%S')}.h5"
             )
             filepath, _ = QFileDialog.getSaveFileName(
                 self,
@@ -584,23 +592,59 @@ class XBPMMainWindow(QMainWindow):
             )
             return
 
+        try:
+            exp_start = self.workdatum.raw_data.meta.get('Experiment start')
+            if isinstance(exp_start, datetime):
+                ts = exp_start
+            elif isinstance(exp_start, str):
+                ts = datetime.strptime(exp_start, "%Y-%m-%d %H:%M:%S")
+            else:
+                QMessageBox.warning(
+                    self, "Missing Experiment Start",
+                    ("No experiment start time is available."
+                    " Using the HDF5 file update timestamp.")
+                )
+                ts = datetime.strptime(
+                    self.workdatum.prm.updated, "%Y-%m-%d %H:%M:%S"
+                )
+        except Exception as exc:  # pragma: no cover
+            print("WARNING. Failed to determine experiment start time:"
+                  f"\n {exc}\n Using current timestamp.")
+            ts = datetime.now()
+
+
+        default_dir_name = (
+            f"{self.workbeamline}_{ts.strftime('%Y-%m-%d_%H-%M-%S')}"
+            )
+
+        # Start from a base directory that definitely exists.
+        base_dir = (
+            os.path.dirname(self.runtime_prm.inputfile)
+            if self.runtime_prm.inputfile
+            else os.getcwd()
+        )
+
         dirpath = QFileDialog.getExistingDirectory(
             self,
-            "Select Directory for Plain Export"
+            caption="Select Directory for Plain Export",
+            directory=base_dir
         )
         if not dirpath:
             return
 
+        # Append the *suggested subdirectory* to whatever the user picked.
+        target_dir = os.path.join(dirpath, default_dir_name)
+
         exporter.export_plain(
-            dirpath  = dirpath,
+            dirpath  = target_dir,
             tab_info = self.tab_info,
             figures  = self.analysis.figures,
         )
-        self.log_message(f"Plain export written to: {dirpath}")
+        self.log_message(f"Plain export written to: {target_dir}")
         QMessageBox.information(
             self,
             "Export Complete",
-            f"Exported analysis and figures to {dirpath}."
+            f"Exported analysis and figures to {target_dir}."
         )
 
     @pyqtSlot()

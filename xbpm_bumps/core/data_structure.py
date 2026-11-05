@@ -560,7 +560,10 @@ class Blades:
         # Convert to a 2D grid by setting a MultiIndex and unstacking
         # This requires that every (y,x) combination appears exactly once,
         # otherwise you'll get NaN for missing combinations.
-        ds = ds.set_index(points=['y', 'x']).unstack('points')
+        ds = ds.set_index(points=['y', 'x'])
+        # Keep only the first occurrence of each (y, x) combination.
+        ds = ds.drop_duplicates('points')
+        ds = ds.unstack('points')
 
         # Reshape the coordinate arrays to match the 2D grid.
         blds0 = Config.BLADES[0]

@@ -246,6 +246,26 @@ class Config:
             "Blade behavior along the vertical central line."
             ),
 
+        "duration": (
+            "Duration",
+            "Total duration of the experiment."
+            ),
+
+        "exp_start": (
+            "Experiment start",
+            "Start time of the experiment."
+            ),
+
+        "exp_end": (
+            "Experiment end",
+            "End time of the experiment."
+            ),
+
+        "nbumps": (
+            "# Bumps",
+            "Total number of bumps in the experiment."
+            ),
+
         "fit_data": (
             "Fit data",
             "Sweep positions and the measured, error and fitted currents of"

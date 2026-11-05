@@ -101,8 +101,11 @@ def pick_beamline(beamlines: list) -> str:
 
 
 def _get_timestamp_from_filename(filename: str) -> str:
-    ts = filename.strip('.pickle').split('_')[-1]
-    ts = datetime.fromtimestamp(float(ts)).strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        ts = float(filename.strip('.pickle').split('_')[-1])
+        ts = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        ts = "N/A"
     return ts
 
 
@@ -415,6 +418,11 @@ def parse_rawdata(
             col('y', 'bpm') : orby
             }
 
+        if beamline not in record[0]:
+            print(f"Warning: Beamline {beamline} not found in record {jj}."
+                  " Skipping.")
+            continue
+
         # Extract and average blade data for the current beamline.
         rawblades, avgbld = extract_and_average_blade_data(
             record[0][beamline], beamline, blademap=blademap
@@ -602,15 +610,18 @@ def compose_raw_metadata(
     """
     ts_first = metadata[1].get('Timestamp', "N/A")
     ts_last  = metadata[nbumps].get('Timestamp', "N/A")
-    duration = str(
-        datetime.strptime(ts_last, "%Y-%m-%d %H:%M:%S") -
-        datetime.strptime(ts_first, "%Y-%m-%d %H:%M:%S")
-    )
+    if ts_first == "N/A" or ts_last == "N/A":
+        duration = "N/A"
+    else:
+        duration = str(
+            datetime.strptime(ts_last, "%Y-%m-%d %H:%M:%S") -
+            datetime.strptime(ts_first, "%Y-%m-%d %H:%M:%S")
+        )
     rawmeta  = {
         "# Bumps"          : nbumps,
         "Beamline"         : beamline,
-        "Experience start" : ts_first,
-        "Experience end"   : ts_last,
+        "Experiment start" : ts_first,
+        "Experiment end"   : ts_last,
         "Duration"         : duration,
         }
     return rawmeta
