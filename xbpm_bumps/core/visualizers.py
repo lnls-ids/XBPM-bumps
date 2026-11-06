@@ -56,6 +56,7 @@ def render_data_analysis(
         analysis   : DataAnalysis,
         prm        : BeamlinePrm,
         bmap_scale : bool,
+        showq      : bool = False,
         ) -> dict[str, Figure]:
     """Return one Figure per tab key for every populated analysis field."""
     figures: dict[str, Figure] = {}
@@ -125,6 +126,7 @@ def render_data_analysis(
                     pos_calc   = pos_calc,
                     stat_roi   = stat_roi,
                     graph_type = tab,
+                    showq      = showq
                     )
                 )
 
@@ -715,11 +717,12 @@ class PositionVisualizer:
              current visualization.
     """
 
-    def __init__(self,
-                 prm: BeamlinePrm,
-                 title: str = "",
-                 titles: dict = None
-                 ) -> None:
+    def __init__(
+            self,
+            prm    : BeamlinePrm,
+            title  : str = "",
+            titles : dict = None,
+            ) -> None:
         """Initialize visualizer with parameters.
 
         Args:
@@ -736,13 +739,15 @@ class PositionVisualizer:
         # Module logger
         self._logger = logging.getLogger(__name__)
 
-    def plot_position_results(self,
-                              roi        : ROISlice,
-                              pos_nom    : Positions,
-                              pos_calc   : Positions,
-                              stat_roi   : RMSStatistics,
-                              graph_type : str = "",
-                              ) -> None:
+    def plot_position_results(
+            self,
+            roi        : ROISlice,
+            pos_nom    : Positions,
+            pos_calc   : Positions,
+            stat_roi   : RMSStatistics,
+            graph_type : str = "",
+            showq      : bool = False,
+            ) -> None:
         """Display full position results in 1x3 subplot layout.
 
         Args:
@@ -751,47 +756,62 @@ class PositionVisualizer:
             pos_calc : Calculated positions.
             stat_roi : RMS statistics for the ROI.
             graph_type: Type of graph to display (e.g., 'xbpm_pairwise_raw').
+            showq      : Whether to display the Q-factor subplot.
         """
         # Check dimensionality of the RMS statistics to determine layout.
-        if stat_roi.diff_tot is None:
-            is_1d = True
-        else:
-            is_1d = (stat_roi.diff_tot.ndim == 1 or
-                     (stat_roi.diff_tot.ndim == 2 and
-                      min(stat_roi.diff_tot.shape) == 1))
-        if is_1d:
-            gridspec = {'width_ratios': [1, 1, 0.1]}
-        else:
-            gridspec = None
+        # if stat_roi.diff_tot is None:
+        #     is_1d = True
+        # else:
+        #     is_1d = (stat_roi.diff_tot.ndim == 1 or
+        #              (stat_roi.diff_tot.ndim == 2 and
+        #               min(stat_roi.diff_tot.shape) == 1))
+        # if is_1d:
+        #     gridspec = {'width_ratios': [1, 1, 0.1]}
+        # else:
+        #     gridspec = None
 
-        self.fig, axes = plt.subplots(
-            nrows=1,
-            ncols=3,
-            figsize=(18,6),
-            constrained_layout=True,
-            gridspec_kw=gridspec
+        show_qfactor = (
+            showq
+            and graph_type == "xbpm_pairwise_raw"
+            and stat_roi.qfactor is not None
         )
-        (ax_all, ax_roi, ax_heat) = axes
+
+        if show_qfactor:
+            self.fig, axes = plt.subplots(
+                nrows=2,
+                ncols=2,
+                figsize=(6, 3),
+                constrained_layout=True,
+            )
+            (ax_all, ax_roi), (ax_qfactor, ax_heat) = axes
+        else:
+            # Two scatter plots on top; heatmap spans the full second row.
+            self.fig = plt.figure(figsize=(6, 3), constrained_layout=True)
+            gs = self.fig.add_gridspec(2, 2)
+            ax_all     = self.fig.add_subplot(gs[0, 0])
+            ax_roi     = self.fig.add_subplot(gs[0, 1])
+            ax_qfactor = None
+            ax_heat    = self.fig.add_subplot(gs[1, :])
 
         # Reduce vertical/horizontal padding between subplots
         # and figure edges for a tighter layout.
-        try:
-            engine = self.fig.get_layout_engine()
-            if engine is not None and hasattr(engine, "set"):
-                engine.set(
-                    w_pad=0.06,   # space figure edge / axes, horizontal
-                    h_pad=0.0,    # space figure edge / axes, vertical
-                    wspace=0.06,  # space between axes, horizontal
-                    hspace=0.0,   # space between axes, vertical
-                )
-            else:
-                raise AttributeError("Layout engine missing or immutable")
-        except Exception:
-            # Log and continue if environment lacks this API
-            self._logger.warning(
-                "Layout engine padding not applied; falling back",
-                exc_info=True,
-            )
+        # try:
+        #     engine = self.fig.get_layout_engine()
+        #     if engine is not None and hasattr(engine, "set"):
+        #         engine.set(
+        #             w_pad=0.06,   # space figure edge / axes, horizontal
+        #             h_pad=0.0,    # space figure edge / axes, vertical
+        #             wspace=0.06,  # space between axes, horizontal
+        #             hspace=0.0,   # space between axes, vertical
+        #         )
+        #     else:
+        #         raise AttributeError("Layout engine missing or immutable")
+        # except Exception:
+        #     # Log and continue if environment lacks this API
+        #     self._logger.warning(
+        #         "Layout engine padding not applied; falling back",
+        #         exc_info=True,
+        #     )
 
         # ROI slices.
         roi_h, roi_v  = roi.slice_h, roi.slice_v
@@ -832,6 +852,23 @@ class PositionVisualizer:
             pos_calc.y[roi_v, roi_h],
             title = title_roi
         )
+
+        # Q-factor heatmap
+        if show_qfactor:
+            title_qfactor  = _Title(
+                beamline   = self.prm.beamline,
+                graph_type = "xbpm_positions",
+                calc_type  = calc_type,
+                rort       = rort,
+                ax_type    = "qfactor",
+            )
+            self._plot_position_differences(
+                ax_qfactor,
+                pos_nom.x[roi_v, roi_h],
+                pos_nom.y[roi_v, roi_h],
+                stat_roi.qfactor,
+                title=title_qfactor,
+            )
 
         # Difference heatmap
         title_heatmap  = _Title(
@@ -888,7 +925,7 @@ class PositionVisualizer:
                            "using default axis limits.", title)
             ax.set_xlim(-1, 1)
             ax.set_ylim(-1, 1)
-            ax.set_aspect('equal', adjustable='box')
+            ax.set_aspect(1)
             ax.grid()
             return
 
@@ -909,7 +946,7 @@ class PositionVisualizer:
         ax.set_ylim(v_center - total_range / 2, v_center + total_range / 2)
 
         # Force 1:1 aspect ratio after setting limits
-        ax.set_aspect('equal', adjustable='box')
+        ax.set_aspect(1)
 
         handles, labels = [], []
         if len(nom) > 0:
@@ -990,17 +1027,22 @@ class PositionVisualizer:
             h_extent = h_max - h_min
             v_extent = v_max - v_min
             # aspect = (physical_y_per_pixel) / (physical_x_per_pixel)
-            aspect = ((v_extent / n_v) / (h_extent / n_h)
-                      if (h_extent > 0 and v_extent > 0) else 1)
+            # aspect = ((v_extent / n_v) / (h_extent / n_h)
+            #           if (h_extent > 0 and v_extent > 0) else 1)
+            box_aspect = v_extent / h_extent if h_extent > 0 else 1.0
             color_vals = rmsroi
             xlabel = u"$x$ [$\\mu$m]"
             fraction, pad = 0.04, 0.3
 
-            im = ax.imshow(color_vals,
-                           cmap='viridis', origin='lower',
-                           aspect=aspect, extent=extent)
-            cbar = self.fig.colorbar(im, ax=ax,
-                                     fraction=0.046, pad=0.04)
+            ax.set_box_aspect(box_aspect)
+            im = ax.imshow(
+                color_vals,
+                cmap='viridis',
+                origin='lower',
+                aspect='auto',
+                extent=extent
+                )
+            cbar = self.fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
             cbar.set_label(u"RMS Difference [$\\mu$m]", fontsize=14)
 
         # cbar = self.fig.colorbar(im, ax=ax,

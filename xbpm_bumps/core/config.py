@@ -117,6 +117,9 @@ class Config:
             "heatmap"  : (
                 r"RMS $\Delta$ @ ROI"
                 ),
+            "qfactor"  : (
+                r"Q-factor @ ROI"
+                ),
         },
     }
 
@@ -211,6 +214,11 @@ class Config:
         "diff_tot": (
             "Total differences",
             "Total (horizontal and vertical) differences."
+            ),
+
+        "qfactor": (
+            "Q factor",
+            "Quality factor associated with the differences."
             ),
 
         "summary":  (

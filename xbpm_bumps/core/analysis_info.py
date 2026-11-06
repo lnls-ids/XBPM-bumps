@@ -1,7 +1,6 @@
 """Human-readable summary of a DataAnalysis for the GUI info panel."""
 
 import numpy as np
-
 from xbpm_bumps.core.data_structure import (
     BCA_HV,
     BPMAnalysis,

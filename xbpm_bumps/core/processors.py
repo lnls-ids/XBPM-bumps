@@ -104,6 +104,13 @@ class XBPMProcessor:
             pw_pos_std.y,
             self.roi
         )
+        if self.prm_gen.show_qfactor:
+            qfactor = self.q_factor_calc(self.blades)
+            rms_pw_std.all.qfactor = qfactor
+            rms_pw_std.roi.qfactor = qfactor[
+                self.roi.slice_v,
+                self.roi.slice_h
+                ]
 
         # Positions with calculated suppression matrix and scaling.
         self.pos_pw_sup = self.beam_position_pair(self.supmat.calculated)
@@ -207,13 +214,14 @@ class XBPMProcessor:
     Blade behavior at central line sweeps.
     """
 
-    def analyze_central_sweep_blades(self,
-                                     slice_by_roi: bool = False
-                                     ) -> dict:
+    def analyze_central_sweep_blades(
+            self,
+            slice_by_roi: bool = False
+            ) -> dict:
         """Analyze the central positions of the blades.
 
         Args:
-            slice_roi: Whether to slice the data according to the ROI.
+            slice_by_roi: Whether to slice the data according to the ROI.
             Default is to make the fitting over the entire range.
 
         Returns:
@@ -270,10 +278,11 @@ class XBPMProcessor:
             v = DStr.BladeCenterAnalysis(**vert),
         )
 
-    def _blade_central_line_fit(self,
-                                range_vals: np.ndarray,
-                                blades: dict,
-                                ) -> dict:
+    def _blade_central_line_fit(
+            self,
+            range_vals: np.ndarray,
+            blades: dict,
+            ) -> dict:
         """Linear fittings to each blade's data through central line.
         
         Args:
@@ -488,9 +497,10 @@ class XBPMProcessor:
     Position calculation with partial delta/sigma formula.
     """
 
-    def analyze_central_sweep_positions(self,
-                                        cross: bool = True
-                                        ) -> DStr.CentralSweeps:
+    def analyze_central_sweep_positions(
+            self,
+            cross: bool = True
+            ) -> DStr.CentralSweeps:
         """Assemble the central sweep analysis.
 
         Returns:
@@ -523,11 +533,12 @@ class XBPMProcessor:
 
         return DStr.CentralSweeps(h=h, v=v)
 
-    def _central_sweep(self,
-                       x : np.ndarray,
-                       y : np.ndarray,
-                       w : np.ndarray | None = None,
-                       ) -> DStr.CentralSweepLine:
+    def _central_sweep(
+            self,
+            x : np.ndarray,
+            y : np.ndarray,
+            w : np.ndarray | None = None,
+            ) -> DStr.CentralSweepLine:
         """Analyze position calculation along the central horizontal line.
         
         Args:
@@ -556,6 +567,13 @@ class XBPMProcessor:
             coeffs      = fit,
             sigmas      = np.sqrt(np.diag(cov))
         )
+
+    @staticmethod
+    def q_factor_calc(blades) -> np.ndarray:
+        """Calculate the quality factor from blades' currents."""
+        q1 = blades.to + blades.bi
+        q2 = blades.ti + blades.bo
+        return (q1 - q2) / (q1 + q2)
 
     @staticmethod
     def beam_position_cross(blades) -> DStr.Positions:
@@ -1043,6 +1061,7 @@ def calculate_grid_stats(
         'diff_h'   : rms_h,
         'diff_v'   : rms_v,
         'diff_tot' : rms_tot,
+        'qfactor'  : None,
         'min_h'    : rms_min_h,
         'mean_h'   : rms_mean_h,
         'max_h'    : rms_max_h,

@@ -89,6 +89,7 @@ class GenPrm:
     show_xbpmpositions    : bool = False
     slice_by_roi          : bool = False
     bmap_global_scale     : bool = False
+    show_qfactor          : bool = False
     # show_bladecenter      : bool = False
     # show_xbpmpositionsraw : bool = False
 
@@ -101,10 +102,11 @@ class GenPrm:
         setattr(self, key, value)
 
     @classmethod
-    def from_hdf5(cls,
-                  dset_grp: "h5py.Group",
-                  inputfile: str
-                  ) -> "GenPrm":
+    def from_hdf5(
+        cls,
+        dset_grp: "h5py.Group",
+        inputfile: str
+        ) -> "GenPrm":
         """Create a Prm instance from an HDF5 group."""
         # Extract attributes from the HDF5 group.
         try:
@@ -116,7 +118,7 @@ class GenPrm:
                 else:
                     prms[key] = val
             prms["phaseorgap"] = phaseorgap
-            prms["inputfile"] = inputfile
+            prms["inputfile"]  = inputfile
         except Exception as err:
             raise ValueError(
                 "### ERROR while reading 'Prm' from HDF5 group:\n"
@@ -234,10 +236,11 @@ class BeamlinePrm:
     extras       : dict | None = None
 
     @classmethod
-    def from_hdf5(cls,
-                  bln_grp : h5py.Group,
-                  anl_grp : h5py.Group = None,
-                  ) -> "BeamlinePrm":
+    def from_hdf5(
+        cls,
+        bln_grp : h5py.Group,
+        anl_grp : h5py.Group = None,
+        ) -> "BeamlinePrm":
         """Create a BeamlinePrm by merging beamline and analysis attributes.
 
         Beamline-only fields come from `bln_grp`; analysis-only fields
@@ -1012,6 +1015,7 @@ class RMSStatistics:
     diff_h   : np.ndarray
     diff_v   : np.ndarray
     diff_tot : np.ndarray
+    qfactor  : np.ndarray | None
 
     # Minimum and maximum values of the differences.
     min_h    : float
@@ -1049,6 +1053,12 @@ class RMSStatistics:
         diff_h   = rms_grp[Config.group_name("diff_h")][()]
         diff_v   = rms_grp[Config.group_name("diff_v")][()]
         diff_tot = rms_grp[Config.group_name("diff_tot")][()]
+
+        qfactor  = (
+            rms_grp[Config.group_name("qfactor")][()]
+            if "qfactor" in rms_grp
+            else None
+            )
         stats    = {
             f : float(row[cls._column(f)])
             for f in cls._SUMMARY
@@ -1058,6 +1068,7 @@ class RMSStatistics:
             diff_h   = diff_h,
             diff_v   = diff_v,
             diff_tot = diff_tot,
+            qfactor  = qfactor,
             **stats
             )
 
@@ -1068,7 +1079,11 @@ class RMSStatistics:
         ) -> None:
         """Create the 'All grid'/'ROI' group (`key`: 'rms_all', 'rms_roi')."""
         grp = H5Writer.group(parent, key)
-        for dkey in ("diff_h", "diff_v", "diff_tot"):
+
+        keys = ["diff_h", "diff_v", "diff_tot"]
+        if self.qfactor:
+            keys.append("qfactor")
+        for dkey in keys:
             H5Writer.dataset(grp, dkey, getattr(self, dkey))
 
         row = np.zeros(1, dtype=np.dtype([
@@ -2009,7 +2024,6 @@ class DataAnalysis:
             fig_grp = H5Writer.group(dan_grp, "figures")
             for key, fig in self.figures.items():
                 self._figure_export(fig, fig_grp, f"{key}")
-
 
     def _figure_export(
             self,

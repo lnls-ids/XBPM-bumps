@@ -186,7 +186,13 @@ class ParameterPanel(QWidget):
         self.xbpm_calc_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.xbpm_calc_check)
 
-        # 6. Slice by ROI
+        # 6. Show Q-factor
+        self.qfactor_check = QCheckBox("Show Q-factor")
+        self.qfactor_check.setChecked(True)
+        self.qfactor_check.toggled.connect(self.parametersChanged.emit)
+        layout.addWidget(self.qfactor_check)
+
+        # 7. Slice by ROI
         self.slice_by_roi_check = QCheckBox(
             "Central range fit defined by ROI"
             )
@@ -194,7 +200,7 @@ class ParameterPanel(QWidget):
         self.slice_by_roi_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.slice_by_roi_check)
 
-        # 7. Blade map absolute scale
+        # 8. Blade map absolute scale
         self.bmap_global_scale_check = QCheckBox(
             "Blade map absolute scale"
             )
@@ -280,6 +286,7 @@ class ParameterPanel(QWidget):
             'skip'                  : self.skip_spin.value(),
             'scalepolydeg'          : self.scalepolydeg.value(),
             'usebpmref'             : self.bpm_ref_check.isChecked(),
+            'show_qfactor'           : self.qfactor_check.isChecked(),
             'slice_by_roi'          : self.slice_by_roi_check.isChecked(),
             'bmap_global_scale'   : (
                 self.bmap_global_scale_check.isChecked()
