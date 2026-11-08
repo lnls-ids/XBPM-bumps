@@ -1012,10 +1012,14 @@ class BeamlineRawData:
 class RMSStatistics:
     """Computed RMS statistics between nominal and measured data."""
     # Horizontal, vertical and total differences at each site.
-    diff_h   : np.ndarray
-    diff_v   : np.ndarray
-    diff_tot : np.ndarray
-    qfactor  : np.ndarray | None
+    diff_h      : np.ndarray
+    diff_v      : np.ndarray
+    diff_tot    : np.ndarray
+
+    # Q factor of efficiency.
+    qfactor     : np.ndarray | None
+    qfactor_avg : float      | None
+    qfactor_std : float      | None
 
     # Minimum and maximum values of the differences.
     min_h    : float
@@ -1054,15 +1058,24 @@ class RMSStatistics:
         diff_v   = rms_grp[Config.group_name("diff_v")][()]
         diff_tot = rms_grp[Config.group_name("diff_tot")][()]
 
-        qfactor  = (
-            rms_grp[Config.group_name("qfactor")][()]
-            if "qfactor" in rms_grp
-            else None
-            )
         stats    = {
             f : float(row[cls._column(f)])
             for f in cls._SUMMARY
             }
+
+        # If q_factor is available.
+        if "qfactor" in rms_grp:
+            qfactor = rms_grp[Config.group_name("qfactor")][()]
+            stats['qfactor_avg'] = float(
+                rms_grp[Config.group_name("qfactor_avg")]
+                )
+            stats['qfactor_std'] = float(
+                rms_grp[Config.group_name("qfactor_std")]
+                )
+        else:
+            qfactor = None
+            stats['qfactor_avg'] = None
+            stats['qfactor_std'] = None
 
         return cls(
             diff_h   = diff_h,
@@ -1081,17 +1094,22 @@ class RMSStatistics:
         grp = H5Writer.group(parent, key)
 
         keys = ["diff_h", "diff_v", "diff_tot"]
-        if self.qfactor:
+        if self.qfactor is not None:
             keys.append("qfactor")
         for dkey in keys:
             H5Writer.dataset(grp, dkey, getattr(self, dkey))
 
-        row = np.zeros(1, dtype=np.dtype([
+        dt = np.dtype([
             (self._column(f), 'f8')
             for f in self._SUMMARY
-            ]))
+            ])
+        row = np.zeros(1, dtype=dt)
         for f in self._SUMMARY:
             row[self._column(f)] = getattr(self, f)
+
+        if self.qfactor_avg is not None and self.qfactor_std is not None:
+            row[self._column('qfactor_avg')] = self.qfactor_avg
+            row[self._column('qfactor_std')] = self.qfactor_std
 
         H5Writer.dataset(grp, "summary", row)
 
@@ -1206,9 +1224,9 @@ class Scales:
     """Container for scaling factors.
     
     q: quadratic coefficient
-    k: linear coefficient
+    k: linear coefficient (slope)
     d: constant offset
-    s: standard deviation of the respective coefficient
+    s*: standard deviation of the respective coefficient (sq, sk, sd)
     """
     kx  : float
     skx : float
@@ -1226,7 +1244,7 @@ class Scales:
 
     @staticmethod
     def _column(field: str) -> str:
-        """'kx' -> 'X slope', 'sqy' -> 'Y quadratic error'."""
+        """'kx' -> 'X scale', 'sqy' -> 'Y quadratic error'."""
         return Config.column(field[-1], field[:-1])
 
     @classmethod
@@ -1278,25 +1296,25 @@ class BladeLineFit:
     """Container for the results of a linear fit to blade data.
 
     Attributes:
-        k       : Slope of the linear fit.
-        sk      : Standard deviation of the slope.
-        d       : Intercept of the linear fit.
-        sd      : Standard deviation of the intercept.
+        m       : Slope of the linear fit.
+        sm      : Standard deviation of the slope.
+        b       : Intercept of the linear fit.
+        sb      : Standard deviation of the intercept.
         pos     : Positions of the data points.
         bld_raw : Raw data points.
         bld_err : Standard deviations of the blade measurements.
         bld_fit : Fitted data points.
     """
-    k       : float
-    sk      : float
-    d       : float
-    sd      : float
+    m       : float
+    sm      : float
+    b       : float
+    sb      : float
     pos     : np.ndarray
     bld_raw : np.ndarray
     bld_err : np.ndarray
     bld_fit : np.ndarray
 
-    _COEFS  : ClassVar[tuple[str, ...]] = ('k', 'sk', 'd', 'sd')
+    _COEFS  : ClassVar[tuple[str, ...]] = ('m', 'sm', 'b', 'sb')
     _CURVES : ClassVar[tuple[str, ...]] = ('raw', 'err', 'fit')
 
     @classmethod
@@ -1492,8 +1510,8 @@ class CentralSweepLine:
         name   = Config.group_name("sweep_coeffs")
         if name in sln_grp:
             row    = sln_grp[name][0]
-            coeffs = np.array([row[col(fix, "k")],  row[col(fix, "d")]])
-            sigmas = np.array([row[col(fix, "sk")], row[col(fix, "sd")]])
+            coeffs = np.array([row[col(fix, "m")],  row[col(fix, "b")]])
+            sigmas = np.array([row[col(fix, "sm")], row[col(fix, "sb")]])
 
         return cls(
             blades      = blades,
@@ -1552,11 +1570,11 @@ class CentralSweepLine:
                 )
             dtc = np.dtype([
                 (col(fix, c), 'f8')
-                for c in ("k", "sk", "d", "sd")
+                for c in ("m", "sm", "b", "sb")
                 ])
             row = np.zeros(1, dtype=dtc)
-            row[col(fix, 'k')],  row[col(fix, 'd')]  = self.coeffs
-            row[col(fix, 'sk')], row[col(fix, 'sd')] = sigmas
+            row[col(fix, 'm')],  row[col(fix, 'b')]  = self.coeffs
+            row[col(fix, 'sm')], row[col(fix, 'sb')] = sigmas
             H5Writer.dataset(sln_grp, "sweep_coeffs", row)
 
 

@@ -181,14 +181,15 @@ def _xbpm_stats(
     """
     lines = []
     lines.append(
-        "\n*  ROI Slice :"
+        "\n\n###  ROI Slice :"
         f" H = {_f(stat.roislice.size_h)},\t"
         f" V = {_f(stat.roislice.size_v)}\n"
     )
+    lines.append("\n### Position statistics\n")
     for case, allroi in [("All", stat.all),
                          ("ROI", stat.roi)]:
         lines.append(
-            f"  {case} (min / avg / max):\n"
+            f" *  {case} (min / avg / max):\n"
             f"\t H = {_f(allroi.min_h)} / "
             f" {_f(allroi.mean_h)} / "
             f" {_f(allroi.max_h)}\n"
@@ -196,6 +197,15 @@ def _xbpm_stats(
             f" {_f(allroi.mean_v)} / "
             f" {_f(allroi.max_v)}\n"
         )
+
+    if allroi.qfactor_avg is not None:
+        lines.append(f"\n### Q factor")
+        for case, allroi in [("All", stat.all), ("ROI", stat.roi)]:
+                lines.append(
+                    f"\n * {case}: \t Q ="
+                    f"{_f(allroi.qfactor_avg, 4)} ± "
+                    f"{_f(allroi.qfactor_std)}\n"
+                )
     return ''.join(lines)
 
 
@@ -215,10 +225,10 @@ def _sweeps(
         sigmas_h = sweeps.h.sigmas
         if coeffs_h is not None:
             lines.append(
-                f"kx :  {_f(coeffs_h[0])}  ({_err(sigmas_h[0])})\t"
+                f"mx :  {_f(coeffs_h[0])}  ({_err(sigmas_h[0])})\t"
                 )
             lines.append(
-                f"dx :  {_f(coeffs_h[1])}  ({_err(sigmas_h[1])})\n")
+                f"bx :  {_f(coeffs_h[1])}  ({_err(sigmas_h[1])})\n")
 
     if sweeps.v is not None:
         lines.append("  V sweep:\n \t")
@@ -226,10 +236,10 @@ def _sweeps(
         sigmas_v = sweeps.v.sigmas
         if coeffs_v is not None:
             lines.append(
-                f"ky :  {_f(coeffs_v[0])}  ({_err(sigmas_v[0])})\t"
+                f"my :  {_f(coeffs_v[0])}  ({_err(sigmas_v[0])})\t"
                 )
             lines.append(
-                f"dy :  {_f(coeffs_v[1])}  ({_err(sigmas_v[1])})\n"
+                f"by :  {_f(coeffs_v[1])}  ({_err(sigmas_v[1])})\n"
                 )
     return ''.join(lines)
 
@@ -247,14 +257,14 @@ def _blades(
     for direction, bl in blades:
         lines.append(f"  {direction.capitalize()} sweep:\n")
         lines.append(
-            f"  TO : k = {_f(bl.to.k):>15}  ({_err(bl.to.sk)}), "
-            f"   delta = {_f(bl.to.d):>15}  ({_err(bl.to.sd)})\n"
-            f"  TI : k = {_f(bl.ti.k):>15}  ({_err(bl.ti.sk)}), "
-            f"   delta = {_f(bl.ti.d):>15}  ({_err(bl.ti.sd)})\n"
-            f"  BI : k = {_f(bl.bi.k):>15}  ({_err(bl.bi.sk)}), "
-            f"   delta = {_f(bl.bi.d):>15}  ({_err(bl.bi.sd)})\n"
-            f"  BO : k = {_f(bl.bo.k):>15}  ({_err(bl.bo.sk)}), "
-            f"   delta = {_f(bl.bo.d):>15}  ({_err(bl.bo.sd)})\n\n"
+            f"  TO : m = {_f(bl.to.m):>15}  ({_err(bl.to.sm)}), "
+            f"       b = {_f(bl.to.b):>15}  ({_err(bl.to.sb)})\n"
+            f"  TI : m = {_f(bl.ti.m):>15}  ({_err(bl.ti.sm)}), "
+            f"       b = {_f(bl.ti.b):>15}  ({_err(bl.ti.sb)})\n"
+            f"  BI : m = {_f(bl.bi.m):>15}  ({_err(bl.bi.sm)}), "
+            f"       b = {_f(bl.bi.b):>15}  ({_err(bl.bi.sb)})\n"
+            f"  BO : m = {_f(bl.bo.m):>15}  ({_err(bl.bo.sm)}), "
+            f"       b = {_f(bl.bo.b):>15}  ({_err(bl.bo.sb)})\n\n"
             )
     lines.append("###\n")
     return ''.join(lines)

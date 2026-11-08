@@ -105,12 +105,18 @@ class XBPMProcessor:
             self.roi
         )
         if self.prm_gen.show_qfactor:
+            # Q factor for the full grid.
             qfactor = self.q_factor_calc(self.blades)
             rms_pw_std.all.qfactor = qfactor
+            rms_pw_std.all.qfactor_avg = np.nanmean(qfactor)
+            rms_pw_std.all.qfactor_std = np.nanstd(qfactor)
+            # Q factor at the ROI.
             rms_pw_std.roi.qfactor = qfactor[
                 self.roi.slice_v,
                 self.roi.slice_h
                 ]
+            rms_pw_std.roi.qfactor_avg = np.nanmean(rms_pw_std.roi.qfactor)
+            rms_pw_std.roi.qfactor_std = np.nanstd(rms_pw_std.roi.qfactor)
 
         # Positions with calculated suppression matrix and scaling.
         self.pos_pw_sup = self.beam_position_pair(self.supmat.calculated)
@@ -135,10 +141,10 @@ class XBPMProcessor:
             roi       = deepcopy(self.roi),
             pos_std   = pw_pos_std,
             scale_std = pw_scale_std,
-            stats_std  = rms_pw_std,
+            stats_std = rms_pw_std,
             pos_trn   = pw_pos_sup,
             scale_trn = pw_scale_sup,
-            stats_trn  = rms_pw_sup
+            stats_trn = rms_pw_sup
         )
 
         # Compute suppression matrix at the ROI.
@@ -317,10 +323,10 @@ class XBPMProcessor:
 
             # Store results in the dataclass for each blade.
             results[bl] = DStr.BladeLineFit(
-                k       = coefs[0],
-                sk      = sigmas[0],
-                d       = coefs[1],
-                sd      = sigmas[1],
+                m       = coefs[0],
+                sm      = sigmas[0],
+                b       = coefs[1],
+                sb      = sigmas[1],
                 pos     = range_vals,
                 bld_raw = blade,
                 bld_err = err,
@@ -345,18 +351,18 @@ class XBPMProcessor:
         sw_h = self.analysis.bladecenter.h
         sw_v = self.analysis.bladecenter.v
 
-        pc_h  = np.array([sw_h.to.k,  sw_h.ti.k,  sw_h.bi.k,  sw_h.bo.k])
-        pc_v  = np.array([sw_v.to.k,  sw_v.ti.k,  sw_v.bi.k,  sw_v.bo.k])
-        sdv_h = np.array([sw_h.to.sk, sw_h.ti.sk, sw_h.bi.sk, sw_h.bo.sk])
-        sdv_v = np.array([sw_v.to.sk, sw_v.ti.sk, sw_v.bi.sk, sw_v.bo.sk])
+        pc_h  = np.array([sw_h.to.m,  sw_h.ti.m,  sw_h.bi.m,  sw_h.bo.m])
+        pc_v  = np.array([sw_v.to.m,  sw_v.ti.m,  sw_v.bi.m,  sw_v.bo.m])
+        sdv_h = np.array([sw_h.to.sm, sw_h.ti.sm, sw_h.bi.sm, sw_h.bo.sm])
+        sdv_v = np.array([sw_v.to.sm, sw_v.ti.sm, sw_v.bi.sm, sw_v.bo.sm])
 
         # Check for the vertical and horizontal cases.
         if len(self.range_h) > 1:
             # Calculate suppresions (1/Gain), normalized by TO blade.
-            pc_h  = sw_h.to.k  / np.abs(pc_h)
-            sto   = sw_h.to.sk / sw_h.to.k
+            pc_h  = sw_h.to.m  / np.abs(pc_h)
+            sto   = sw_h.to.sm / sw_h.to.m
             sdv_h = (
-                (sw_h.to.k / pc_h[:]) * ((sdv_h / pc_h[:])**2 + sto**2)**0.5
+                (sw_h.to.m / pc_h[:]) * ((sdv_h / pc_h[:])**2 + sto**2)**0.5
                 )
         else:
             pc_h  = np.ones(8).reshape(4, 2)
@@ -364,12 +370,12 @@ class XBPMProcessor:
 
         if len(self.range_v) > 1:
             # Calculate suppresions (1/Gain), normalized by TO blade.
-            pc_v  = sw_v.to.k / np.abs(pc_v)
+            pc_v  = sw_v.to.m / np.abs(pc_v)
   
-            sdv_v = sdv_v * sw_v.to.k / (pc_v[:]**2)
-            sto   = sw_v.to.sk / sw_v.to.k
+            sdv_v = sdv_v * sw_v.to.m / (pc_v[:]**2)
+            sto   = sw_v.to.sm / sw_v.to.m
             sdv_v = (
-                (sw_v.to.k / pc_v[:]) * ((sdv_v / pc_v[:])**2 + sto**2)**0.5
+                (sw_v.to.m / pc_v[:]) * ((sdv_v / pc_v[:])**2 + sto**2)**0.5
                 )
 
         else:
@@ -551,8 +557,8 @@ class XBPMProcessor:
         # Fit a linear model to the position data and calculate uncertainties.
         fit, cov = np.polyfit(x, y, deg=1, w=w, cov=True)
         pos_fit  = np.polyval(fit, x)
-        sk, sd   = np.sqrt(np.diag(cov))
-        fit_err  = np.sqrt((x * sk)**2 + sd**2)
+        sm, sb   = np.sqrt(np.diag(cov))
+        fit_err  = np.sqrt((x * sm)**2 + sb**2)
 
         # Define the fixed positions array as the zero axis.
         pos_fixed = np.zeros_like(x)
@@ -573,7 +579,9 @@ class XBPMProcessor:
         """Calculate the quality factor from blades' currents."""
         q1 = blades.to + blades.bi
         q2 = blades.ti + blades.bo
-        return (q1 - q2) / (q1 + q2)
+        qfactor = (q1 - q2) / (q1 + q2)
+
+        return qfactor
 
     @staticmethod
     def beam_position_cross(blades) -> DStr.Positions:
@@ -588,13 +596,13 @@ class XBPMProcessor:
                                  pos_std: DStr.Positions
                                  ) -> DStr.Positions:
         """Transform positions using a linear transformation matrix."""
-        kx, dx = self.analysis.centralsweeps.h.coeffs
-        ky, dy = self.analysis.centralsweeps.v.coeffs
+        mx, bx = self.analysis.centralsweeps.h.coeffs
+        my, by = self.analysis.centralsweeps.v.coeffs
 
         # Compute linear transformation matrix at the ROI.
         self.gl2rmat = self.general_linear_transformation(
-            kx = kx,
-            ky = ky
+            mx = mx,
+            my = my
             )
 
         # Stack cross-blade positions into a 2xN array for transformation.
@@ -611,13 +619,13 @@ class XBPMProcessor:
             )
 
     def general_linear_transformation(self,
-                                      kx: float,
-                                      ky: float
+                                      mx: float,
+                                      my: float
                                       ) -> DStr.GL2RMatrix:
         """Calculate the linear transformation matrix from position slopes."""
         gl2rmat = np.array([
-            [ 1, -ky],
-            [-kx,  1]
+            [ 1, -my],
+            [-mx,  1]
         ])
         return DStr.GL2RMatrix(calc = gl2rmat)
 
@@ -1058,19 +1066,21 @@ def calculate_grid_stats(
                 " in total). Skipping ROI analysis.")
 
     rms = {
-        'diff_h'   : rms_h,
-        'diff_v'   : rms_v,
-        'diff_tot' : rms_tot,
-        'qfactor'  : None,
-        'min_h'    : rms_min_h,
-        'mean_h'   : rms_mean_h,
-        'max_h'    : rms_max_h,
-        'min_v'    : rms_min_v,
-        'mean_v'   : rms_mean_v,
-        'max_v'    : rms_max_v,
-        'min_tot'  : rms_min_tot,
-        'mean_tot' : rms_mean_tot,
-        'max_tot'  : rms_max_tot,
+        'diff_h'      : rms_h,
+        'diff_v'      : rms_v,
+        'diff_tot'    : rms_tot,
+        'qfactor'     : None,
+        'qfactor_avg' : None,
+        'qfactor_std' : None,
+        'min_h'       : rms_min_h,
+        'mean_h'      : rms_mean_h,
+        'max_h'       : rms_max_h,
+        'min_v'       : rms_min_v,
+        'mean_v'      : rms_mean_v,
+        'max_v'       : rms_max_v,
+        'min_tot'     : rms_min_tot,
+        'mean_tot'    : rms_mean_tot,
+        'max_tot'     : rms_max_tot,
     }
     return DStr.RMSStatistics(**rms)
 

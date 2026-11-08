@@ -52,11 +52,11 @@ logger = logging.getLogger(__name__)
 
 
 def render_data_analysis(
-        pos_nom    : Positions,
-        analysis   : DataAnalysis,
-        prm        : BeamlinePrm,
-        bmap_scale : bool,
-        showq      : bool = False,
+        pos_nom      : Positions,
+        analysis     : DataAnalysis,
+        prm          : BeamlinePrm,
+        bmap_scale   : bool,
+        show_qfactor : bool = False,
         ) -> dict[str, Figure]:
     """Return one Figure per tab key for every populated analysis field."""
     figures: dict[str, Figure] = {}
@@ -121,12 +121,12 @@ def render_data_analysis(
         for tab, (roi, pos_nom, pos_calc, stat_roi) in tab_table.items():
             figures[tab] = (
                 PositionVisualizer(prm).plot_position_results(
-                    roi        = roi,
-                    pos_nom    = pos_nom,
-                    pos_calc   = pos_calc,
-                    stat_roi   = stat_roi,
-                    graph_type = tab,
-                    showq      = showq
+                    roi          = roi,
+                    pos_nom      = pos_nom,
+                    pos_calc     = pos_calc,
+                    stat_roi     = stat_roi,
+                    graph_type   = tab,
+                    show_qfactor = show_qfactor
                     )
                 )
 
@@ -541,8 +541,8 @@ class CentralSweepVisualizer:
         if csweep.h is not None:
             # offset_h_y = np.mean(ch.pos_fit)
             offset_h_x = np.mean(ch.pos_index)
-            a, b = ch.coeffs
-            offset_h_y = a * offset_h_x + b
+            m, b = ch.coeffs
+            offset_h_y = m * offset_h_x + b
             hx  = ch.pos_index - offset_h_x
             hy  = ch.pos_calc  - offset_h_y
             hfy = ch.pos_fit   - offset_h_y
@@ -559,8 +559,8 @@ class CentralSweepVisualizer:
         if csweep.v is not None:
             # offset_v_y = np.mean(ch.pos_fit)
             offset_v_x = np.mean(cv.pos_index)
-            a, b = cv.coeffs
-            offset_v_y = a * offset_v_x + b
+            m, b = cv.coeffs
+            offset_v_y = m * offset_v_x + b
             vx  = cv.pos_index - offset_v_x
             vy  = cv.pos_calc  - offset_v_y
             vfy = cv.pos_fit   - offset_v_y
@@ -741,14 +741,18 @@ class PositionVisualizer:
 
     def plot_position_results(
             self,
-            roi        : ROISlice,
-            pos_nom    : Positions,
-            pos_calc   : Positions,
-            stat_roi   : RMSStatistics,
-            graph_type : str = "",
-            showq      : bool = False,
+            roi          : ROISlice,
+            pos_nom      : Positions,
+            pos_calc     : Positions,
+            stat_roi     : RMSStatistics,
+            graph_type   : str = "",
+            show_qfactor : bool = False,
             ) -> None:
-        """Display full position results in 1x3 subplot layout.
+        """Display full position results in 2x2 subplot layout.
+
+        All four subplots are shown in delta/sigma tab, with the Q-factor
+        subplot. The other three graphs show only three subplots (all
+        positions, ROI positions and RMS differences).
 
         Args:
             roi      : Region of Interest slice.
@@ -756,62 +760,26 @@ class PositionVisualizer:
             pos_calc : Calculated positions.
             stat_roi : RMS statistics for the ROI.
             graph_type: Type of graph to display (e.g., 'xbpm_pairwise_raw').
-            showq      : Whether to display the Q-factor subplot.
+            show_qfactor : Whether to display the Q-factor subplot.
         """
-        # Check dimensionality of the RMS statistics to determine layout.
-        # if stat_roi.diff_tot is None:
-        #     is_1d = True
-        # else:
-        #     is_1d = (stat_roi.diff_tot.ndim == 1 or
-        #              (stat_roi.diff_tot.ndim == 2 and
-        #               min(stat_roi.diff_tot.shape) == 1))
-        # if is_1d:
-        #     gridspec = {'width_ratios': [1, 1, 0.1]}
-        # else:
-        #     gridspec = None
-
+        # Determine whether to show the Q-factor subplot.
         show_qfactor = (
-            showq
+            show_qfactor
             and graph_type == "xbpm_pairwise_raw"
             and stat_roi.qfactor is not None
         )
 
-        if show_qfactor:
-            self.fig, axes = plt.subplots(
-                nrows=2,
-                ncols=2,
-                figsize=(6, 3),
-                constrained_layout=True,
-            )
-            (ax_all, ax_roi), (ax_qfactor, ax_heat) = axes
-        else:
-            # Two scatter plots on top; heatmap spans the full second row.
-            self.fig = plt.figure(figsize=(6, 3), constrained_layout=True)
-            gs = self.fig.add_gridspec(2, 2)
-            ax_all     = self.fig.add_subplot(gs[0, 0])
-            ax_roi     = self.fig.add_subplot(gs[0, 1])
-            ax_qfactor = None
-            ax_heat    = self.fig.add_subplot(gs[1, :])
-
-        # Reduce vertical/horizontal padding between subplots
-        # and figure edges for a tighter layout.
-        # try:
-        #     engine = self.fig.get_layout_engine()
-        #     if engine is not None and hasattr(engine, "set"):
-        #         engine.set(
-        #             w_pad=0.06,   # space figure edge / axes, horizontal
-        #             h_pad=0.0,    # space figure edge / axes, vertical
-        #             wspace=0.06,  # space between axes, horizontal
-        #             hspace=0.0,   # space between axes, vertical
-        #         )
-        #     else:
-        #         raise AttributeError("Layout engine missing or immutable")
-        # except Exception:
-        #     # Log and continue if environment lacks this API
-        #     self._logger.warning(
-        #         "Layout engine padding not applied; falling back",
-        #         exc_info=True,
-        #     )
+        # Define the subplot layout for the visualization.
+        self.fig, axes = plt.subplots(
+            nrows=2,
+            ncols=2,
+            figsize=(10, 6),
+            constrained_layout=False,
+        )
+        self.fig.tight_layout()
+        # Adjust subplot spacing for better readability.
+        plt.subplots_adjust(hspace=0.25)
+        [[ax_all, ax_roi], [ax_qfactor, ax_heat]] = axes
 
         # ROI slices.
         roi_h, roi_v  = roi.slice_h, roi.slice_v
@@ -853,7 +821,7 @@ class PositionVisualizer:
             title = title_roi
         )
 
-        # Q-factor heatmap
+        # Q-factor heatmap, if required.
         if show_qfactor:
             title_qfactor  = _Title(
                 beamline   = self.prm.beamline,
@@ -862,13 +830,20 @@ class PositionVisualizer:
                 rort       = rort,
                 ax_type    = "qfactor",
             )
+            cbar_label = u"Q-factor deviation [%]"
+            qfactor_dev = 100 * np.abs(
+                stat_roi.qfactor / stat_roi.qfactor_avg - 1
+                )
             self._plot_position_differences(
                 ax_qfactor,
                 pos_nom.x[roi_v, roi_h],
                 pos_nom.y[roi_v, roi_h],
-                stat_roi.qfactor,
+                qfactor_dev,
                 title=title_qfactor,
+                cbar_label = cbar_label,
             )
+        else:
+            ax_qfactor.set_axis_off()
 
         # Difference heatmap
         title_heatmap  = _Title(
@@ -886,6 +861,11 @@ class PositionVisualizer:
             title = title_heatmap
         )
 
+        for ax in [ax_all, ax_roi, ax_heat]:
+            ax.set_aspect('equal', adjustable='box')
+        if ax_qfactor:
+            ax_qfactor.set_aspect('equal', adjustable='box')
+ 
         return self.fig
 
     def save_figure(self, filename: str) -> None:
@@ -941,12 +921,8 @@ class PositionVisualizer:
         # Center the limits and expand to match max range
         h_center = (h_min + h_max) / 2
         v_center = (v_min + v_max) / 2
-
         ax.set_xlim(h_center - total_range / 2, h_center + total_range / 2)
         ax.set_ylim(v_center - total_range / 2, v_center + total_range / 2)
-
-        # Force 1:1 aspect ratio after setting limits
-        ax.set_aspect(1)
 
         handles, labels = [], []
         if len(nom) > 0:
@@ -959,13 +935,15 @@ class PositionVisualizer:
             ax.legend(handles, labels)
         ax.grid()
 
-    def _plot_position_differences(self,
-                                   ax: plt.Axes,
-                                   pos_nom_h : np.ndarray,
-                                   pos_nom_v : np.ndarray,
-                                   rmsroi    : np.ndarray,
-                                   title     : str = ""
-                                   ) -> None:
+    def _plot_position_differences(
+            self,
+            ax: plt.Axes,
+            pos_nom_h  : np.ndarray,
+            pos_nom_v  : np.ndarray,
+            rmsroi     : np.ndarray,
+            title      : str = "",
+            cbar_label : str = u"RMS Difference [$\\mu$m]",
+            ) -> None:
         """Plot position difference heatmap or scatter on given axis."""
         if rmsroi is None:
             ax.set_title(title, pad=2)
@@ -979,7 +957,6 @@ class PositionVisualizer:
         # Treat as 1-D if truly 1-D (shape = (n,)) or effectively 1-D (one
         # dimension is 1, like (1, n) or (n, 1)), or if one nominal axis is
         # constant (single-line sweep).
-
         h_const = np.nanmax(pos_nom_h) == np.nanmin(pos_nom_h)
         v_const = np.nanmax(pos_nom_v) == np.nanmin(pos_nom_v)
         is_1d = (rmsroi.ndim == 1 or
@@ -990,51 +967,26 @@ class PositionVisualizer:
             # 1D imshow: render as a thin band of square cells
             h_min = np.nanmin(pos_nom_h)
             h_max = np.nanmax(pos_nom_h)
-            # h_center = (h_min + h_max) / 2
 
             color_vals = np.ravel(rmsroi).reshape(-1, 1)
-            # extent = [h_center - 0.2, h_center + 0.2,
             extent = [0, 1, np.nanmin(pos_nom_v), np.nanmax(pos_nom_v)]
-            aspect = 'auto'
-            xlabel = ""
-
-            # Make the single column visually wider
-            ax.set_box_aspect(10)
-            ax.set_anchor('C')
-            ax.set_xticks([])
-            fraction, pad = 0.4, 0.3
-
             im = ax.imshow(color_vals,
-                           cmap='viridis', origin='lower',
-                            aspect=aspect, extent=extent)
-            cbar = self.fig.colorbar(im, ax=ax,
-                                      fraction=fraction, pad=pad)
-            cbar.set_label(u"RMS Difference [$\\mu$m]", fontsize=14)
+                           cmap='viridis',
+                           origin='lower')
+            cbar = self.fig.colorbar(im, ax=ax)
+            cbar.set_label(cbar_label, fontsize=14)
 
         else:
-            # 2D heatmap: use extent to map array indices to actual coordinates
+            # 2D heatmap
             h_min = np.nanmin(pos_nom_h)
             h_max = np.nanmax(pos_nom_h)
             v_min = np.nanmin(pos_nom_v)
             v_max = np.nanmax(pos_nom_v)
-            # extent = [left, right, bottom, top]
             extent = [h_min, h_max, v_min, v_max]
-
-            # Calculate aspect ratio to maintain proper physical proportions.
-            # Account for both physical extents and array shape to avoid
-            # distortion when physical x and y ranges differ significantly.
-            n_v, n_h = rmsroi.shape
-            h_extent = h_max - h_min
-            v_extent = v_max - v_min
-            # aspect = (physical_y_per_pixel) / (physical_x_per_pixel)
-            # aspect = ((v_extent / n_v) / (h_extent / n_h)
-            #           if (h_extent > 0 and v_extent > 0) else 1)
-            box_aspect = v_extent / h_extent if h_extent > 0 else 1.0
             color_vals = rmsroi
             xlabel = u"$x$ [$\\mu$m]"
-            fraction, pad = 0.04, 0.3
 
-            ax.set_box_aspect(box_aspect)
+            # ax.set_box_aspect(box_aspect)
             im = ax.imshow(
                 color_vals,
                 cmap='viridis',
@@ -1042,12 +994,9 @@ class PositionVisualizer:
                 aspect='auto',
                 extent=extent
                 )
-            cbar = self.fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            cbar.set_label(u"RMS Difference [$\\mu$m]", fontsize=14)
+            cbar = self.fig.colorbar(im, ax=ax)
+            cbar.set_label(cbar_label, fontsize=14)
 
-        # cbar = self.fig.colorbar(im, ax=ax,
-        #                          fraction=0.4, pad=0.3)
-        # cbar.set_label(u"RMS Difference [$\\mu$m]")
         ax.set_title(title, pad=2)
         ax.set_xlabel(xlabel, fontsize=14)
         ax.set_ylabel(u"$y$ [$\\mu$m]", fontsize=14)

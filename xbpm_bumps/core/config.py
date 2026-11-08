@@ -221,6 +221,16 @@ class Config:
             "Quality factor associated with the differences."
             ),
 
+        "qfactor_avg": (
+            "Q factor average",
+            "Average Q factor."
+            ),
+
+        "qfactor_std": (
+            "Q factor std dev",
+            "RMS of the Q factor."
+            ),
+
         "summary":  (
             "Summary",
             "Minimum, mean and maximum of the differences."
@@ -493,12 +503,18 @@ class Config:
         "pos"   : "Position",
 
         # Fit coefficients (blade or axis): slope, intercept, quadratic.
-        "k"     : "slope (k)",
-        "sk"    : "slope err. (sk)",
+        "k"     : "scale (k)",
+        "sk"    : "scale err. (sk)",
         "d"     : "offset (d)",
         "sd"    : "offset err. (sd)",
         "q"     : "quad. (q)",
         "sq"    : "quad. err. (sq)",
+
+        # Line slopes and intercepts.
+        "m"     : "slope (m)",
+        "sm"    : "slope err. (sm)",
+        "b"     : "intercept (b)",
+        "sb"    : "intercept err. (sb)",
 
         # RMS summary: <direction> <kind>.
         "min"   : "minimum",

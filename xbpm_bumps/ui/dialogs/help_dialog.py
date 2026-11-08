@@ -75,13 +75,23 @@ Exports:
 - Data files: blades' values and positions; central sweeps tables.
 - Figures: blade_map.png, central_sweeps.png, blades_center.png, plus
     pair/cross figures for raw/scaled positions.
-- Scaling factors: kx, ky, dx, dy saved for pair and cross
-    (raw/scaled).
+- Scaling factors: (kx, dx) and (ky, dy) saved for delta/sigma (pairwise)
+    and partial delta/sigma (crossing blades) (raw/transformed).
+- Matrices:
+   - Suppression matrices used for transforming blade values in
+        delta/sigma calculation;
+   - General linear transformation matrices for transforming partial
+        delta/sigma (crossing blades) calculated positions
+        (shear transformation).
 
 UI Tips:
+- Open HDF5 data file with File → Open HDF5 File...
+- Define 'Analysis Options' by checking/unchecking the boxes and redefinig
+    ROI sizes, fitting polynominal degree etc. at the left panel. 
 - Use 'Run Analysis' after setting input file; select beamline if
     prompted.
-- 'Export…' writes data and figures to chosen prefix.
+- Examine summary calculated values at the text box in the left panel.
+- 'File → Export…' writes data and figures to HDF5 file or text/png files.
 - 'All' button in parameters toggles all analysis options.
 - XBPM distance updates automatically when beamline changes.
 
