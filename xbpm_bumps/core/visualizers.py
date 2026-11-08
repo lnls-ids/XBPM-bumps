@@ -831,7 +831,7 @@ class PositionVisualizer:
                 ax_type    = "qfactor",
             )
             cbar_label = u"Q-factor deviation [%]"
-            qfactor_dev = 100 * np.abs(
+            qfactor_dev = 100 * (
                 stat_roi.qfactor / stat_roi.qfactor_avg - 1
                 )
             self._plot_position_differences(

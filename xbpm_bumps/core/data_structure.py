@@ -1743,27 +1743,32 @@ class GL2RMatrix:
     std   : identity matrix.
     rt_st : rotation plus stretching matrix.
     """
-    std  : np.ndarray = field(default_factory=lambda: np.identity(2))
-    calc : np.ndarray = field(default_factory=lambda: np.array([]))
+    std      : np.ndarray = field(default_factory=lambda: np.identity(2))
+    calc     : np.ndarray = field(default_factory=lambda: np.array([]))
+    calc_err : np.ndarray = field(default_factory=lambda: np.zeros((2, 2)))
 
     @classmethod
-    def from_hdf5(cls,
-                  gl2r_grp : "h5py.Group"
-                  ) -> "GL2RMatrix":
+    def from_hdf5(
+        cls,
+        gl2r_grp : "h5py.Group"
+        ) -> "GL2RMatrix":
         """Create a GL2RMatrix instance from an HDF5 group."""
         kwargs = {
-            "std"  : gl2r_grp[Config.group_name("gl2r_std")][:],
-            "calc" : gl2r_grp[Config.group_name("gl2r_calc")][:],
+            "std"      : gl2r_grp[Config.group_name("gl2r_std")][:],
+            "calc"     : gl2r_grp[Config.group_name("gl2r_calc")][:],
+            "calc_err" : gl2r_grp[Config.group_name("gl2r_err")][:],
         }
         return cls(**kwargs)
 
-    def to_hdf5(self,
-                parent: "h5py.Group",
-                ) -> None:
+    def to_hdf5(
+        self,
+        parent: "h5py.Group",
+        ) -> None:
         """Write the GL2RMatrix instance to an HDF5 group."""
         gl2r_grp = H5Writer.group(parent, "gl2r")
         H5Writer.dataset(gl2r_grp, "gl2r_std",  self.std)
         H5Writer.dataset(gl2r_grp, "gl2r_calc", self.calc)
+        H5Writer.dataset(gl2r_grp, "gl2r_err", self.calc_err)
 
 
 @dataclass

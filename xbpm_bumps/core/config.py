@@ -427,8 +427,13 @@ class Config:
             ),
 
         "gl2r_calc": (
-            "Calculated",
-            "Calculated GL2R matrix."
+            "Calculated shear.",
+            "Calculated shear (GL2R) matrix."
+            ),
+
+        "gl2r_err": (
+            "Shear error",
+            "Shear (GL2R) matrix error."
             ),
 
         # Figures (dataset names are given explicitly: "<tab>.png").

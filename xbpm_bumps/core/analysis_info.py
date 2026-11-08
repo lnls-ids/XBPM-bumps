@@ -34,17 +34,19 @@ def _f(
 
 def _err(
         err    : float,
-        digits : int = 1,
+        digits : int = 3,
+        decs   : int = 1,
         ) -> str:
     """Format an error value.
 
     Args:
-        err: The associated error.
-
+        err    : The associated error.
+        digits : The number of significant digits.
+        decs   : The number of decimal places for the error.
     Returns:
         A string representation of the error.
     """
-    return f"({float(err):.{digits}g})"
+    return f"({float(err):{digits}.{decs}g})"
 
 
 def format_analysis_info(
@@ -118,10 +120,10 @@ def format_analysis_info(
     # to the tab info.
     for tab_name, (description, scales, stat, mat) in stat_table.items():
         tab_info[tab_name] = (
-            f"###\n### {description}\n###\n\n" +
-            _scales(scales) +
-            _xbpm_stats(stat) +
-            supmat_lines.get(mat, "")
+            f"###\n### {description}\n###" +
+            '\n' + _scales(scales) +
+            '\n' + _xbpm_stats(stat) +
+            '\n' + supmat_lines.get(mat, "")
         )
 
     return tab_info
@@ -163,7 +165,7 @@ def _scales(
         "qx" : (scl.qx, scl.sqx),
         "qy" : (scl.qy, scl.sqy)
     }
-    headline = "\n### Scales:\n\n"
+    headline = "\n### Scales:\n"
     lines = [
         f"  {name}  = {_f(value)} {_err(error)}"
         for name, (value, error) in sclset.items()
@@ -172,39 +174,44 @@ def _scales(
 
 
 def _xbpm_stats(
-                stat: "RMSGridStatistics",
-                ) -> str:
+        stat: "RMSGridStatistics",
+        ) -> str:
     """Format a single block of RMS grid statistics and append to lines.
     
     Args:
         stat  : "RMSGridStatistics", the RMS grid statistics to format
+
+    Returns:
+        A string representing the formatted RMS grid statistics.
     """
     lines = []
-    lines.append(
-        "\n\n###  ROI Slice :"
-        f" H = {_f(stat.roislice.size_h)},\t"
-        f" V = {_f(stat.roislice.size_v)}\n"
-    )
+
+    # ROI slice dimensions.
+    h, v = int(stat.roislice.size_h), int(stat.roislice.size_v)
+    lines.append(f"\n###  ROI Slice :\n   H x V = {h} x {v},\n")
+
+    # Statistics summary for positions.
     lines.append("\n### Position statistics\n")
     for case, allroi in [("All", stat.all),
                          ("ROI", stat.roi)]:
         lines.append(
             f" *  {case} (min / avg / max):\n"
-            f"\t H = {_f(allroi.min_h)} / "
+            f"   H = {_f(allroi.min_h)} / "
             f" {_f(allroi.mean_h)} / "
             f" {_f(allroi.max_h)}\n"
-            f"\t V = {_f(allroi.min_v)} / "
+            f"   V = {_f(allroi.min_v)} / "
             f" {_f(allroi.mean_v)} / "
             f" {_f(allroi.max_v)}\n"
         )
 
-    if allroi.qfactor_avg is not None:
-        lines.append(f"\n### Q factor")
+    # Q factor case.
+    if stat.roi.qfactor_avg is not None:
+        lines.append("\n### Q factor")
         for case, allroi in [("All", stat.all), ("ROI", stat.roi)]:
                 lines.append(
-                    f"\n * {case}: \t Q ="
-                    f"{_f(allroi.qfactor_avg, 4)} ± "
-                    f"{_f(allroi.qfactor_std)}\n"
+                    f"\n * {case}: \t Q = "
+                    f"{_f(allroi.qfactor_avg, 4)} "
+                    f"{_err(allroi.qfactor_std)}"
                 )
     return ''.join(lines)
 
@@ -271,8 +278,8 @@ def _blades(
 
 
 def _supmat(
-        supmat: "SuppressionMatrix",
-        rotmat: GL2RMatrix,
+        supmat : "SuppressionMatrix",
+        rotmat : GL2RMatrix,
         ) -> dict[str, str]:
     """Format suppression matrix and return as a dictionary of strings.
     
@@ -283,12 +290,20 @@ def _supmat(
         return {k : "" for k in ["std", "pw_tr", "cr_std", "cr_rot"]}
 
     lines = {
-        "std":   _matrix_print("Standard",  supmat.standard,  None),
-        "pw_tr": _matrix_print("Calculated", supmat.calculated, supmat.stddev),
+        "std"   : _matrix_print(
+            "Standard",  supmat.standard,  None
+            ),
+        "pw_tr" : _matrix_print(
+            "Calculated", supmat.calculated, supmat.stddev
+            ),
     }
     if rotmat is not None:
-        lines["cr_std"] = _matrix_print("Cross Standard", rotmat.std,  None)
-        lines["cr_rot"] = _matrix_print("Cross Rotation", rotmat.calc, None)
+        lines["cr_std"] = _matrix_print(
+            "Standard shear", rotmat.std,  None
+            )
+        lines["cr_rot"] = _matrix_print(
+            "Calculated shear",  rotmat.calc, rotmat.calc_err
+            )
     else:
         lines["cr_std"] = ""
         lines["cr_rot"] = ""
@@ -316,7 +331,7 @@ def _matrix_print(
         row = []
         for jj in range(nn):
             row.append(
-                f"{_f(mat[ii, jj])}  {_err(err[ii, jj])}"
+                f"{_f(mat[ii, jj])}   {_err(err[ii, jj])}"
                 if err is not None
                 else _f(mat[ii, jj])
                 )

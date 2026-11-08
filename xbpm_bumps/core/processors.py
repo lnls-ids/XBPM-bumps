@@ -580,7 +580,6 @@ class XBPMProcessor:
         q1 = blades.to + blades.bi
         q2 = blades.ti + blades.bo
         qfactor = (q1 - q2) / (q1 + q2)
-
         return qfactor
 
     @staticmethod
@@ -596,13 +595,16 @@ class XBPMProcessor:
                                  pos_std: DStr.Positions
                                  ) -> DStr.Positions:
         """Transform positions using a linear transformation matrix."""
+        # Compute linear transformation matrix at the ROI.
         mx, bx = self.analysis.centralsweeps.h.coeffs
         my, by = self.analysis.centralsweeps.v.coeffs
-
-        # Compute linear transformation matrix at the ROI.
+        smx = self.analysis.centralsweeps.h.sigmas[0]
+        smy = self.analysis.centralsweeps.v.sigmas[0]
         self.gl2rmat = self.general_linear_transformation(
             mx = mx,
-            my = my
+            my = my,
+            smx = smx,
+            smy = smy
             )
 
         # Stack cross-blade positions into a 2xN array for transformation.
@@ -618,16 +620,26 @@ class XBPMProcessor:
             y = y
             )
 
-    def general_linear_transformation(self,
-                                      mx: float,
-                                      my: float
-                                      ) -> DStr.GL2RMatrix:
+    def general_linear_transformation(
+            self,
+            mx: float,
+            my: float,
+            smx: float,
+            smy: float
+            ) -> DStr.GL2RMatrix:
         """Calculate the linear transformation matrix from position slopes."""
         gl2rmat = np.array([
             [ 1, -my],
             [-mx,  1]
         ])
-        return DStr.GL2RMatrix(calc = gl2rmat)
+        gl2rmat_err = np.array([
+            [0., smy],
+            [smx, 0.]
+        ])
+        return DStr.GL2RMatrix(
+            calc     = gl2rmat,
+            calc_err = gl2rmat_err
+            )
 
     """
     Scaling functions.
