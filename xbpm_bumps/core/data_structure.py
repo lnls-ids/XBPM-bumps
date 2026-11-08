@@ -1064,18 +1064,16 @@ class RMSStatistics:
             }
 
         # If q_factor is available.
-        if "qfactor" in rms_grp:
+        names = row.dtype.names
+        qa = Config.H5_COLUMNS['qfactor_avg']
+        qs = Config.H5_COLUMNS['qfactor_std']
+        if Config.group_name("qfactor") in rms_grp and qa in names:
             qfactor = rms_grp[Config.group_name("qfactor")][()]
-            stats['qfactor_avg'] = float(
-                rms_grp[Config.group_name("qfactor_avg")]
-                )
-            stats['qfactor_std'] = float(
-                rms_grp[Config.group_name("qfactor_std")]
-                )
+            stats['qfactor_avg'] = float(row[qa])
+            stats['qfactor_std'] = float(row[qs])
         else:
             qfactor = None
-            stats['qfactor_avg'] = None
-            stats['qfactor_std'] = None
+            stats['qfactor_avg'] = stats['qfactor_std'] = None
 
         return cls(
             diff_h   = diff_h,
@@ -1099,17 +1097,26 @@ class RMSStatistics:
         for dkey in keys:
             H5Writer.dataset(grp, dkey, getattr(self, dkey))
 
-        dt = np.dtype([
+        dt = [
             (self._column(f), 'f8')
             for f in self._SUMMARY
-            ])
-        row = np.zeros(1, dtype=dt)
+            ]
+
+        # Deal with the Q-factor availability.
+        has_q = self.qfactor_avg is not None and self.qfactor_std is not None
+        if has_q:
+            dt += [
+                (Config.H5_COLUMNS['qfactor_avg'], 'f8'),
+                (Config.H5_COLUMNS['qfactor_std'], 'f8')
+            ]
+
+        row = np.zeros(1, dtype=np.dtype(dt))
         for f in self._SUMMARY:
             row[self._column(f)] = getattr(self, f)
 
-        if self.qfactor_avg is not None and self.qfactor_std is not None:
-            row[self._column('qfactor_avg')] = self.qfactor_avg
-            row[self._column('qfactor_std')] = self.qfactor_std
+        if has_q:
+            row[Config.H5_COLUMNS['qfactor_avg']] = self.qfactor_avg
+            row[Config.H5_COLUMNS['qfactor_std']] = self.qfactor_std
 
         H5Writer.dataset(grp, "summary", row)
 
