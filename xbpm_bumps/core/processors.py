@@ -303,14 +303,27 @@ class XBPMProcessor:
         # Loop over each blade and perform linear fitting.
         results = {}
         for bl, (blade, err) in blades.items():
+            # Build mask for finite values.
+            finite = np.isfinite(blade)
+            # polyfit(deg=1) needs >= 2 points
+            if finite.sum() < 2:
+                results[bl] = DStr.BladeLineFit(
+                    m=1.0, sm=0.0, b=0.0, sb=0.0,
+                    pos=range_vals, bld_raw=blade, bld_err=err,
+                    bld_fit=np.full_like(blade, np.nan))
+                continue
+
+            # Apply finite mask to the data for fitting.
+            xfin, yfin, efin = range_vals[finite], blade[finite], err[finite]
+
             # Calculate weights as the inverse of the errors, if possible.
-            weight = 1. / err[:]
+            weight = 1. / efin[:]
             if np.isinf(weight).any():
                 weight = None
 
             # Fit a linear polynomial to the blade data with weights.
-            coefs, cov = np.polyfit(range_vals,
-                                    blade,
+            coefs, cov = np.polyfit(xfin,
+                                    yfin,
                                     deg = 1,
                                     w   = weight,
                                     cov = True)
@@ -365,7 +378,7 @@ class XBPMProcessor:
                 (sw_h.to.m / pc_h[:]) * ((sdv_h / pc_h[:])**2 + sto**2)**0.5
                 )
         else:
-            pc_h  = np.ones(8).reshape(4, 2)
+            pc_h  = np.ones(4)
             sdv_h = np.zeros(4)
 
         if len(self.range_v) > 1:
@@ -377,9 +390,8 @@ class XBPMProcessor:
             sdv_v = (
                 (sw_v.to.m / pc_v[:]) * ((sdv_v / pc_v[:])**2 + sto**2)**0.5
                 )
-
         else:
-            pc_v  = np.ones(8).reshape(4, 2)
+            pc_v  = np.ones(4)
             sdv_v = np.zeros(4)
 
         # Assemble the calculated suppression matrix.
@@ -554,8 +566,23 @@ class XBPMProcessor:
         Returns:
             DStr.CentralSweepLine: Instance containing the analyzed central sweep line data.
         """
+        # Build mask for finite values.
+        finite = np.isfinite(x)
+        if finite.sum() < 2:
+            return DStr.CentralSweepLine(
+                blades=self.cs_bld_h,
+                pos_index=x,
+                pos_fixed=np.zeros_like(x),
+                pos_calc=y,
+                pos_fit=np.full_like(y, np.nan),
+                pos_fit_err=np.full_like(y, np.nan),
+                coeffs=np.array([1.0, 0.0]),
+                sigmas=np.array([0.0, 0.0])
+                )
+
+
         # Fit a linear model to the position data and calculate uncertainties.
-        fit, cov = np.polyfit(x, y, deg=1, w=w, cov=True)
+        fit, cov = np.polyfit(x[finite], y[finite], deg=1, w=None, cov=True)
         pos_fit  = np.polyval(fit, x)
         sm, sb   = np.sqrt(np.diag(cov))
         fit_err  = np.sqrt((x * sm)**2 + sb**2)
@@ -594,7 +621,20 @@ class XBPMProcessor:
     def transform_position_cross(self,
                                  pos_std: DStr.Positions
                                  ) -> DStr.Positions:
-        """Transform positions using a linear transformation matrix."""
+        """Transform positions using a linear transformation matrix.
+
+        The shear correction is only defined when both central sweeps
+        exist (2-D analysis). For 1-D analyses (ROI size 1 in either
+        direction) return the positions unchanged with an identity
+        matrix; the subsequent scaling step handles the 1-D stretch.
+        """
+        if self.roi.size_h == 1 or self.roi.size_v == 1:
+            self.gl2rmat = DStr.GL2RMatrix(
+                calc     = np.eye(2),
+                calc_err = np.zeros((2, 2))
+                )
+            return pos_std
+
         # Compute linear transformation matrix at the ROI.
         mx, bx = self.analysis.centralsweeps.h.coeffs
         my, by = self.analysis.centralsweeps.v.coeffs

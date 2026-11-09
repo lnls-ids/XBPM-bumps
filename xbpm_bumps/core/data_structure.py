@@ -552,7 +552,7 @@ class Blades:
                 'points',
                 table[Config.column(bld, "err")]
                 )
-            
+
         ds = xr.Dataset(
             bladeset,
             coords={
@@ -565,6 +565,12 @@ class Blades:
         # otherwise you'll get NaN for missing combinations.
         ds = ds.set_index(points=['y', 'x'])
         # Keep only the first occurrence of each (y, x) combination.
+        xy = np.column_stack([pos_nom.x, pos_nom.y])
+        _, counts = np.unique(xy, axis=0, return_counts=True)
+        if (counts > 1).any():
+            print(f"WARNING: {int((counts > 1).sum())} duplicated (y, x)"
+                " blade points found; keeping the first occurrence.")
+
         ds = ds.drop_duplicates('points')
         ds = ds.unstack('points')
 
