@@ -50,6 +50,8 @@ matplotlib.rcParams['legend.handletextpad'] = 0.8
 # Module logger
 logger = logging.getLogger(__name__)
 
+BAND_ASPECT = 5     # Fix aspect ratio for band plots.
+
 
 def render_data_analysis(
         pos_nom      : Positions,
@@ -861,10 +863,8 @@ class PositionVisualizer:
             title = title_heatmap
         )
 
-        for ax in [ax_all, ax_roi, ax_heat]:
+        for ax in [ax_all, ax_roi]:
             ax.set_aspect('equal', adjustable='box')
-        if ax_qfactor:
-            ax_qfactor.set_aspect('equal', adjustable='box')
  
         return self.fig
 
@@ -969,15 +969,37 @@ class PositionVisualizer:
             # 1D imshow: render as a thin band of square cells
             h_min = np.nanmin(pos_nom_h)
             h_max = np.nanmax(pos_nom_h)
+            v_min = np.nanmin(pos_nom_v)
+            v_max = np.nanmax(pos_nom_v)
 
-            color_vals = np.ravel(rmsroi).reshape(-1, 1)
-            extent = [0, 1, np.nanmin(pos_nom_v), np.nanmax(pos_nom_v)]
-            im = ax.imshow(color_vals,
-                           cmap='viridis',
-                           origin='lower')
+            if v_const:
+                # Horizontal sweep: x varies, y is a single value.
+                color_vals = np.ravel(rmsroi).reshape(1, -1)
+                extent = [h_min, h_max, v_min - 0.5, v_min + 0.5]
+                single_ticks = ([], [v_min])    # hide nothing, fix y
+            else:
+                # Vertical sweep: y varies, x is a single value.
+                color_vals = np.ravel(rmsroi).reshape(-1, 1)
+                extent = [h_min - 0.5, h_min + 0.5, v_min, v_max]
+                single_ticks = ([h_min], [])    # x shows only the centre
+
+            im = ax.imshow(
+                color_vals,
+                cmap='viridis',
+                origin='lower',
+                aspect='auto',
+                extent=extent
+                )
             cbar = self.fig.colorbar(im, ax=ax)
             cbar.set_label(cbar_label, fontsize=14)
 
+            if single_ticks[0]:
+                ax.set_xticks(single_ticks[0])
+            if single_ticks[1]:
+                ax.set_yticks(single_ticks[1])
+
+            # Set the box aspect ratio for 1D band plots.
+            ax.set_box_aspect(1 / BAND_ASPECT if v_const else BAND_ASPECT)
         else:
             # 2D heatmap
             h_min = np.nanmin(pos_nom_h)
@@ -997,6 +1019,7 @@ class PositionVisualizer:
                 )
             cbar = self.fig.colorbar(im, ax=ax)
             cbar.set_label(cbar_label, fontsize=14)
+            ax.set_aspect('equal', adjustable='box')
 
         ax.set_title(title, pad=2)
         ax.set_xlabel(xlabel, fontsize=14)

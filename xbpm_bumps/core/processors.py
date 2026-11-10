@@ -507,20 +507,18 @@ class XBPMProcessor:
             pos_csweep_v_y = self.pos_pw_std.y[self.mask_v][self.mask_idx_v]
 
         # Run through central lines if data is not just a point.
-        h = (
-            self._central_sweep(
+        # The shear (cross-talk) correction only exists when both central
+        # lines are real sweeps. In 1-D one direction is a single point and
+        # its parametric sweep is meaningless, so skip both.
+        h = v = None
+        roi_2d = self.roi.size_h > 1 and self.roi.size_v > 1
+        if roi_2d and pos_csweep_h_x.size > 1 and pos_csweep_v_y.size > 1:
+            h = self._central_sweep(
                 self.cs_bld_h, pos_csweep_h_x, pos_csweep_h_y
                 )
-            if pos_csweep_h_x.size > 1
-            else None
-            )
-        v = (
-            self._central_sweep(
+            v = self._central_sweep(
                 self.cs_bld_v, pos_csweep_v_y, pos_csweep_v_x
                 )
-            if pos_csweep_v_y.size > 1
-            else None
-            )
 
         return DStr.CentralSweeps(h=h, v=v)
 

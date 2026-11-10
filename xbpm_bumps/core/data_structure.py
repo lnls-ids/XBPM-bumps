@@ -269,9 +269,6 @@ class BeamlinePrm:
         if "xbpmdist" not in attrs:
             attrs["xbpmdist"] = Config.XBPMDISTS.get(beamline, None)
 
-        if "grid_shape" not in attrs:
-            attrs["grid_shape"] = None
-
         attrs["updated"] = attrs.pop("hdf5 updated on", None)
 
         # --- dict 2: analysis attributes (merged below) ---
@@ -288,17 +285,24 @@ class BeamlinePrm:
             attrs["usebpmref"] = bool(an_attrs["usebpmref"])
 
         # ROI slice: from the Analysis group when present, else default.
-        ashape = int(np.sqrt(attrs["nbumps"]))
+        shape = attrs.get("grid_shape", None)
+        ashape = (
+            tuple(int(s) for s in shape)
+            if shape is not None
+            else (int(np.sqrt(attrs["nbumps"])), ) * 2
+            )
+        attrs["grid_shape"] = ashape
+
         roi = an_attrs.get("roi size")
         if roi is not None:
             roisize = [int(x) for x in roi.split(",")]
             attrs["roislice"] = ROISlice.update(
-                arrayshape = (ashape, ashape),
+                arrayshape = ashape,
                 roisize    = roisize,
                 )
         else:
             attrs["roislice"] = ROISlice.update(
-                arrayshape = (ashape, ashape),
+                arrayshape = ashape,
                 roisize    = [5, 5],
                 )
 
@@ -2119,6 +2123,14 @@ class BeamlineDatum:
             beamline = kwargs["prm"].beamline,
             )
 
+        # The blade map is the source of truth for the grid shape.
+        prm = kwargs["prm"]
+        prm.grid_shape = kwargs["raw_data"].blade_avg.pos_nom.x.shape
+        prm.roislice = ROISlice.update(
+            arrayshape = prm.grid_shape,
+            roisize    = [prm.roislice.size_v, prm.roislice.size_h],
+            )
+
         # Analysis data may be not present when data are imported.
         if anl_grp is not None:
             try:
@@ -2146,8 +2158,11 @@ class BeamlineDatum:
 
         Args:
             bl_grp (h5py.Group): HDF5 group to store the beamline data.
-.
         """
+        # Make sure the grid shape is recorded in the beamline attributes.
+        if self.raw_data is not None:
+            self.prm.grid_shape = self.raw_data.blade_avg.pos_nom.x.shape
+
         # Store beamline parameters.
         self.prm.to_hdf5(bl_grp)
         beamline = self.prm.beamline

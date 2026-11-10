@@ -16,7 +16,7 @@ from PyQt5.QtGui  import QCloseEvent
 
 import matplotlib
 import matplotlib.pyplot as plt
-# from matplotlib.figure import Figure
+from matplotlib.figure import Figure
 
 import numpy as np
 import logging
@@ -121,12 +121,17 @@ class XBPMMainWindow(QMainWindow):
             self.runtime_prm.bmap_global_scale,
             self.runtime_prm.show_qfactor,
             )
-        for key, fig in self.analysis.figures.items():
-            self._embed_figure(self.canvases[key], fig)
+        self._show_figures()
 
         # Make the computed analysis (figures included)
         # the canonical one for export.
         self.workdatum.analysis = self.analysis
+
+    def _show_figures(self) -> None:
+        """Show all figures in their respective canvases."""
+        for key, canvas in self.canvases.items():
+            fig = self.analysis.figures.get(key)
+            self._embed_figure(canvas, fig if fig is not None else Figure())
 
     def setup_ui(self) -> None:
         """Initialize the main window layout."""
@@ -464,9 +469,7 @@ class XBPMMainWindow(QMainWindow):
             self.runtime_prm.bmap_global_scale,
             self.runtime_prm.show_qfactor,
         )
-        for key, fig in self.analysis.figures.items():
-            if key in self.canvases:
-                self._embed_figure(self.canvases[key], fig)
+        self._show_figures()
 
     # Update analysis/rendering.
 
