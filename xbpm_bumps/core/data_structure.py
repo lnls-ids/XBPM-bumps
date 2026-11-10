@@ -1440,23 +1440,26 @@ class BladeCenterAnalysis:
 @dataclass
 class BCA_HV:
     """Container for horizontal and vertical blade center analyses."""
-    h : BladeCenterAnalysis
-    v : BladeCenterAnalysis
+    h : BladeCenterAnalysis | None = None
+    v : BladeCenterAnalysis | None = None
 
     def __iter__(self) -> Iterator[tuple[str, BladeCenterAnalysis]]:
-        yield 'h', self.h
-        yield 'v', self.v
+        if self.h is not None:
+            yield 'h', self.h
+        if self.v is not None:
+            yield 'v', self.v
+
 
     @classmethod
     def from_hdf5(cls, bcahv_grp : "h5py.Group") -> "BCA_HV":
         """Create a BCA_HV instance from an HDF5 group."""
+        name_h = Config.group_name("direction_h")
+        name_v = Config.group_name("direction_v")
         return cls(
-            h = BladeCenterAnalysis.from_hdf5(
-                bcahv_grp[Config.group_name("direction_h")]
-                ),
-            v = BladeCenterAnalysis.from_hdf5(
-                bcahv_grp[Config.group_name("direction_v")]
-                )
+            h = (BladeCenterAnalysis.from_hdf5(bcahv_grp[name_h])
+                 if name_h in bcahv_grp else None),
+            v = (BladeCenterAnalysis.from_hdf5(bcahv_grp[name_v])
+                 if name_v in bcahv_grp else None),
         )
 
     def to_hdf5(self, parent: "h5py.Group") -> None:

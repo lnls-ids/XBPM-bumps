@@ -959,6 +959,8 @@ class PositionVisualizer:
         # constant (single-line sweep).
         h_const = np.nanmax(pos_nom_h) == np.nanmin(pos_nom_h)
         v_const = np.nanmax(pos_nom_v) == np.nanmin(pos_nom_v)
+        xlabel = u"$x$ [$\\mu$m]"
+
         is_1d = (rmsroi.ndim == 1 or
                  (rmsroi.ndim == 2 and min(rmsroi.shape) == 1) or
                  h_const or v_const)
@@ -984,7 +986,6 @@ class PositionVisualizer:
             v_max = np.nanmax(pos_nom_v)
             extent = [h_min, h_max, v_min, v_max]
             color_vals = rmsroi
-            xlabel = u"$x$ [$\\mu$m]"
 
             # ax.set_box_aspect(box_aspect)
             im = ax.imshow(
