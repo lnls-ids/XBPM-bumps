@@ -56,9 +56,6 @@ class ParameterPanel(QWidget):
         # Parameters group
         layout.addWidget(self._create_parameters_group())
 
-        # Reference selection group (BPM vs nominal)
-        layout.addWidget(self._create_reference_group())
-
         # Analysis options group
         layout.addWidget(self._create_options_group())
 
@@ -119,23 +116,6 @@ class ParameterPanel(QWidget):
         group.setLayout(layout)
         return group
 
-    def _create_reference_group(self) -> QGroupBox:
-        """Create the reference selection group (BPM vs nominal)."""
-        group = QGroupBox()
-        group.setTitle("")  # No title for minimal appearance
-        layout = QVBoxLayout()
-
-        # Use BPM positions as nominal reference
-        self.bpm_ref_check = QCheckBox(
-            "Use BPM positions as nominal reference"
-        )
-        self.bpm_ref_check.setChecked(True)  # Default to BPM reference
-        self.bpm_ref_check.toggled.connect(self.parametersChanged.emit)
-        layout.addWidget(self.bpm_ref_check)
-
-        group.setLayout(layout)
-        return group
-
     def _create_options_group(self) -> QGroupBox:
         """Create the analysis options checkboxes group."""
         group = QGroupBox("Analysis Options")
@@ -192,15 +172,23 @@ class ParameterPanel(QWidget):
         self.qfactor_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.qfactor_check)
 
-        # 7. Slice by ROI
+        # 7. Reference positions for scaling.
+        self.bpm_ref_check = QCheckBox(
+            "Use BPM positions as nominal reference"
+            )
+        self.bpm_ref_check.setChecked(False)
+        self.bpm_ref_check.toggled.connect(self.parametersChanged.emit)
+        layout.addWidget(self.bpm_ref_check)
+
+        # 8. Slice by ROI
         self.slice_by_roi_check = QCheckBox(
             "Central range fit defined by ROI"
             )
         self.slice_by_roi_check.setChecked(False)
         self.slice_by_roi_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.slice_by_roi_check)
-
-        # 8. Blade map absolute scale
+    
+        # 9. Blade map absolute scale
         self.bmap_global_scale_check = QCheckBox(
             "Blade map absolute scale"
             )
