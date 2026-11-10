@@ -493,18 +493,20 @@ class XBPMProcessor:
         Returns:
             CentralSweeps instance containing horizontal and vertical central sweeps.
         """
-        if cross:
-            pos_csweep_h_x = self.cr_pos_std.x[self.mask_h][self.mask_idx_h]
-            pos_csweep_h_y = self.cr_pos_std.y[self.mask_h][self.mask_idx_h]
-
-            pos_csweep_v_x = self.cr_pos_std.x[self.mask_v][self.mask_idx_v]
-            pos_csweep_v_y = self.cr_pos_std.y[self.mask_v][self.mask_idx_v]
+        # Central lines, optionally restricted to the ROI.
+        if self.prm_gen.slice_by_roi:
+            sl_h, sl_v = self.roi.slice_h, self.roi.slice_v
         else:
-            pos_csweep_h_x = self.pos_pw_std.x[self.mask_h][self.mask_idx_h]
-            pos_csweep_h_y = self.pos_pw_std.y[self.mask_h][self.mask_idx_h]
+            sl_h = sl_v = slice(None)
 
-            pos_csweep_v_x = self.pos_pw_std.x[self.mask_v][self.mask_idx_v]
-            pos_csweep_v_y = self.pos_pw_std.y[self.mask_v][self.mask_idx_v]
+        bld_h = self._slice_blades(self.cs_bld_h, sl_h)
+        bld_v = self._slice_blades(self.cs_bld_v, sl_v)
+
+        pos = self.cr_pos_std if cross else self.pos_pw_std
+        pos_csweep_h_x = pos.x[self.mask_h][self.mask_idx_h][sl_h]
+        pos_csweep_h_y = pos.y[self.mask_h][self.mask_idx_h][sl_h]
+        pos_csweep_v_x = pos.x[self.mask_v][self.mask_idx_v][sl_v]
+        pos_csweep_v_y = pos.y[self.mask_v][self.mask_idx_v][sl_v]
 
         # Run through central lines if data is not just a point.
         # The shear (cross-talk) correction only exists when both central
@@ -514,13 +516,26 @@ class XBPMProcessor:
         roi_2d = self.roi.size_h > 1 and self.roi.size_v > 1
         if roi_2d and pos_csweep_h_x.size > 1 and pos_csweep_v_y.size > 1:
             h = self._central_sweep(
-                self.cs_bld_h, pos_csweep_h_x, pos_csweep_h_y
+                bld_h, pos_csweep_h_x, pos_csweep_h_y
                 )
             v = self._central_sweep(
-                self.cs_bld_v, pos_csweep_v_y, pos_csweep_v_x
+                bld_v, pos_csweep_v_y, pos_csweep_v_x
                 )
 
         return DStr.CentralSweeps(h=h, v=v)
+
+    @staticmethod
+    def _slice_blades(blades: DStr.Blades, sl: slice) -> DStr.Blades:
+        """Return the blades restricted to the slice `sl`."""
+        return DStr.Blades(
+            to  = blades.to[sl],  ti  = blades.ti[sl],
+            bi  = blades.bi[sl],  bo  = blades.bo[sl],
+            sto = blades.sto[sl], sti = blades.sti[sl],
+            sbi = blades.sbi[sl], sbo = blades.sbo[sl],
+            pos_nom = DStr.Positions(
+                x = blades.pos_nom.x[sl], y = blades.pos_nom.y[sl]
+                ),
+            )
 
     def _central_sweep(
             self,
