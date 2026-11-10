@@ -508,7 +508,6 @@ class XBPMProcessor:
         pos_csweep_v_x = pos.x[self.mask_v][self.mask_idx_v][sl_v]
         pos_csweep_v_y = pos.y[self.mask_v][self.mask_idx_v][sl_v]
 
-        # Run through central lines if data is not just a point.
         # The shear (cross-talk) correction only exists when both central
         # lines are real sweeps. In 1-D one direction is a single point and
         # its parametric sweep is meaningless, so skip both.
