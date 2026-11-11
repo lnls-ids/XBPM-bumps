@@ -620,6 +620,14 @@ class XBPMMainWindow(QMainWindow):
                   f"\n {exc}\n Using current timestamp.")
             ts = datetime.now()
 
+        exp_end = self.workdatum.raw_data.meta.get("Experiment end")
+        if exp_end is None or str(exp_end).strip() in ("", "N/A"):
+            QMessageBox.warning(
+                self,
+                "Missing Experiment End",
+                "Using the available experiment start timestamp instead.",
+            )
+            exp_end = ts
 
         default_dir_name = (
             f"{self.workbeamline}_{ts.strftime('%Y-%m-%d_%H-%M-%S')}"
@@ -646,6 +654,8 @@ class XBPMMainWindow(QMainWindow):
         exporter.export_plain(
             dirpath  = target_dir,
             tab_info = self.tab_info,
+            beamline = self.workbeamline,
+            exp_end  = str(exp_end),
             figures  = self.analysis.figures,
         )
         self.log_message(f"Plain export written to: {target_dir}")

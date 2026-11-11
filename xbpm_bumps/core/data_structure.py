@@ -28,6 +28,13 @@ class H5Writer:
         ) -> "h5py.Group":
         """Get or create the child group of registry `key`, described.
 
+        Args:
+            parent : The parent HDF5 group.
+            key    : The registry key for the group.
+            name   : Optional name for the group. If not provided, the name 
+                     is derived from the registry key.
+            **fmt  : Additional formatting arguments for the description.
+
         `name` overrides the stored name (indexed groups such as bumps);
         `fmt` fills the placeholders of the description.
         """
@@ -467,11 +474,12 @@ class Positions:
             )
 
     @staticmethod
-    def write_table(grp  : h5py.Group,
-                    key  : str,
-                    cols : list[tuple[str, np.ndarray]],
-                    **fmt,
-                    ) -> h5py.Dataset:
+    def write_table(
+        grp  : h5py.Group,
+        key  : str,
+        cols : list[tuple[str, np.ndarray]],
+        **fmt,
+        ) -> h5py.Dataset:
         """Write arrays of equal shape as the columns of one flat table.
 
         Also used for tables with extra position columns (nominal +
@@ -1074,9 +1082,9 @@ class RMSStatistics:
         ) -> "RMSStatistics":
         """Create an RMSStatistics instance from an HDF5 group."""
         row      = rms_grp[Config.group_name("summary")][0]
-        diff_h   = rms_grp[Config.group_name("diff_h")][()]
-        diff_v   = rms_grp[Config.group_name("diff_v")][()]
-        diff_tot = rms_grp[Config.group_name("diff_tot")][()]
+        diff_h   = cls._read_difference(rms_grp, "diff_h")
+        diff_v   = cls._read_difference(rms_grp, "diff_v")
+        diff_tot = cls._read_difference(rms_grp, "diff_tot")
 
         stats    = {
             f : float(row[cls._column(f)])
@@ -1103,19 +1111,44 @@ class RMSStatistics:
             **stats
             )
 
+    @classmethod
+    def _read_difference(
+            cls,
+            rms_grp : "h5py.Group",
+            key     : str,
+            ) -> np.ndarray:
+        ds = rms_grp[Config.group_name(key)]
+        data = ds[()]
+
+        # Older exports contain a plain numerical grid.
+        if data.dtype.names is None:
+            return data
+
+        # New exports contain coordinate and difference columns.
+        values = data[Config.group_name(key)]
+        shape = tuple(ds.attrs.get("positions_shape", values.shape))
+        return values.reshape(shape)
+
     def to_hdf5(
         self,
-        parent : "h5py.Group",
-        key    : str
+        parent  : "h5py.Group",
+        key     : str,
+        pos_ref : Positions
         ) -> None:
         """Create the 'All grid'/'ROI' group (`key`: 'rms_all', 'rms_roi')."""
         grp = H5Writer.group(parent, key)
 
-        keys = ["diff_h", "diff_v", "diff_tot"]
+        for dkey in  ["diff_h", "diff_v", "diff_tot"]:
+            table_struc = [
+                ("X reference", pos_ref.x),
+                ("Y reference", pos_ref.y),
+                (Config.group_name(dkey),
+                 getattr(self, dkey)),
+            ]
+            Positions.write_table(grp, dkey, table_struc)
+
         if self.qfactor is not None:
-            keys.append("qfactor")
-        for dkey in keys:
-            H5Writer.dataset(grp, dkey, getattr(self, dkey))
+            H5Writer.dataset(grp, "qfactor", self.qfactor)
 
         dt = [
             (self._column(f), 'f8')
@@ -1139,6 +1172,7 @@ class RMSStatistics:
             row[Config.H5_COLUMNS['qfactor_std']] = self.qfactor_std
 
         H5Writer.dataset(grp, "summary", row)
+
 
 
 @dataclass
@@ -1177,12 +1211,19 @@ class RMSGridStatistics:
 
     def to_hdf5(
         self,
-        parent : "h5py.Group",
-        key    : str,
+        parent  : "h5py.Group",
+        key     : str,
+        pos_ref : Positions,
         ) -> None:
         grp = H5Writer.group(parent, key)
-        self.all.to_hdf5(grp, 'rms_all')
-        self.roi.to_hdf5(grp, 'rms_roi')
+        self.all.to_hdf5(grp, 'rms_all', pos_ref)
+
+        sl_v, sl_h = self.roislice.slice_v, self.roislice.slice_h
+        roi_ref = Positions(
+            x = pos_ref.x[sl_v, sl_h],
+            y = pos_ref.y[sl_v, sl_h],
+            )
+        self.roi.to_hdf5(grp, 'rms_roi', roi_ref)
 
 
 @dataclass
@@ -1243,7 +1284,7 @@ class BPMAnalysis:
                 (col("x", "meas"), self.pos_meas.x),
                 (col("y", "meas"), self.pos_meas.y),
                 ])
-        self.rms_diff.to_hdf5(bpm_grp, "rms_diff")
+        self.rms_diff.to_hdf5(bpm_grp, "rms_diff", self.pos_nom)
 
 
 @dataclass
@@ -1478,8 +1519,10 @@ class BCA_HV:
 
     def to_hdf5(self, parent: "h5py.Group") -> None:
         bc_grp = H5Writer.group(parent, "blade_center")
-        self.h.to_hdf5(bc_grp, direction='h')
-        self.v.to_hdf5(bc_grp, direction='v')
+        for direction, sweep in self:
+            sweep.to_hdf5(bc_grp, direction=direction)
+        # self.h.to_hdf5(bc_grp, direction='h')
+        # self.v.to_hdf5(bc_grp, direction='v')
 
 
 @dataclass
@@ -1877,6 +1920,12 @@ class CalculatedPositions:
         pos_nom : Positions | None = None,
         ) -> None:
         """Create the 'Delta-Sigma' / 'Partial Delta-Sigma' group."""
+        # Ensure reference positions are provided for exporting statistics.
+        if pos_nom is None:
+            raise ValueError("Reference positions are required"
+                             + " to export statistics.")
+
+        # Create the group for storing positions.
         pos_grp = H5Writer.group(parent, key)
         col     = Config.column
 
@@ -1891,8 +1940,9 @@ class CalculatedPositions:
         # checks equal shapes
         Positions.write_table(std_grp,  "std_positions", cols)
 
+        # Write statistics for standard positions.
         self.scale_std.to_hdf5(std_grp, "pos_scales")
-        self.stats_std.to_hdf5(std_grp, "statistics")
+        self.stats_std.to_hdf5(std_grp, "statistics", pos_nom)
 
         # Transformed positions.
         trn_grp = H5Writer.group(pos_grp, "xbpm_transformed")
@@ -1905,8 +1955,9 @@ class CalculatedPositions:
         # checks equal shapes
         Positions.write_table(trn_grp, "trn_positions", cols)
 
+        # Write statistics for transformed positions.
         self.scale_trn.to_hdf5(trn_grp, "pos_scales")
-        self.stats_trn.to_hdf5(trn_grp, "statistics")
+        self.stats_trn.to_hdf5(trn_grp, "statistics", pos_nom)
 
 
 @dataclass

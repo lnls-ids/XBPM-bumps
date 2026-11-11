@@ -33,6 +33,8 @@ def export_hdf5(
 def export_plain(
     dirpath  : str,
     tab_info : dict[str, str],
+    beamline : str,
+    exp_end  : str,
     figures  : dict[str, Figure] | None = None,
     ) -> None:
     # Ensure the output directory exists.
@@ -58,7 +60,11 @@ def export_plain(
 
             # Export the plain information to a text file.
             txtname = _filename(key, dirpath, prefix="info", ext="txt")
-            _write_plain_txt(txtname, info_data)
+            header = (
+                f"# Beamline: {beamline}\n"
+                f"# Experiment End: {exp_end}\n\n"
+                )
+            _write_plain_txt(txtname, header + info_data)
     else:
         print("WARNING: when exporting text table information,"
               " no objects were provided.")
