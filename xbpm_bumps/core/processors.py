@@ -273,15 +273,28 @@ class XBPMProcessor:
         }
 
         # Perform central line fit for horizontal and vertical blade analysis.
-        hrange = self.range_h  # [self.roi.slice_h]
-        horz   = self._blade_central_line_fit(hrange, bld_fit_h)
+        hrange = self.cs_bld_h.pos_nom.x[slice_h]
+        vrange = self.cs_bld_v.pos_nom.y[slice_v]
 
-        vrange = self.range_v  # [self.roi.slice_v]
-        vert   = self._blade_central_line_fit(vrange, bld_fit_v)
+        horz   = (
+            DStr.BladeCenterAnalysis(
+                **self._blade_central_line_fit(hrange, bld_fit_h)
+                )
+            if hrange.size > 1
+            else None
+            )
+
+        vert   = (
+            DStr.BladeCenterAnalysis(
+                **self._blade_central_line_fit(vrange, bld_fit_v)
+                )
+            if vrange.size > 1
+            else None
+        )
 
         return DStr.BCA_HV(
-            h = DStr.BladeCenterAnalysis(**horz),
-            v = DStr.BladeCenterAnalysis(**vert),
+            h = horz,
+            v = vert,
         )
 
     def _blade_central_line_fit(
@@ -309,11 +322,9 @@ class XBPMProcessor:
                 weight = None
 
             # Fit a linear polynomial to the blade data with weights.
-            coefs, cov = np.polyfit(range_vals,
-                                    blade,
-                                    deg = 1,
-                                    w   = weight,
-                                    cov = True)
+            coefs, cov = np.polyfit(
+                range_vals, blade, deg=1, w=weight, cov=True
+                )
 
             # Coefficient errors.
             sigmas = np.sqrt(np.diag(cov))
@@ -351,60 +362,44 @@ class XBPMProcessor:
         sw_h = self.analysis.bladecenter.h
         sw_v = self.analysis.bladecenter.v
 
-        pc_h  = np.array([sw_h.to.m,  sw_h.ti.m,  sw_h.bi.m,  sw_h.bo.m])
-        pc_v  = np.array([sw_v.to.m,  sw_v.ti.m,  sw_v.bi.m,  sw_v.bo.m])
-        sdv_h = np.array([sw_h.to.sm, sw_h.ti.sm, sw_h.bi.sm, sw_h.bo.sm])
-        sdv_v = np.array([sw_v.to.sm, sw_v.ti.sm, sw_v.bi.sm, sw_v.bo.sm])
+        gain_h, sd_h  = np.ones(4), np.zeros(4)
+        gain_v, sd_v  = np.ones(4), np.zeros(4)
 
         # Check for the vertical and horizontal cases.
-        if len(self.range_h) > 1:
-            # Calculate suppresions (1/Gain), normalized by TO blade.
-            pc_h  = sw_h.to.m  / np.abs(pc_h)
-            sto   = sw_h.to.sm / sw_h.to.m
-            sdv_h = (
-                (sw_h.to.m / pc_h[:]) * ((sdv_h / pc_h[:])**2 + sto**2)**0.5
-                )
-        else:
-            pc_h  = np.ones(8).reshape(4, 2)
-            sdv_h = np.zeros(4)
+        if sw_h is not None:
+            gain_h  = 1.0 / np.abs([
+                sw_h.to.m,  sw_h.ti.m,  sw_h.bi.m,  sw_h.bo.m
+                ])
+            sd_h = gain_h[:]**2 * np.array([
+                sw_h.to.sm, sw_h.ti.sm, sw_h.bi.sm, sw_h.bo.sm
+                ])
 
-        if len(self.range_v) > 1:
-            # Calculate suppresions (1/Gain), normalized by TO blade.
-            pc_v  = sw_v.to.m / np.abs(pc_v)
-  
-            sdv_v = sdv_v * sw_v.to.m / (pc_v[:]**2)
-            sto   = sw_v.to.sm / sw_v.to.m
-            sdv_v = (
-                (sw_v.to.m / pc_v[:]) * ((sdv_v / pc_v[:])**2 + sto**2)**0.5
-                )
-
-        else:
-            pc_v  = np.ones(8).reshape(4, 2)
-            sdv_v = np.zeros(4)
+        if sw_v is not None:
+            gain_v  = 1.0 / np.abs([
+                sw_v.to.m,  sw_v.ti.m,  sw_v.bi.m,  sw_v.bo.m
+                ])
+            sd_v = gain_v[:]**2 * np.array([
+                sw_v.to.sm, sw_v.ti.sm, sw_v.bi.sm, sw_v.bo.sm
+                ])
 
         # Assemble the calculated suppression matrix.
         calculated = np.array([
-            [pc_v[0], -pc_v[1], -pc_v[2],  pc_v[3]],
-            pc_v,
-            [pc_h[0],  pc_h[1], -pc_h[2], -pc_h[3]],
-            pc_h,
+            [gain_v[0], -gain_v[1], -gain_v[2],  gain_v[3]],
+            gain_v,
+            [gain_h[0],  gain_h[1], -gain_h[2], -gain_h[3]],
+            gain_h,
         ])
 
         # Assemble the standard deviation matrix.
-        stddev = np.array([
-            sdv_v,
-            sdv_v,
-            sdv_h,
-            sdv_h
-            ])
+        stddev = np.array([sd_v, sd_v, sd_h, sd_h])
 
-        # Get the standard matrix (gains == 1).
-        std, _ = Config.standard_suppression_matrix()
+        # Assemble the suppression matrix structure.
+        # optimized will initially be a deepcopy of the calculated matrix.
         return DStr.SuppressionMatrix(
-            standard=std,
-            calculated=calculated,
-            stddev=stddev,
-            optimized=deepcopy(calculated)
+            standard   = Config.standard_suppression_matrix()[0],
+            calculated = calculated,
+            stddev     = stddev,
+            optimized  = deepcopy(calculated)
             )
 
     def beam_position_pair(self, supmat: np.ndarray) -> DStr.Positions:
@@ -439,10 +434,7 @@ class XBPMProcessor:
         # Calculate ranges.
         self.range_h    = np.unique(self.pos_nom.x)
         self.range_v    = np.unique(self.pos_nom.y)
-        self.grid_shape = (
-            len(self.range_v),
-            len(self.range_h)
-            )
+        self.grid_shape = (len(self.range_v), len(self.range_h))
 
         # Shortcut to blade data.
         blades = self.blade_avg.blades
@@ -450,51 +442,40 @@ class XBPMProcessor:
         # Select blades at the central horizontal line (y ~ 0).
         # Find sites next to the zero position.
         mask_h = np.isclose(self.pos_nom.y, 0)
-        if not np.any(mask_h):
-            print("WARNING: no counts/currents found near the central"
-                  " horizontal line (y ~ 0).")
-            self.cs_bld_h = None
-        else:
-            # Guarantee the order of the indices along the horizontal direction.
-            idx_h  = np.argsort(self.pos_nom.x[mask_h])
-
-            self.cs_bld_h = DStr.Blades(
-                to      = blades.to[mask_h][idx_h],
-                ti      = blades.ti[mask_h][idx_h],
-                bi      = blades.bi[mask_h][idx_h],
-                bo      = blades.bo[mask_h][idx_h],
-                sto     = blades.sto[mask_h][idx_h],
-                sti     = blades.sti[mask_h][idx_h],
-                sbi     = blades.sbi[mask_h][idx_h],
-                sbo     = blades.sbo[mask_h][idx_h],
-                pos_nom = DStr.Positions(
-                    x = self.pos_nom.x[mask_h][idx_h],
-                    y = self.pos_nom.y[mask_h][idx_h]
-                )
+        # Guarantee the order of the indices along the horizontal direction.
+        idx_h  = np.argsort(self.pos_nom.x[mask_h])
+        self.cs_bld_h = DStr.Blades(
+            to      = blades.to[mask_h][idx_h],
+            ti      = blades.ti[mask_h][idx_h],
+            bi      = blades.bi[mask_h][idx_h],
+            bo      = blades.bo[mask_h][idx_h],
+            sto     = blades.sto[mask_h][idx_h],
+            sti     = blades.sti[mask_h][idx_h],
+            sbi     = blades.sbi[mask_h][idx_h],
+            sbo     = blades.sbo[mask_h][idx_h],
+            pos_nom = DStr.Positions(
+                x = self.pos_nom.x[mask_h][idx_h],
+                y = self.pos_nom.y[mask_h][idx_h]
             )
+        )
 
         # Select blades at the central vertical line (x ~ 0).
         mask_v = np.isclose(self.pos_nom.x, 0)
-        if not np.any(mask_v):
-            print("WARNING: no counts/currents found near the central"
-                  " vertical line (x ~ 0).")
-            self.cs_bld_v = None
-        else:
-            idx_v   = np.argsort(self.pos_nom.y[mask_v])
-            self.cs_bld_v = DStr.Blades(
-                to      = blades.to[mask_v][idx_v],
-                ti      = blades.ti[mask_v][idx_v],
-                bi      = blades.bi[mask_v][idx_v],
-                bo      = blades.bo[mask_v][idx_v],
-                sto     = blades.sto[mask_v][idx_v],
-                sti     = blades.sti[mask_v][idx_v],
-                sbi     = blades.sbi[mask_v][idx_v],
-                sbo     = blades.sbo[mask_v][idx_v],
-                pos_nom = DStr.Positions(
-                    x = self.pos_nom.x[mask_v][idx_v],
-                    y = self.pos_nom.y[mask_v][idx_v]
-                )
+        idx_v   = np.argsort(self.pos_nom.y[mask_v])
+        self.cs_bld_v = DStr.Blades(
+            to      = blades.to[mask_v][idx_v],
+            ti      = blades.ti[mask_v][idx_v],
+            bi      = blades.bi[mask_v][idx_v],
+            bo      = blades.bo[mask_v][idx_v],
+            sto     = blades.sto[mask_v][idx_v],
+            sti     = blades.sti[mask_v][idx_v],
+            sbi     = blades.sbi[mask_v][idx_v],
+            sbo     = blades.sbo[mask_v][idx_v],
+            pos_nom = DStr.Positions(
+                x = self.pos_nom.x[mask_v][idx_v],
+                y = self.pos_nom.y[mask_v][idx_v]
             )
+        )
         # Store masks and indices for later use in central sweep analysis.
         self.mask_h, self.mask_idx_h = mask_h, idx_h
         self.mask_v, self.mask_idx_v = mask_v, idx_v
@@ -512,38 +493,55 @@ class XBPMProcessor:
         Returns:
             CentralSweeps instance containing horizontal and vertical central sweeps.
         """
-        if cross:
-            pos_csweep_h_x = self.cr_pos_std.x[self.mask_h][self.mask_idx_h]
-            pos_csweep_h_y = self.cr_pos_std.y[self.mask_h][self.mask_idx_h]
-
-            pos_csweep_v_x = self.cr_pos_std.x[self.mask_v][self.mask_idx_v]
-            pos_csweep_v_y = self.cr_pos_std.y[self.mask_v][self.mask_idx_v]
+        # Central lines, optionally restricted to the ROI.
+        if self.prm_gen.slice_by_roi:
+            sl_h, sl_v = self.roi.slice_h, self.roi.slice_v
         else:
-            pos_csweep_h_x = self.pos_pw_std.x[self.mask_h][self.mask_idx_h]
-            pos_csweep_h_y = self.pos_pw_std.y[self.mask_h][self.mask_idx_h]
+            sl_h = sl_v = slice(None)
 
-            pos_csweep_v_x = self.pos_pw_std.x[self.mask_v][self.mask_idx_v]
-            pos_csweep_v_y = self.pos_pw_std.y[self.mask_v][self.mask_idx_v]
+        bld_h = self._slice_blades(self.cs_bld_h, sl_h)
+        bld_v = self._slice_blades(self.cs_bld_v, sl_v)
 
-        # Run through central lines if data is not just a point.
-        h = (
-            self._central_sweep(pos_csweep_h_x, pos_csweep_h_y)
-            if len(self.range_h) > 1
-            else None
-            )
-        v = (
-            self._central_sweep(pos_csweep_v_y, pos_csweep_v_x)
-            if len(self.range_v) > 1
-            else None
-            )
+        pos = self.cr_pos_std if cross else self.pos_pw_std
+        pos_csweep_h_x = pos.x[self.mask_h][self.mask_idx_h][sl_h]
+        pos_csweep_h_y = pos.y[self.mask_h][self.mask_idx_h][sl_h]
+        pos_csweep_v_x = pos.x[self.mask_v][self.mask_idx_v][sl_v]
+        pos_csweep_v_y = pos.y[self.mask_v][self.mask_idx_v][sl_v]
+
+        # The shear (cross-talk) correction only exists when both central
+        # lines are real sweeps. In 1-D one direction is a single point and
+        # its parametric sweep is meaningless, so skip both.
+        h = v = None
+        roi_2d = self.roi.size_h > 1 and self.roi.size_v > 1
+        if roi_2d and pos_csweep_h_x.size > 1 and pos_csweep_v_y.size > 1:
+            h = self._central_sweep(
+                bld_h, pos_csweep_h_x, pos_csweep_h_y
+                )
+            v = self._central_sweep(
+                bld_v, pos_csweep_v_y, pos_csweep_v_x
+                )
 
         return DStr.CentralSweeps(h=h, v=v)
 
+    @staticmethod
+    def _slice_blades(blades: DStr.Blades, sl: slice) -> DStr.Blades:
+        """Return the blades restricted to the slice `sl`."""
+        return DStr.Blades(
+            to  = blades.to[sl],  ti  = blades.ti[sl],
+            bi  = blades.bi[sl],  bo  = blades.bo[sl],
+            sto = blades.sto[sl], sti = blades.sti[sl],
+            sbi = blades.sbi[sl], sbo = blades.sbo[sl],
+            pos_nom = DStr.Positions(
+                x = blades.pos_nom.x[sl], y = blades.pos_nom.y[sl]
+                ),
+            )
+
     def _central_sweep(
             self,
-            x : np.ndarray,
-            y : np.ndarray,
-            w : np.ndarray | None = None,
+            blades : DStr.Blades,
+            x      : np.ndarray,
+            y      : np.ndarray,
+            w      : np.ndarray | None = None,
             ) -> DStr.CentralSweepLine:
         """Analyze position calculation along the central horizontal line.
         
@@ -564,7 +562,7 @@ class XBPMProcessor:
         pos_fixed = np.zeros_like(x)
 
         return DStr.CentralSweepLine(
-            blades      = self.cs_bld_h,
+            blades      = blades,
             pos_index   = x,
             pos_fixed   = pos_fixed,
             pos_calc    = y,
@@ -594,7 +592,21 @@ class XBPMProcessor:
     def transform_position_cross(self,
                                  pos_std: DStr.Positions
                                  ) -> DStr.Positions:
-        """Transform positions using a linear transformation matrix."""
+        """Transform positions using a linear transformation matrix.
+
+        The shear correction is only defined when both central sweeps
+        exist (2-D analysis). For 1-D analyses (ROI size 1 in either
+        direction) return the positions unchanged with an identity
+        matrix; the subsequent scaling step handles the 1-D stretch.
+        """
+        sweeps = self.analysis.centralsweeps
+        if sweeps.h is None or sweeps.v is None:
+            self.gl2rmat = DStr.GL2RMatrix(
+                calc     = np.eye(2),
+                calc_err = np.zeros((2, 2))
+                )
+            return pos_std
+
         # Compute linear transformation matrix at the ROI.
         mx, bx = self.analysis.centralsweeps.h.coeffs
         my, by = self.analysis.centralsweeps.v.coeffs
@@ -645,11 +657,12 @@ class XBPMProcessor:
     Scaling functions.
     """
 
-    def _scale_positions(self,
-                        pos_nom  : DStr.Positions,
-                        pos_calc : DStr.Positions
-                        ) -> tuple[DStr.Scales,
-                                   DStr.Positions]:
+    def _scale_positions(
+        self,
+        pos_nom  : DStr.Positions,
+        pos_calc : DStr.Positions
+        ) -> tuple[DStr.Scales,
+                    DStr.Positions]:
         """Scale positions, pairwise or cross-blade.
 
         Scale positions using polynomial fitting to reference positions (nominal or BPM's). Return calculated scales (polynomial coefficients with errors) and scaled positions.
@@ -663,8 +676,8 @@ class XBPMProcessor:
         Returns:
             Tuple with scales and all scaled positions.
         """
-        nom_roi_x = pos_nom.x[self.roi.slice_v, self.roi.slice_h]
-        nom_roi_y = pos_nom.y[self.roi.slice_v, self.roi.slice_h]
+        nom_roi_x  = pos_nom.x[self.roi.slice_v, self.roi.slice_h]
+        nom_roi_y  = pos_nom.y[self.roi.slice_v, self.roi.slice_h]
         calc_roi_x = pos_calc.x[self.roi.slice_v, self.roi.slice_h]
         calc_roi_y = pos_calc.y[self.roi.slice_v, self.roi.slice_h]
 
@@ -678,6 +691,16 @@ class XBPMProcessor:
             calc_roi_y,
             polydeg=self.prm_bml.scalepolydeg,
         )
+
+        if self.prm_bml.forcezero:
+            scl_x, sig_x, scl_y, sig_y = self._rescale_to_forcezero(
+                nom_roi_x,  nom_roi_y,
+                calc_roi_x, calc_roi_y,
+                scl_x, sig_x,
+                scl_y, sig_y,
+                pos_calc, pos_nom
+            )
+
         (qx, kx, deltax), (sqx, skx, sdeltax) = scl_x, sig_x
         (qy, ky, deltay), (sqy, sky, sdeltay) = scl_y, sig_y
 
@@ -752,11 +775,12 @@ class XBPMProcessor:
             (coeffs_y, sigmas_y)
             )
 
-    def _poly_fitting(self,
-                     nom: np.ndarray,
-                     meas: np.ndarray,
-                     polydeg: int = 1,
-                     ) -> tuple:
+    def _poly_fitting(
+        self,
+        nom     : np.ndarray,
+        meas    : np.ndarray,
+        polydeg : int = 1,
+        ) -> tuple:
         """Return fitting parameters for scaling fit."""
         # Default values.
         coeffs  = np.zeros(polydeg + 1)
@@ -780,6 +804,94 @@ class XBPMProcessor:
                         f" coefficients:\n{err}\n"
                         " Setting to default values.")
         return (coeffs, sigmas)
+
+    def _rescale_to_forcezero(
+        self,
+        nom_roi_x  : np.ndarray,
+        nom_roi_y  : np.ndarray,
+        calc_roi_x : np.ndarray,
+        calc_roi_y : np.ndarray,
+        scl_x      : np.ndarray,
+        sig_x      : np.ndarray,
+        scl_y      : np.ndarray,
+        sig_y      : np.ndarray,
+        pos_calc   : DStr.Positions,
+        pos_nom    : DStr.Positions,
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Rescale the linear fits to force zero at the origin."""
+        # Estimate the residuals using the current scaling coefficients.
+        sigma_x = np.abs(nom_roi_x - np.polyval(scl_x[1:], calc_roi_x))
+        sigma_y = np.abs(nom_roi_y - np.polyval(scl_y[1:], calc_roi_y))
+
+        # Find the origin in the nominal positions.
+        origin = (
+            np.isclose(self.pos_nom.x, 0)
+            & np.isclose(self.pos_nom.y, 0)
+        )
+        i0, j0 = np.argwhere(origin)[0]
+        center_x = (pos_calc.x[i0, j0], pos_nom.x[i0, j0])
+        center_y = (pos_calc.y[i0, j0], pos_nom.y[i0, j0])
+
+        # Perform the force-zero linear fit for both x and y directions.
+        fit_x, err_x = self._forcezero_linear_fit(
+            nom_roi_x, calc_roi_x, sigma_x, center_x
+        )
+        fit_y, err_y = self._forcezero_linear_fit(
+            nom_roi_y, calc_roi_y, sigma_y, center_y
+        )
+
+        # Update the scaling coefficients and their uncertainties with
+        # the force-zero fit results.
+        scl_x = np.array([0.0, *fit_x])
+        sig_x = np.array([0.0, *err_x])
+        scl_y = np.array([0.0, *fit_y])
+        sig_y = np.array([0.0, *err_y])
+
+        return scl_x, sig_x, scl_y, sig_y
+
+    @staticmethod
+    def _forcezero_linear_fit(
+        nom    : np.ndarray,
+        calc   : np.ndarray,
+        sigma  : np.ndarray,
+        center : tuple[float, float],
+        ) -> tuple[np.ndarray, np.ndarray]:
+        """Fit a weighted linear scale through the origin grid point."""
+        # Filter out invalid data points.
+        valid = (
+            np.isfinite(nom)
+            & np.isfinite(calc)
+            & np.isfinite(sigma)
+        )
+        nom   = nom[valid]
+        calc  = calc[valid]
+        sigma = sigma[valid]
+
+        # Ensure non-zero or infiniteweights.
+        weights = (
+            np.ones_like(sigma)
+            if np.any(sigma == 0)
+            else 1.0 / sigma**2
+        )
+
+        # Subtract the offset to force zero-centered fit.
+        c_calc, c_nom = center
+        x = calc - c_calc
+        y = nom - c_nom
+
+        # Calculate the weighted linear fit through the origin.
+        denom = np.dot(weights * x, x)
+        slope = np.dot(weights * x, y) / denom
+        slope_err = np.sqrt(1.0 / denom)
+
+        # Calculate the offset and its uncertainty based on the slope.
+        offset = c_nom - slope * c_calc
+        offset_err = abs(c_calc) * slope_err
+
+        return (
+            np.array([slope, offset]),
+            np.array([slope_err, offset_err]),
+        )
 
 
 class BPMProcessor:

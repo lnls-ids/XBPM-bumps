@@ -405,6 +405,13 @@ def parse_rawdata(
         angle_x = record[2].get('agx', "N/A")
         angle_y = record[2].get('agy', "N/A")
 
+        # Snap nominal angles to the intended grid (6 decimals is enough to
+        # merge float noise like -2.0000000000000004 back into -2.0).
+        if isinstance(angle_x, (int, float, np.number)):
+            angle_x = float(np.round(float(angle_x), 6))
+        if isinstance(angle_y, (int, float, np.number)):
+            angle_y = float(np.round(float(angle_y), 6))
+
         # Alternative bumping method, by displacing the beam with defined
         # positions. If bumps are made by angle, these are tipically zero.
         pos_x   = record[2].get('posx', "N/A")
@@ -559,7 +566,10 @@ def export_rawdata_to_hdf5(
                     beamline = beamline,
                     bumpnum  = ii,
                     )
-                grp_bump.attrs.update(metadata[ii])
+                grp_bump.attrs.update({
+                    k: _attr_value(v)
+                    for k, v in metadata[ii].items()
+                    })
 
                 # Subgroup for BPM data.
                 _write_group_data(
@@ -590,7 +600,14 @@ def export_rawdata_to_hdf5(
                 for k, v in metadata[1].items()
                 if k.startswith('Gap/Ph.')
                 })
-            dset.attrs.update(avg_meta)
+            dset.attrs.update({
+                k: _attr_value(v)
+                for k, v in avg_meta.items()
+                })
+
+
+def _attr_value(value: float | None) -> float | str:
+    return "N/A" if value is None else value
 
 
 def compose_raw_metadata(

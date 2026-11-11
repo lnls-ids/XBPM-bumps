@@ -215,6 +215,7 @@ class BeamlinePrm:
     xbpmdist     : Source-XBPM distance
     skip         : Number of points to skip
     scalepolydeg : Degree of polynomial for scaling fit
+    forcezero    : Whether to force zero as the center of the fitted grid
     roisize      : ROI size (horizontal, vertical)
     usebpmref    : Whether to use BPM or nominal positions as reference
     """
@@ -225,12 +226,14 @@ class BeamlinePrm:
     xbpmdist     : float           | None = None
     skip         : int             = 0
     scalepolydeg : int             = 1
+    forcezero    : bool            = False
     sector       : list            | None = None
     usebpmref    : bool            = False
     grid_shape   : tuple[int, int] | None = None
     roislice     : ROISlice        = None
     updated      : str             | None = None
     legacy_bmap  : bool            | None = None
+
 
     # Extra parameters not explicitly defined above.
     extras       : dict | None = None
@@ -269,9 +272,6 @@ class BeamlinePrm:
         if "xbpmdist" not in attrs:
             attrs["xbpmdist"] = Config.XBPMDISTS.get(beamline, None)
 
-        if "grid_shape" not in attrs:
-            attrs["grid_shape"] = None
-
         attrs["updated"] = attrs.pop("hdf5 updated on", None)
 
         # --- dict 2: analysis attributes (merged below) ---
@@ -286,19 +286,28 @@ class BeamlinePrm:
             attrs["scalepolydeg"] = int(an_attrs["scalepolydeg"])
         if "usebpmref" in an_attrs:
             attrs["usebpmref"] = bool(an_attrs["usebpmref"])
+        if "forcezero" in an_attrs:
+            attrs["forcezero"] = bool(an_attrs["forcezero"])
 
         # ROI slice: from the Analysis group when present, else default.
-        ashape = int(np.sqrt(attrs["nbumps"]))
+        shape = attrs.get("grid_shape", None)
+        ashape = (
+            tuple(int(s) for s in shape)
+            if shape is not None
+            else (int(np.sqrt(attrs["nbumps"])), ) * 2
+            )
+        attrs["grid_shape"] = ashape
+
         roi = an_attrs.get("roi size")
         if roi is not None:
             roisize = [int(x) for x in roi.split(",")]
             attrs["roislice"] = ROISlice.update(
-                arrayshape = (ashape, ashape),
+                arrayshape = ashape,
                 roisize    = roisize,
                 )
         else:
             attrs["roislice"] = ROISlice.update(
-                arrayshape = (ashape, ashape),
+                arrayshape = ashape,
                 roisize    = [5, 5],
                 )
 
@@ -331,11 +340,14 @@ class BeamlinePrm:
             f"'{type(self).__name__}' object has no attribute '{name}'"
         )
 
-    _ANALYSIS_ATTRS = ("roislice", "scalepolydeg", "skip", "usebpmref")
+    _ANALYSIS_ATTRS = (
+        "roislice", "scalepolydeg", "skip", "usebpmref", "forcezero"
+        )
 
-    def to_hdf5(self,
-                bl_grp   : "h5py.Group",
-                ) -> None:
+    def to_hdf5(
+        self,
+        bl_grp   : "h5py.Group",
+        ) -> None:
         """Write a Prm instance to an HDF5 group.
         
         Args:
@@ -369,9 +381,10 @@ class BeamlinePrm:
                 f" (HDF5 group): \n {err}"
             )
 
-    def to_hdf5_analysis(self,
-                         anl_grp : "h5py.Group",
-                         ) -> None:
+    def to_hdf5_analysis(
+        self,
+        anl_grp : "h5py.Group",
+        ) -> None:
         """Write analysis-specific parameters to the Analysis group attrs."""
         attrs = anl_grp.attrs
         if self.roislice is not None:
@@ -381,6 +394,7 @@ class BeamlinePrm:
         attrs["scalepolydeg"] = self.scalepolydeg
         attrs["skip"]         = self.skip
         attrs["usebpmref"]    = self.usebpmref
+        attrs["forcezero"]    = self.forcezero
 
 
 #
@@ -552,7 +566,7 @@ class Blades:
                 'points',
                 table[Config.column(bld, "err")]
                 )
-            
+
         ds = xr.Dataset(
             bladeset,
             coords={
@@ -565,6 +579,12 @@ class Blades:
         # otherwise you'll get NaN for missing combinations.
         ds = ds.set_index(points=['y', 'x'])
         # Keep only the first occurrence of each (y, x) combination.
+        xy = np.column_stack([pos_nom.x, pos_nom.y])
+        _, counts = np.unique(xy, axis=0, return_counts=True)
+        if (counts > 1).any():
+            print(f"WARNING: {int((counts > 1).sum())} duplicated (y, x)"
+                " blade points found; keeping the first occurrence.")
+
         ds = ds.drop_duplicates('points')
         ds = ds.unstack('points')
 
@@ -1434,23 +1454,26 @@ class BladeCenterAnalysis:
 @dataclass
 class BCA_HV:
     """Container for horizontal and vertical blade center analyses."""
-    h : BladeCenterAnalysis
-    v : BladeCenterAnalysis
+    h : BladeCenterAnalysis | None = None
+    v : BladeCenterAnalysis | None = None
 
     def __iter__(self) -> Iterator[tuple[str, BladeCenterAnalysis]]:
-        yield 'h', self.h
-        yield 'v', self.v
+        if self.h is not None:
+            yield 'h', self.h
+        if self.v is not None:
+            yield 'v', self.v
+
 
     @classmethod
     def from_hdf5(cls, bcahv_grp : "h5py.Group") -> "BCA_HV":
         """Create a BCA_HV instance from an HDF5 group."""
+        name_h = Config.group_name("direction_h")
+        name_v = Config.group_name("direction_v")
         return cls(
-            h = BladeCenterAnalysis.from_hdf5(
-                bcahv_grp[Config.group_name("direction_h")]
-                ),
-            v = BladeCenterAnalysis.from_hdf5(
-                bcahv_grp[Config.group_name("direction_v")]
-                )
+            h = (BladeCenterAnalysis.from_hdf5(bcahv_grp[name_h])
+                 if name_h in bcahv_grp else None),
+            v = (BladeCenterAnalysis.from_hdf5(bcahv_grp[name_v])
+                 if name_v in bcahv_grp else None),
         )
 
     def to_hdf5(self, parent: "h5py.Group") -> None:
@@ -2110,6 +2133,14 @@ class BeamlineDatum:
             beamline = kwargs["prm"].beamline,
             )
 
+        # The blade map is the source of truth for the grid shape.
+        prm = kwargs["prm"]
+        prm.grid_shape = kwargs["raw_data"].blade_avg.pos_nom.x.shape
+        prm.roislice = ROISlice.update(
+            arrayshape = prm.grid_shape,
+            roisize    = [prm.roislice.size_v, prm.roislice.size_h],
+            )
+
         # Analysis data may be not present when data are imported.
         if anl_grp is not None:
             try:
@@ -2137,8 +2168,11 @@ class BeamlineDatum:
 
         Args:
             bl_grp (h5py.Group): HDF5 group to store the beamline data.
-.
         """
+        # Make sure the grid shape is recorded in the beamline attributes.
+        if self.raw_data is not None:
+            self.prm.grid_shape = self.raw_data.blade_avg.pos_nom.x.shape
+
         # Store beamline parameters.
         self.prm.to_hdf5(bl_grp)
         beamline = self.prm.beamline
