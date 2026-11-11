@@ -490,6 +490,7 @@ class XBPMMainWindow(QMainWindow):
         bl_prm.skip         = params["skip"]
         bl_prm.scalepolydeg = params["scalepolydeg"]
         bl_prm.usebpmref    = params["usebpmref"]
+        bl_prm.forcezero    = params["forcezero"]
         bl_prm.roislice     = DStr.ROISlice.update(
             self.grid_shape,
             params["roisize"]

@@ -657,11 +657,12 @@ class XBPMProcessor:
     Scaling functions.
     """
 
-    def _scale_positions(self,
-                        pos_nom  : DStr.Positions,
-                        pos_calc : DStr.Positions
-                        ) -> tuple[DStr.Scales,
-                                   DStr.Positions]:
+    def _scale_positions(
+        self,
+        pos_nom  : DStr.Positions,
+        pos_calc : DStr.Positions
+        ) -> tuple[DStr.Scales,
+                    DStr.Positions]:
         """Scale positions, pairwise or cross-blade.
 
         Scale positions using polynomial fitting to reference positions (nominal or BPM's). Return calculated scales (polynomial coefficients with errors) and scaled positions.
@@ -675,8 +676,8 @@ class XBPMProcessor:
         Returns:
             Tuple with scales and all scaled positions.
         """
-        nom_roi_x = pos_nom.x[self.roi.slice_v, self.roi.slice_h]
-        nom_roi_y = pos_nom.y[self.roi.slice_v, self.roi.slice_h]
+        nom_roi_x  = pos_nom.x[self.roi.slice_v, self.roi.slice_h]
+        nom_roi_y  = pos_nom.y[self.roi.slice_v, self.roi.slice_h]
         calc_roi_x = pos_calc.x[self.roi.slice_v, self.roi.slice_h]
         calc_roi_y = pos_calc.y[self.roi.slice_v, self.roi.slice_h]
 
@@ -690,6 +691,16 @@ class XBPMProcessor:
             calc_roi_y,
             polydeg=self.prm_bml.scalepolydeg,
         )
+
+        if self.prm_bml.forcezero:
+            scl_x, sig_x, scl_y, sig_y = self._rescale_to_forcezero(
+                nom_roi_x,  nom_roi_y,
+                calc_roi_x, calc_roi_y,
+                scl_x, sig_x,
+                scl_y, sig_y,
+                pos_calc, pos_nom
+            )
+
         (qx, kx, deltax), (sqx, skx, sdeltax) = scl_x, sig_x
         (qy, ky, deltay), (sqy, sky, sdeltay) = scl_y, sig_y
 
@@ -764,11 +775,12 @@ class XBPMProcessor:
             (coeffs_y, sigmas_y)
             )
 
-    def _poly_fitting(self,
-                     nom: np.ndarray,
-                     meas: np.ndarray,
-                     polydeg: int = 1,
-                     ) -> tuple:
+    def _poly_fitting(
+        self,
+        nom     : np.ndarray,
+        meas    : np.ndarray,
+        polydeg : int = 1,
+        ) -> tuple:
         """Return fitting parameters for scaling fit."""
         # Default values.
         coeffs  = np.zeros(polydeg + 1)
@@ -792,6 +804,94 @@ class XBPMProcessor:
                         f" coefficients:\n{err}\n"
                         " Setting to default values.")
         return (coeffs, sigmas)
+
+    def _rescale_to_forcezero(
+        self,
+        nom_roi_x  : np.ndarray,
+        nom_roi_y  : np.ndarray,
+        calc_roi_x : np.ndarray,
+        calc_roi_y : np.ndarray,
+        scl_x      : np.ndarray,
+        sig_x      : np.ndarray,
+        scl_y      : np.ndarray,
+        sig_y      : np.ndarray,
+        pos_calc   : DStr.Positions,
+        pos_nom    : DStr.Positions,
+        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Rescale the linear fits to force zero at the origin."""
+        # Estimate the residuals using the current scaling coefficients.
+        sigma_x = np.abs(nom_roi_x - np.polyval(scl_x[1:], calc_roi_x))
+        sigma_y = np.abs(nom_roi_y - np.polyval(scl_y[1:], calc_roi_y))
+
+        # Find the origin in the nominal positions.
+        origin = (
+            np.isclose(self.pos_nom.x, 0)
+            & np.isclose(self.pos_nom.y, 0)
+        )
+        i0, j0 = np.argwhere(origin)[0]
+        center_x = (pos_calc.x[i0, j0], pos_nom.x[i0, j0])
+        center_y = (pos_calc.y[i0, j0], pos_nom.y[i0, j0])
+
+        # Perform the force-zero linear fit for both x and y directions.
+        fit_x, err_x = self._forcezero_linear_fit(
+            nom_roi_x, calc_roi_x, sigma_x, center_x
+        )
+        fit_y, err_y = self._forcezero_linear_fit(
+            nom_roi_y, calc_roi_y, sigma_y, center_y
+        )
+
+        # Update the scaling coefficients and their uncertainties with
+        # the force-zero fit results.
+        scl_x = np.array([0.0, *fit_x])
+        sig_x = np.array([0.0, *err_x])
+        scl_y = np.array([0.0, *fit_y])
+        sig_y = np.array([0.0, *err_y])
+
+        return scl_x, sig_x, scl_y, sig_y
+
+    @staticmethod
+    def _forcezero_linear_fit(
+        nom    : np.ndarray,
+        calc   : np.ndarray,
+        sigma  : np.ndarray,
+        center : tuple[float, float],
+        ) -> tuple[np.ndarray, np.ndarray]:
+        """Fit a weighted linear scale through the origin grid point."""
+        # Filter out invalid data points.
+        valid = (
+            np.isfinite(nom)
+            & np.isfinite(calc)
+            & np.isfinite(sigma)
+        )
+        nom   = nom[valid]
+        calc  = calc[valid]
+        sigma = sigma[valid]
+
+        # Ensure non-zero or infiniteweights.
+        weights = (
+            np.ones_like(sigma)
+            if np.any(sigma == 0)
+            else 1.0 / sigma**2
+        )
+
+        # Subtract the offset to force zero-centered fit.
+        c_calc, c_nom = center
+        x = calc - c_calc
+        y = nom - c_nom
+
+        # Calculate the weighted linear fit through the origin.
+        denom = np.dot(weights * x, x)
+        slope = np.dot(weights * x, y) / denom
+        slope_err = np.sqrt(1.0 / denom)
+
+        # Calculate the offset and its uncertainty based on the slope.
+        offset = c_nom - slope * c_calc
+        offset_err = abs(c_calc) * slope_err
+
+        return (
+            np.array([slope, offset]),
+            np.array([slope_err, offset_err]),
+        )
 
 
 class BPMProcessor:

@@ -215,6 +215,7 @@ class BeamlinePrm:
     xbpmdist     : Source-XBPM distance
     skip         : Number of points to skip
     scalepolydeg : Degree of polynomial for scaling fit
+    forcezero    : Whether to force zero as the center of the fitted grid
     roisize      : ROI size (horizontal, vertical)
     usebpmref    : Whether to use BPM or nominal positions as reference
     """
@@ -225,12 +226,14 @@ class BeamlinePrm:
     xbpmdist     : float           | None = None
     skip         : int             = 0
     scalepolydeg : int             = 1
+    forcezero    : bool            = False
     sector       : list            | None = None
     usebpmref    : bool            = False
     grid_shape   : tuple[int, int] | None = None
     roislice     : ROISlice        = None
     updated      : str             | None = None
     legacy_bmap  : bool            | None = None
+
 
     # Extra parameters not explicitly defined above.
     extras       : dict | None = None
@@ -283,6 +286,8 @@ class BeamlinePrm:
             attrs["scalepolydeg"] = int(an_attrs["scalepolydeg"])
         if "usebpmref" in an_attrs:
             attrs["usebpmref"] = bool(an_attrs["usebpmref"])
+        if "forcezero" in an_attrs:
+            attrs["forcezero"] = bool(an_attrs["forcezero"])
 
         # ROI slice: from the Analysis group when present, else default.
         shape = attrs.get("grid_shape", None)
@@ -335,11 +340,14 @@ class BeamlinePrm:
             f"'{type(self).__name__}' object has no attribute '{name}'"
         )
 
-    _ANALYSIS_ATTRS = ("roislice", "scalepolydeg", "skip", "usebpmref")
+    _ANALYSIS_ATTRS = (
+        "roislice", "scalepolydeg", "skip", "usebpmref", "forcezero"
+        )
 
-    def to_hdf5(self,
-                bl_grp   : "h5py.Group",
-                ) -> None:
+    def to_hdf5(
+        self,
+        bl_grp   : "h5py.Group",
+        ) -> None:
         """Write a Prm instance to an HDF5 group.
         
         Args:
@@ -373,9 +381,10 @@ class BeamlinePrm:
                 f" (HDF5 group): \n {err}"
             )
 
-    def to_hdf5_analysis(self,
-                         anl_grp : "h5py.Group",
-                         ) -> None:
+    def to_hdf5_analysis(
+        self,
+        anl_grp : "h5py.Group",
+        ) -> None:
         """Write analysis-specific parameters to the Analysis group attrs."""
         attrs = anl_grp.attrs
         if self.roislice is not None:
@@ -385,6 +394,7 @@ class BeamlinePrm:
         attrs["scalepolydeg"] = self.scalepolydeg
         attrs["skip"]         = self.skip
         attrs["usebpmref"]    = self.usebpmref
+        attrs["forcezero"]    = self.forcezero
 
 
 #

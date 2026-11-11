@@ -110,7 +110,7 @@ class ParameterPanel(QWidget):
         self.scalepolydeg.setValue(1)
         # self.scalepolydeg.setSuffix("")
         self.scalepolydeg.setMaximumWidth(115)
-        self.scalepolydeg.valueChanged.connect(self.parametersChanged.emit)
+        self.scalepolydeg.valueChanged.connect( self._on_scalepolydeg_changed)
 
         layout.addRow("Polynomial degree:", self.scalepolydeg)
         group.setLayout(layout)
@@ -180,15 +180,23 @@ class ParameterPanel(QWidget):
         self.bpm_ref_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.bpm_ref_check)
 
-        # 8. Slice by ROI
+        # 8. Force central grid point to zero.
+        self.forcezero_check = QCheckBox(
+            "Force central grid point to zero"
+            )
+        self.forcezero_check.setChecked(False)
+        self.forcezero_check.toggled.connect(self.parametersChanged.emit)
+        layout.addWidget(self.forcezero_check)
+
+        # 9. Slice by ROI
         self.slice_by_roi_check = QCheckBox(
             "Central range fit defined by ROI"
             )
         self.slice_by_roi_check.setChecked(False)
         self.slice_by_roi_check.toggled.connect(self.parametersChanged.emit)
         layout.addWidget(self.slice_by_roi_check)
-    
-        # 9. Blade map absolute scale
+
+        # 10. Blade map absolute scale
         self.bmap_global_scale_check = QCheckBox(
             "Blade map absolute scale"
             )
@@ -215,9 +223,7 @@ class ParameterPanel(QWidget):
         boxes = (
                 self.bpm_check,
                 self.blademap_check,
-                # self.blade_central_check,
                 self.position_center_check,
-                # self.xbpm_raw_check,
                 self.xbpm_calc_check,
                 self.bmap_global_scale_check,
             )
@@ -225,6 +231,17 @@ class ParameterPanel(QWidget):
 
         for box in boxes:
             box.setChecked(checked)
+
+    def _on_scalepolydeg_changed(self, degree: int) -> None:
+        enabled = degree == 1
+        self.forcezero_check.setEnabled(enabled)
+
+        if not enabled and self.forcezero_check.isChecked():
+            blocker = QSignalBlocker(self.forcezero_check)
+            self.forcezero_check.setChecked(False)
+            del blocker
+
+        self.parametersChanged.emit()
 
     def show_inputfile(self, inputfile: str) -> None:
         """Set the input file path programmatically.
@@ -274,7 +291,8 @@ class ParameterPanel(QWidget):
             'skip'                  : self.skip_spin.value(),
             'scalepolydeg'          : self.scalepolydeg.value(),
             'usebpmref'             : self.bpm_ref_check.isChecked(),
-            'show_qfactor'           : self.qfactor_check.isChecked(),
+            'forcezero'             : self.forcezero_check.isChecked(),
+            'show_qfactor'          : self.qfactor_check.isChecked(),
             'slice_by_roi'          : self.slice_by_roi_check.isChecked(),
             'bmap_global_scale'   : (
                 self.bmap_global_scale_check.isChecked()
@@ -305,6 +323,7 @@ class ParameterPanel(QWidget):
                         self.roi_v_spin,
                         self.skip_spin,
                         self.scalepolydeg,
+                        self.forcezero_check,
                         self.bpm_ref_check,
                         )
                     ]   
@@ -319,6 +338,10 @@ class ParameterPanel(QWidget):
         self.xbpmdist_spin.setValue(beamline_prm.xbpmdist or 0.0)
         self.skip_spin.setValue(beamline_prm.skip)
         self.scalepolydeg.setValue(beamline_prm.scalepolydeg)
+        self.forcezero_check.setEnabled(beamline_prm.scalepolydeg == 1)
+        self.forcezero_check.setChecked(
+            beamline_prm.forcezero and beamline_prm.scalepolydeg == 1
+            )
         self.bpm_ref_check.setChecked(beamline_prm.usebpmref)
 
         del blockers
