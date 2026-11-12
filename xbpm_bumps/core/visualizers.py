@@ -767,8 +767,8 @@ class PositionVisualizer:
         # Determine whether to show the Q-factor subplot.
         show_qfactor = (
             show_qfactor
-            and graph_type == "xbpm_pairwise_raw"
             and stat_roi.qfactor is not None
+            and graph_type == "xbpm_pairwise_raw"
         )
 
         # Define the subplot layout for the visualization.
@@ -780,7 +780,10 @@ class PositionVisualizer:
         )
         self.fig.tight_layout()
         # Adjust subplot spacing for better readability.
-        plt.subplots_adjust(hspace=0.25)
+        plt.subplots_adjust(
+            left=0.08, right=0.92, top=0.92, bottom=0.12,
+            hspace=0.45, wspace=0.30,
+        )
         [[ax_all, ax_roi], [ax_qfactor, ax_heat]] = axes
 
         # ROI slices.

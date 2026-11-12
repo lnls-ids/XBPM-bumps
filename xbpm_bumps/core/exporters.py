@@ -47,7 +47,7 @@ def export_plain(
             fig.savefig(
                 figname,
                 dpi = Cts.FIGDPI,
-                bbox_inches = "tight"
+                # bbox_inches = "tight"
                 )
     else:
         print("WARNING: when exporting figures, no objects were provided.")
