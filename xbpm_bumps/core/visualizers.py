@@ -767,8 +767,9 @@ class PositionVisualizer:
         # Determine whether to show the Q-factor subplot.
         show_qfactor = (
             show_qfactor
-            and graph_type == "xbpm_pairwise_raw"
             and stat_roi.qfactor is not None
+            and (graph_type == "xbpm_pairwise_raw" or
+                 graph_type == "xbpm_pairwise_trn")
         )
 
         # Define the subplot layout for the visualization.

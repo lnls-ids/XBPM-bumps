@@ -135,6 +135,21 @@ class XBPMProcessor:
             pw_pos_sup.y,
             self.roi
         )
+        if self.prm_gen.show_qfactor:
+            # Q factor for the full grid.
+            qfactor_trn = self.q_factor_calc(
+                self.blades, mat=self.supmat.calculated, direction='v'
+                )
+            rms_pw_sup.all.qfactor = qfactor_trn
+            rms_pw_sup.all.qfactor_avg = np.nanmean(qfactor_trn)
+            rms_pw_sup.all.qfactor_std = np.nanstd(qfactor_trn)
+            # Q factor at the ROI.
+            rms_pw_sup.roi.qfactor = qfactor_trn[
+                self.roi.slice_v,
+                self.roi.slice_h
+                ]
+            rms_pw_sup.roi.qfactor_avg = np.nanmean(rms_pw_sup.roi.qfactor)
+            rms_pw_sup.roi.qfactor_std = np.nanstd(rms_pw_sup.roi.qfactor)
 
         # Pairwise results instance.
         pairwise_res = DStr.CalculatedPositions(
@@ -195,10 +210,10 @@ class XBPMProcessor:
             # pos_std   = self.cr_pos_std,
             pos_std   = cr_pos_std_scaled,
             scale_std = cr_scale_std,
-            stats_std  = rms_cr_std,
+            stats_std = rms_cr_std,
             pos_trn   = pos_cr_lintr_scaled,
             scale_trn = cr_scale_lintr,
-            stats_trn  = rms_cr_lintr
+            stats_trn = rms_cr_lintr
         )
 
         # Store all scales.
@@ -573,10 +588,34 @@ class XBPMProcessor:
         )
 
     @staticmethod
-    def q_factor_calc(blades) -> np.ndarray:
-        """Calculate the quality factor from blades' currents."""
-        q1 = blades.to + blades.bi
-        q2 = blades.ti + blades.bo
+    def q_factor_calc(
+        blades    : DStr.Blades,
+        mat       : np.ndarray | None = None,
+        direction : str = "h"
+        ) -> np.ndarray:
+        """Calculate the quality factor from blades' currents.
+
+        In the standard calculation, the weights are set to 1. To take into
+        account weights calculated from the suppression matrix, the absolute
+        values are used: row 2 for horizontal or 4 for vertical analysis.
+
+        Args:
+            blades (DStr.Blades): The blades object containing current
+                measurements.
+            mat (np.ndarray | None): Optional 4x2 matrix for weighting the
+                currents.
+
+        Returns:
+            np.ndarray: The calculated quality factor array.
+        """
+        if mat is None:
+            q1 = blades.to + blades.bi
+            q2 = blades.ti + blades.bo
+        else:
+            row = mat[1, :] if direction == "h" else mat[3, :]
+            q1 = row[0]*blades.to + row[2]*blades.bi
+            q2 = row[1]*blades.ti + row[3]*blades.bo
+
         qfactor = (q1 - q2) / (q1 + q2)
         return qfactor
 
