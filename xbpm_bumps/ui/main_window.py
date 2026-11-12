@@ -640,16 +640,24 @@ class XBPMMainWindow(QMainWindow):
             else os.getcwd()
         )
 
-        dirpath = QFileDialog.getExistingDirectory(
-            self,
-            caption="Select Directory for Plain Export",
-            directory=base_dir
-        )
-        if not dirpath:
+        dialog = QFileDialog(self)
+        dialog.setWindowTitle("Select Directory for Plain Export")
+        # Keeps the button active:
+        dialog.setFileMode(QFileDialog.AnyFile)
+        dialog.setOption(QFileDialog.ShowDirsOnly, True)
+        # Required for editing:
+        dialog.setOption(QFileDialog.DontUseNativeDialog, True)
+        dialog.setDirectory(base_dir)
+        # Pre-fill editable name:
+        dialog.selectFile(default_dir_name)
+        if dialog.exec() != QFileDialog.Accepted:
             return
 
-        # Append the *suggested subdirectory* to whatever the user picked.
-        target_dir = os.path.join(dirpath, default_dir_name)
+        files = dialog.selectedFiles()
+        if not files or not files[0]:
+            return
+        # User-confirmed / possibly-edited path:
+        target_dir = files[0]
 
         exporter.export_plain(
             dirpath  = target_dir,
