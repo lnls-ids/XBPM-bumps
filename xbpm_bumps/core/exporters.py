@@ -44,12 +44,10 @@ def export_plain(
     if figures is not None:
         for key, fig in figures.items():
             # Export the figure to a PNG file.
+            fig.set_size_inches(12, 8)     # fixed, consistent export size
+            fig.canvas.draw()
             figname = _filename(key, dirpath, prefix="fig", ext="png")
-            fig.savefig(
-                figname,
-                dpi = Cts.FIGDPI,
-                # bbox_inches = "tight"
-                )
+            fig.savefig(figname, dpi=Cts.FIGDPI)
 
             # Additional per-panel PNGs (one axes each).
             if separate_plots:

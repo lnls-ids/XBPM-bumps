@@ -775,15 +775,15 @@ class PositionVisualizer:
         self.fig, axes = plt.subplots(
             nrows=2,
             ncols=2,
-            figsize=(10, 6),
+            figsize=(12, 8),
             constrained_layout=False,
+            gridspec_kw={'height_ratios': [1.4, 1]},
         )
-        self.fig.tight_layout()
         # Adjust subplot spacing for better readability.
         plt.subplots_adjust(
             left=0.08, right=0.92, top=0.92, bottom=0.12,
             hspace=0.45, wspace=0.30,
-        )
+            )
         [[ax_all, ax_roi], [ax_qfactor, ax_heat]] = axes
 
         # ROI slices.

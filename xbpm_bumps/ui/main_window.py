@@ -799,12 +799,12 @@ class XBPMMainWindow(QMainWindow):
             canvas.figure.set_dpi(dpi)
 
             # Get canvas widget size and set figure size accordingly
-            canvas_width = canvas.canvas.width()
-            canvas_height = canvas.canvas.height()
-            if canvas_width > 1 and canvas_height > 1:
-                figsize_w = canvas_width / dpi
-                figsize_h = canvas_height / dpi
-                canvas.figure.set_size_inches(figsize_w, figsize_h)
+            # canvas_width = canvas.canvas.width()
+            # canvas_height = canvas.canvas.height()
+            # if canvas_width > 1 and canvas_height > 1:
+            #     figsize_w = canvas_width / dpi
+            #     figsize_h = canvas_height / dpi
+            #     canvas.figure.set_size_inches(figsize_w, figsize_h)
 
             # Respect original figure layout (tight/constrained)
             # without overriding
