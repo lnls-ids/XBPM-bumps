@@ -36,6 +36,7 @@ def export_plain(
     beamline : str,
     exp_end  : str,
     figures  : dict[str, Figure] | None = None,
+    separate_plots : bool = False,
     ) -> None:
     # Ensure the output directory exists.
     os.makedirs(dirpath, exist_ok=True)
@@ -49,6 +50,10 @@ def export_plain(
                 dpi = Cts.FIGDPI,
                 # bbox_inches = "tight"
                 )
+
+            # Additional per-panel PNGs (one axes each).
+            if separate_plots:
+                _export_separate_panels(fig, key, dirpath)
     else:
         print("WARNING: when exporting figures, no objects were provided.")
 
@@ -68,6 +73,31 @@ def export_plain(
     else:
         print("WARNING: when exporting text table information,"
               " no objects were provided.")
+
+
+def _export_separate_panels(
+    fig      : Figure,
+    key      : str,
+    dirpath  : str,
+    ) -> None:
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    for i, ax in enumerate(fig.axes):
+        # Skip colorbar axes and blank panels:
+        if not ax.get_title().strip():
+            continue
+        bbox = ax.get_tightbbox(renderer).transformed(
+            fig.dpi_scale_trans.inverted()
+            )
+        panel_name = _filename(
+            key, dirpath,
+            prefix="fig_",
+            suffix=f"_{i:02d}",
+            ext="png"
+            )
+        fig.savefig(
+            panel_name, dpi=Cts.FIGDPI, bbox_inches=bbox
+            )
 
 
 def _write_plain_txt(
@@ -90,13 +120,14 @@ def _filename(
         key     : str,
         path    : str = "",
         prefix  : str = "file",
+        suffix  : str = "",
         ext     : str = "png",
         ) -> str:
     """Generate a filename for a figure based on the base path and key."""
     basename = FILE_BASENAMES.get(key, key)
     if not path:
-        return f"{prefix}_{basename}.{ext}"
-    return os.path.join(path, f"{prefix}_{basename}.{ext}")
+        return f"{prefix}_{basename}{suffix}.{ext}"
+    return os.path.join(path, f"{prefix}_{basename}{suffix}.{ext}")
 
 
 FILE_BASENAMES = {
