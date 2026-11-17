@@ -451,7 +451,7 @@ def parse_rawdata(
             'PV meter'        : pv_meter,
             'Angle x'         : angle_x,
             'Angle y'         : angle_y,
-            'Angle unit'      : 'mrad',
+            'Angle unit'      : 'µrad',
             'Disp pos x'      : pos_x,
             'Disp pos y'      : pos_y,
             'SR current'      : current,
