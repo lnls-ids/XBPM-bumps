@@ -10,21 +10,22 @@ The script supports calculating positions for a single XBPM or comparing positio
 """
 import argparse
 import os
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Any, Union
 
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import numpy as np
-from epics import caget
+from matplotlib.figure import Figure
 from matplotlib.patches import Ellipse
-from siriuspy.clientarch import PVDataSet, Time
 
+# Configuration
 EPICS_CA_ADDR_LIST = [
      "10.0.38.59:62000",
      "10.30.13.22:62000",
      "10.30.14.19:62000"
      ]
-os.environ["EPICS_CA_ADDR_LIST"] = " ".join(EPICS_CA_ADDR_LIST)
 
 BLADES = ["AmplA-Mon", "AmplB-Mon", "AmplC-Mon", "AmplD-Mon"]
 ADJUST = ["PosKx-RB","PosXOffset-RB","PosKy-RB", "PosYOffset-RB"]
@@ -37,10 +38,46 @@ BEAMLINES = {
     "MGN": ["SI-10BCFE", 5.930],
 }
 
+
+@dataclass(frozen=True)
+class PVArchiveData:
+    """Archiver samples and their shared timestamps."""
+
+    data: Any
+    pvnames: tuple[str, ...]
+    timestamps: np.ndarray
+
+
+@dataclass(frozen=True)
+class PositionSeries:
+    """Calculated horizontal and vertical positions associated with timestamps."""
+
+    timestamps: np.ndarray
+    x: np.ndarray
+    y: np.ndarray
+
+
+# PV naming and archiver access
+def configure_epics() -> None:
+    """Configure EPICS Channel Access for executable use."""
+    os.environ["EPICS_CA_ADDR_LIST"] = " ".join(EPICS_CA_ADDR_LIST)
+
+
+def get_pv_value(pvname: str) -> Any:
+    """Read a live EPICS PV after applying this script's connection settings."""
+    configure_epics()
+    from epics import caget
+
+    return caget(pvname)
+
+
 def get_beamline_data(name: str) -> list:
-    for bl_name, bl in BEAMLINES.items():
-        if name == bl_name:
-            return bl
+    try:
+        return BEAMLINES[name]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown beamline {name!r}. Choose from: {', '.join(BEAMLINES)}."
+        ) from exc
 
 
 def set_pv_names(prefix: str,
@@ -93,10 +130,10 @@ def _parse_dates(dt: datetime) -> list:
     return [year, month, day, hour, minute]
 
 
-def get_pvdata(pvnames: list,
+def get_pvdata(pvnames: Union[list, str],
                initdate: datetime,
                enddate: datetime,
-               timeout: int) -> tuple:
+               timeout: int) -> PVArchiveData:
     """Fetch data from the EPICS archiver for the given PV names and time range.
     
     Arguments:
@@ -106,14 +143,20 @@ def get_pvdata(pvnames: list,
         timeout (int): Timeout in seconds for the data fetching operation.
 
     Returns:
-        tuple: A tuple containing the PVDataSet object, the initial timestamp,
-        and the timestamps of the fetched data.
+        PVArchiveData: The PVDataSet object and aligned timestamps.
     """
     if isinstance(pvnames, str):
         pvnames = [pvnames]
+    if not pvnames:
+        raise ValueError("At least one PV name is required.")
+    if enddate < initdate:
+        raise ValueError("End date must be on or after the initial date.")
 
     idt = _parse_dates(initdate)
     edt = _parse_dates(enddate)
+
+    configure_epics()
+    from siriuspy.clientarch import PVDataSet, Time
 
     pvs_data = PVDataSet(pvnames)
     pvs_data.timeout = timeout
@@ -121,16 +164,47 @@ def get_pvdata(pvnames: list,
     pvs_data.time_stop  = Time(*edt, 0)
     pvs_data.update(mean_sec=5)
 
-    t0 = pvs_data[pvnames[0]].timestamp[0]
+    timestamps = np.asarray(pvs_data[pvnames[0]].timestamp)
+    if timestamps.ndim != 1 or timestamps.size == 0:
+        raise ValueError(
+            f"PV {pvnames[0]!r} returned no valid one-dimensional timestamps."
+        )
 
-    return pvs_data, t0, pvs_data[pvnames[0]].timestamp
+    for pvname in pvnames:
+        pv_timestamps = np.asarray(pvs_data[pvname].timestamp)
+        values = np.asarray(pvs_data[pvname].value)
+        if pv_timestamps.size == 0 or values.size == 0:
+            raise ValueError(f"No archived samples returned for PV {pvname!r}.")
+        if values.ndim != 1:
+            raise ValueError(
+                f"Expected scalar samples for PV {pvname!r}; "
+                f"got shape {values.shape}."
+            )
+        if len(pv_timestamps) != len(values):
+            raise ValueError(
+                f"PV {pvname!r} has {len(pv_timestamps)} timestamps but "
+                f"{len(values)} values."
+            )
+        if not np.array_equal(pv_timestamps, timestamps):
+            raise ValueError(
+                f"Timestamp samples for PV {pvname!r} do not align with "
+                f"PV {pvnames[0]!r}; position calculation requires matching "
+                "blade timestamps."
+            )
+
+    return PVArchiveData(
+        data=pvs_data,
+        pvnames=tuple(pvnames),
+        timestamps=timestamps,
+    )
 
 
-def calculate_positions(blades: list,
+# Position and angle calculations
+def calculate_positions(archive: PVArchiveData,
                         adj: list,
                         matrix: list,
                         xbpm_number: int
-                        ) -> list:
+                        ) -> PositionSeries:
     """Calculate XBPM positions based on blades amplitudes, adjustment parameters, 
     and suppression matrix.
     
@@ -139,48 +213,77 @@ def calculate_positions(blades: list,
     the X and Y positions of the XBPM.
 
     Arguments:
-        blades (list): List of 4 lists of blade amplitudes (A, B, C, D).
+        archive (PVArchiveData): Aligned blade samples and timestamps.
         adj (list): List of 4 adjustment parameters (GainX, OffsetX, GainY, OffsetY).
         matrix (list): List of 16 elements representing the suppression matrix.
         xbpm_number (int): XBPM number (1 or 2).
     
     Returns:
-        list: List of calculated positions as [X, Y] pairs.
+        PositionSeries: Calculated X/Y positions associated with timestamps.
     """
-    ampA = blades[0].value
-    ampB = blades[1].value
-    ampC = blades[2].value
-    ampD = blades[3].value
+    blades = [archive.data[pvname] for pvname in archive.pvnames]
+    if len(blades) != 4:
+        raise ValueError(f"Expected 4 blade PVs; got {len(blades)}.")
+    blade_values = [np.asarray(blade.value) for blade in blades]
+    if any(values.ndim != 1 for values in blade_values):
+        raise ValueError("Expected one-dimensional blade sample arrays.")
+    sample_counts = [len(values) for values in blade_values]
+    if not sample_counts or sample_counts[0] == 0:
+        raise ValueError(f"No blade samples available for XBPM {xbpm_number}.")
+    if len(set(sample_counts)) != 1:
+        raise ValueError(
+            "Blade sample counts do not match: "
+            + ", ".join(str(count) for count in sample_counts)
+            + "."
+        )
 
-    supmat_vec = np.array(matrix)
-    supmat = supmat_vec.reshape(4, 4)
+    try:
+        adj = np.asarray(adj, dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Adjustment parameters must be 4 numeric values.") from exc
+    if adj.shape != (4,):
+        raise ValueError(
+            "Adjustment parameters must be a one-dimensional list of 4 values."
+        )
+    if not np.all(np.isfinite(adj)):
+        raise ValueError("Adjustment parameters must all be finite numbers.")
+
+    try:
+        supmat = np.asarray(matrix, dtype=float).reshape(4, 4)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Suppression matrix must contain 16 numeric values.") from exc
+    if not np.all(np.isfinite(supmat)):
+        raise ValueError("Suppression matrix values must all be finite numbers.")
 
     positions = []
-    for val in range(len(ampA)):
-        blades_vec = np.array([ampA[val], ampB[val], ampC[val], ampD[val]])
+    for val in range(sample_counts[0]):
+        blades_vec = np.array([values[val] for values in blade_values])
         res = supmat @ blades_vec
 
+        if res[1] == 0 or res[3] == 0:
+            raise ValueError(
+                f"Suppression matrix denominator is zero at sample {val} "
+                f"for XBPM {xbpm_number}."
+            )
         raw_x = res[0]/res[1]
         raw_y = res[2]/res[3]
 
         X = (raw_x * adj[0] - adj[1]) / 1000 # Convert from nm to µm
         Y = (raw_y * adj[2] - adj[3]) / 1000
 
+        if not np.isfinite(X) or not np.isfinite(Y):
+            raise ValueError(
+                f"Non-finite position calculated at sample {val} "
+                f"for XBPM {xbpm_number}."
+            )
         positions.append([X, Y])
 
-    print("\n"+"#"*50)
-    print(f"##### XBPM {xbpm_number} Position Calculation Parameters #####")
-    print(f"\nGain X : {adj[0]:>12.2f} nm")
-    print(f"Delta X: {adj[1]:>12.2f} nm")
-
-    print(f"\nGain Y : {adj[2]:>12.2f} nm")
-    print(f"Delta Y: {adj[3]:>12.2f} nm")
-
-    print("\nSuppression Matrix:")
-    with np.printoptions(formatter={'float': '{:>8.4f}'.format}):
-        print(supmat)
-
-    return positions
+    positions = np.asarray(positions)
+    return PositionSeries(
+        timestamps=archive.timestamps,
+        x=positions[:, 0],
+        y=positions[:, 1],
+    )
 
 
 def _calculate_angle(xbpm1_pos: float,
@@ -206,130 +309,229 @@ def _calculate_angle(xbpm1_pos: float,
     
     return diff / xbpms_dist
 
-def plot_simple_data(positions: list,
+
+# Console reporting
+def print_position_parameters(adj: list,
+                              matrix: list,
+                              xbpm_number: int) -> None:
+    """Print the adjustment parameters and suppression matrix for an XBPM."""
+    supmat = np.asarray(matrix, dtype=float).reshape(4, 4)
+    print("\n"+"#"*50)
+    print(f"##### XBPM {xbpm_number} Position Calculation Parameters #####")
+    print(f"\nGain X : {adj[0]:>12.2f} nm")
+    print(f"Delta X: {adj[1]:>12.2f} nm")
+
+    print(f"\nGain Y : {adj[2]:>12.2f} nm")
+    print(f"Delta Y: {adj[3]:>12.2f} nm")
+
+    print("\nSuppression Matrix:")
+    with np.printoptions(formatter={'float': '{:>8.4f}'.format}):
+        print(supmat)
+
+
+# Plot data validation and conversion
+def _validate_plot_data(series: PositionSeries,
+                        label: str
+                        ) -> PositionSeries:
+    timestamps = np.asarray(series.timestamps)
+    x_positions = np.asarray(series.x, dtype=float)
+    y_positions = np.asarray(series.y, dtype=float)
+
+    if (timestamps.ndim != 1 or x_positions.ndim != 1 or
+            y_positions.ndim != 1 or
+            len(timestamps) != len(x_positions) or
+            len(timestamps) != len(y_positions)):
+        raise ValueError(
+            f"{label} positions and timestamps must be one-dimensional "
+            "arrays of equal nonzero length."
+        )
+    if len(timestamps) == 0:
+        raise ValueError(f"No position samples available for {label}.")
+    if np.issubdtype(timestamps.dtype, np.number) and not np.all(
+            np.isfinite(timestamps)):
+        raise ValueError(f"{label} timestamps contain non-finite values.")
+    if (not np.all(np.isfinite(x_positions)) or
+            not np.all(np.isfinite(y_positions))):
+        raise ValueError(f"{label} positions contain non-finite values.")
+
+    if len(np.unique(timestamps)) != len(timestamps):
+        raise ValueError(f"{label} timestamps must be unique.")
+
+    order = np.argsort(timestamps)
+    return PositionSeries(
+        timestamps=timestamps[order],
+        x=x_positions[order],
+        y=y_positions[order],
+    )
+
+
+def _to_plot_times(timestamps: np.ndarray) -> list:
+    """Convert Unix timestamps to datetimes for Matplotlib date axes."""
+    numeric_timestamps = np.issubdtype(timestamps.dtype, np.number)
+    if timestamps.dtype == object:
+        numeric_timestamps = all(
+            isinstance(timestamp, (int, float, np.number))
+            for timestamp in timestamps
+        )
+    if numeric_timestamps:
+        return [datetime.fromtimestamp(float(timestamp)) for timestamp in timestamps]
+    return timestamps
+
+
+def _format_time_axis(ax: plt.Axes,
+                      initdate: datetime,
+                      enddate: datetime) -> None:
+    """Apply consistent date formatting, label, and tick rotation."""
+    is_multiday = (enddate - initdate).total_seconds() > 24 * 60 * 60
+    if is_multiday:
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d %H:%M'))
+        ax.tick_params(axis='x', rotation=45)
+        ax.set_xlabel("Date and time")
+    else:
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        ax.set_xlabel("Time (hh:mm)")
+
+
+def _covariance_ellipse(x_positions: np.ndarray,
+                        y_positions: np.ndarray,
+                        color: str,
+                        label: str) -> tuple[Ellipse, float, float]:
+    covariance = np.cov(np.vstack((x_positions, y_positions)), ddof=1)
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    order = np.argsort(eigenvalues)[::-1]
+    eigenvalues = np.maximum(eigenvalues[order], 0)
+    eigenvectors = eigenvectors[:, order]
+    angle = np.degrees(np.arctan2(eigenvectors[1, 0], eigenvectors[0, 0]))
+
+    ellipse = Ellipse(
+        xy=(np.mean(x_positions), np.mean(y_positions)),
+        width=2 * np.sqrt(eigenvalues[0]),
+        height=2 * np.sqrt(eigenvalues[1]),
+        angle=angle,
+        color=color,
+        alpha=0.2,
+        label=label,
+        zorder=2,
+    )
+    return ellipse, np.sqrt(covariance[0, 0]), np.sqrt(covariance[1, 1])
+
+
+def _set_position_map_limits(ax: plt.Axes) -> None:
+    ax.set_xlim(200, -200)
+    ax.set_ylim(-200, 200)
+    ax.set_aspect("equal", adjustable="box")
+
+
+# Plotting
+def plot_simple_data(series: PositionSeries,
                      idt: datetime,
                      edt: datetime,
                      beamline: str,
-                     xnum: int) -> None:
+                     xnum: int) -> Figure:
     """Plot the calculated XBPM positions over time.
     
     Arguments:
-        positions (list): List of calculated positions as [X, Y] pairs.
+        series (PositionSeries): Calculated positions and their timestamps.
         idt (datetime): Initial date and time for the plot.
         edt (datetime): End date and time for the plot.
         beamline (str): Name of the beamline.
         xnum (int): XBPM number (1 or 2).
     """
-    x_data, y_data, time = [], [], []
-
-    ndots  = len(positions)
-    ninterval = ((edt - idt) / ndots)
-
-    count  = idt
-    for i in range(ndots):
-        x_data.append(positions[i][0])
-        y_data.append(positions[i][1])
-        time.append(count)
-        count += ninterval
+    series = _validate_plot_data(series, f"XBPM{xnum}")
+    time = _to_plot_times(series.timestamps)
 
     fig, (ax_x, ax_y) = plt.subplots(2, 1, figsize=(8, 5))
     fig.suptitle(f"{beamline} XBPM{xnum} X and Y"
                  f" calculated positions - {idt.date()}")
 
-    ax_x.plot(time, x_data, color='red',label='X position')
-    ax_x.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+    ax_x.plot(time, series.x, color='red',label='X position')
+    _format_time_axis(ax_x, idt, edt)
     ax_x.set_ylabel("X Position (µm)")
-    ax_x.set_xlabel ("Time (hh:mm)")
     ax_x.legend()
     ax_x.grid()
 
-    ax_y.plot(time, y_data, color='blue', label='Y position')
-    ax_y.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+    ax_y.plot(time, series.y, color='blue', label='Y position')
+    _format_time_axis(ax_y, idt, edt)
     ax_y.set_ylabel("Y Position (µm)")
-    ax_y.set_xlabel ("Time (hh:mm)")
     ax_y.legend()
     ax_y.grid()
 
-    plt.tight_layout()
-    plt.show()
+    fig.tight_layout()
+    return fig
     
 
-def plot_comparison_data(xbpm1_pos: list,
-                         xbpm2_pos: list,
+def plot_comparison_data(xbpm1_pos: PositionSeries,
+                         xbpm2_pos: PositionSeries,
                          idt: datetime,
                          edt: datetime,
                          beamline: str,
-                         xbpms_dist: float) -> None:
+                         xbpms_dist: float) -> tuple[Figure, Figure, Figure]:
     """Plot the calculated positions of two XBPMs and their angle comparison over time.
     Also it plots the average position of both XBPMs with their standard deviation
     as a shadow area.
 
     Arguments:
-        xbpm1_pos (list): List of calculated positions for XBPM1 as [X, Y]
-        xbpm2_pos (list): List of calculated positions for XBPM2 as [X, Y]
+        xbpm1_pos (PositionSeries): XBPM1 positions and their timestamps.
+        xbpm2_pos (PositionSeries): XBPM2 positions and their timestamps.
         idt (datetime): Initial date and time for the plot.
         edt (datetime): End date and time for the plot.
         beamline (str): Name of the beamline.
         xbpms_dist (float): Distance between the two XBPMs.
     """
-    x1_data, y1_data = [], []
-    x2_data, y2_data = [], []
+    xbpm1_pos = _validate_plot_data(xbpm1_pos, "XBPM1")
+    xbpm2_pos = _validate_plot_data(xbpm2_pos, "XBPM2")
+    if not np.isfinite(xbpms_dist) or xbpms_dist <= 0:
+        raise ValueError("Distance between XBPMs must be a positive finite number.")
+    time, indices1, indices2 = np.intersect1d(
+        xbpm1_pos.timestamps,
+        xbpm2_pos.timestamps,
+        return_indices=True,
+    )
+    if len(time) < 2:
+        raise ValueError(
+            "XBPM1 and XBPM2 need at least two matching timestamps for "
+            "comparison and sample standard deviations; "
+            f"found {len(time)}."
+        )
+
+    xbpm1_pos = PositionSeries(
+        timestamps=time,
+        x=xbpm1_pos.x[indices1],
+        y=xbpm1_pos.y[indices1],
+    )
+    xbpm2_pos = PositionSeries(
+        timestamps=time,
+        x=xbpm2_pos.x[indices2],
+        y=xbpm2_pos.y[indices2],
+    )
+    time = _to_plot_times(time)
+    x1_data, y1_data = xbpm1_pos.x, xbpm1_pos.y
+    x2_data, y2_data = xbpm2_pos.x, xbpm2_pos.y
     angle_x, angle_y = [], []
-    time = []
 
-    ndots  = len(xbpm1_pos)
-    ninterval = ((edt - idt) / ndots)
+    for x1, x2, y1, y2 in zip(x1_data, x2_data, y1_data, y2_data):
+        angle_x.append(_calculate_angle(x1, x2, xbpms_dist))
+        angle_y.append(_calculate_angle(y1, y2, xbpms_dist))
 
-    count  = idt
-    for i in range(ndots):
-        x1_data.append(xbpm1_pos[i][0])
-        y1_data.append(xbpm1_pos[i][1])
-        x2_data.append(xbpm2_pos[i][0])
-        y2_data.append(xbpm2_pos[i][1])
+    fig_positions, (ax_x, ax_y) = plt.subplots(2, 1, figsize=(10, 8))
+    fig_positions.suptitle(
+        f"{beamline} XBPMs X and Y calculated positions comparison - {idt.date()}"
+    )
 
-        angle_x.append(_calculate_angle(xbpm1_pos[i][0], xbpm2_pos[i][0], xbpms_dist))
-        angle_y.append(_calculate_angle(xbpm1_pos[i][1], xbpm2_pos[i][1], xbpms_dist))
-        
-        time.append(count)
-        count += ninterval
-
-    fig, (ax_x, ax_y) = plt.subplots(2, 1, figsize=(10, 8))
-    fig.suptitle(f"{beamline} XBPMs X and Y calculated positions comparison - {idt.date()}")
-
-    # XBPM1 X position plot
+    # Plot both XBPMs against a shared position scale.
     ax_x.plot(time, x1_data, color='red',label='XBPM1')
-    ax_x.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-    ax_x.set_ylabel("X1 Position (µm)")
-    ax_x.set_xlabel ("Time (hh:mm)")
-
-    # XBPM2 X position in the same graph
-    ax_x2 = ax_x.twinx()
-    ax_x2.plot(time, x2_data, color='brown', label='XBPM2')
-    ax_x2.set_ylabel("X2 Position (µm)")
-
-    # Append both labels and legends
-    x1_lines, x1_labels = ax_x.get_legend_handles_labels()
-    x2_lines, x2_labels = ax_x2.get_legend_handles_labels()
-
-    ax_x.legend(x1_lines + x2_lines, x1_labels + x2_labels)
+    ax_x.plot(time, x2_data, color='brown', label='XBPM2')
+    _format_time_axis(ax_x, idt, edt)
+    ax_x.set_ylabel("X Position (µm)")
+    ax_x.legend()
     ax_x.grid()
 
-    # XBPM1 Y position plot
+    # Plot both XBPMs against a shared position scale.
     ax_y.plot(time, y1_data, color='lightblue', label='XBPM1')
-    ax_y.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-    ax_y.set_ylabel("Y1 Position (µm)")
-    ax_y.set_xlabel ("Time (hh:mm)")
-
-    # XBPM2 Y position in the same graph
-    ax_y2 = ax_y.twinx()
-    ax_y2.plot(time, y2_data, color='navy', label='XBPM2')
-    ax_y2.set_ylabel("Y2 Position (µm)")
-
-    # Append both labels and legends
-    y1_lines, y1_labels = ax_y.get_legend_handles_labels()
-    y2_lines, y2_labels = ax_y2.get_legend_handles_labels()
-
-    ax_y.legend(y1_lines + y2_lines, y1_labels + y2_labels)
+    ax_y.plot(time, y2_data, color='navy', label='XBPM2')
+    _format_time_axis(ax_y, idt, edt)
+    ax_y.set_ylabel("Y Position (µm)")
+    ax_y.legend()
     ax_y.grid()
 
     # Plot angle analysis
@@ -362,14 +564,14 @@ def plot_comparison_data(xbpm1_pos: list,
     print(f"\nXBPM 2 X average position: {np.mean(x2_data):>7.2f} µm")
     print(f"XBPM 2 Y average position: {np.mean(y2_data):>7.2f} µm")
 
-    fig, (ax_ang_x, ax_ang_y) = plt.subplots(2, 1, figsize=(8, 5))
-    fig.suptitle(f"{beamline} XBPMs angle comparison - {idt.date()}")
+    fig_angles, (ax_ang_x, ax_ang_y) = plt.subplots(2, 1, figsize=(8, 6))
+    fig_angles.suptitle(f"{beamline} XBPMs angle comparison - {idt.date()}")
 
     ax_ang_x.plot(time, angle_x, color='red', label='X angle')
     ax_ang_x.fill_between(
         time, angle_x - ang_x_std, angle_x + ang_x_std, color="red", alpha=0.15, label="±1 Std Dev."
     )
-    ax_ang_x.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+    _format_time_axis(ax_ang_x, idt, edt)
     ax_ang_x.set_ylabel("Angle (µrad)")
     ax_ang_x.legend()
     ax_ang_x.grid()
@@ -378,37 +580,23 @@ def plot_comparison_data(xbpm1_pos: list,
     ax_ang_y.fill_between(
         time, angle_y - ang_y_std, angle_y + ang_y_std, color="blue", alpha=0.15, label="±1 Std Dev."
     )
-    ax_ang_y.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+    _format_time_axis(ax_ang_y, idt, edt)
     ax_ang_y.set_ylabel("Angle (µrad)")
-    ax_ang_y.set_xlabel("Time (hh:mm)")
     ax_ang_y.legend()
     ax_ang_y.grid()
 
     # Plot position map
-    fig, ax = plt.subplots(figsize=(5, 4))
+    fig_map, ax = plt.subplots(figsize=(5, 4))
     ax.scatter(np.mean(x1_data), np.mean(y1_data), color='red', label='XBPM1')
     ax.scatter(np.mean(x2_data), np.mean(y2_data), color='blue', label='XBPM2')
 
-    shadow1 = Ellipse(
-    xy=(np.mean(x1_data), np.mean(y1_data)),
-    width=tot_std_x1 * 2,
-    height=tot_std_x1 * 2,
-    angle=0,
-    color="red",
-    alpha=0.2,
-    label="±1 SD Region",
-    zorder=2,
+    center1 = (np.mean(x1_data), np.mean(y1_data))
+    center2 = (np.mean(x2_data), np.mean(y2_data))
+    shadow1, x1_spread, y1_spread = _covariance_ellipse(
+        x1_data, y1_data, "red", "1 SD covariance ellipse"
     )
-
-    shadow2 = Ellipse(
-    xy=(np.mean(x2_data), np.mean(y2_data)),
-    width=tot_std_x2 * 2,
-    height=tot_std_x2 * 2,
-    angle=0,
-    color="blue",
-    alpha=0.2,
-    label="±1 SD Region",
-    zorder=2,
+    shadow2, x2_spread, y2_spread = _covariance_ellipse(
+        x2_data, y2_data, "blue", "_nolegend_"
     )
 
     ax.add_patch(shadow1)
@@ -417,19 +605,17 @@ def plot_comparison_data(xbpm1_pos: list,
     ax.set_xlabel("X Position (µm)")
     ax.set_ylabel("Y Position (µm)")
 
-    if beamline == 'MGN':
-        ax.set_xlim(10, -10) # Invert X-axis to match SR coordinates
-        ax.set_ylim(-1000, 1000)
-    else:
-        ax.set_xlim(150, -150)
-        ax.set_ylim(-150, 150)
+    _set_position_map_limits(ax)
     ax.legend()
     ax.grid()
 
-    plt.tight_layout()  
-    plt.show()
+    fig_positions.tight_layout()
+    fig_angles.tight_layout()
+    fig_map.tight_layout()
+    return fig_positions, fig_angles, fig_map
 
 
+# Command-line interface
 def cmd_args() -> argparse.Namespace:
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
@@ -438,6 +624,7 @@ def cmd_args() -> argparse.Namespace:
 
     parser.add_argument(
         '-b', '--beamline', type=str, required=True,
+        choices=BEAMLINES,
         help='Beamline name (e.g. MNC, MGN, CNB, CAT)'
         )
     parser.add_argument(
@@ -465,6 +652,7 @@ def cmd_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    configure_epics()
     args = cmd_args()
     prefix, xbpms_dist = get_beamline_data(args.beamline)
 
@@ -473,14 +661,14 @@ def main() -> None:
         xbpm2_pvnames = set_pv_names(prefix, 2)
 
         # Fetch data for both XBPMs
-        xbpm1_data, _, _ = get_pvdata(
+        xbpm1_data = get_pvdata(
             xbpm1_pvnames["BLADES"],
             args.init_date,
             args.end_date,
             timeout=10
             )
 
-        xbpm2_data, _, _ = get_pvdata(
+        xbpm2_data = get_pvdata(
             xbpm2_pvnames["BLADES"],
             args.init_date,
             args.end_date,
@@ -488,19 +676,25 @@ def main() -> None:
             )
 
         # Calculate positions for both XBPMs
+        xbpm1_adj = [get_pv_value(pv) for pv in xbpm1_pvnames["ADJUST"]]
+        xbpm1_matrix = get_pv_value(xbpm1_pvnames["MATRIX"])
         xbpm1_pos = calculate_positions(
-            xbpm1_data, 
-            [caget(pv) for pv in xbpm1_pvnames["ADJUST"]], 
-            caget(xbpm1_pvnames["MATRIX"]),
+            xbpm1_data,
+            xbpm1_adj,
+            xbpm1_matrix,
             1
-        )  
+        )
+        print_position_parameters(xbpm1_adj, xbpm1_matrix, 1)
 
+        xbpm2_adj = [get_pv_value(pv) for pv in xbpm2_pvnames["ADJUST"]]
+        xbpm2_matrix = get_pv_value(xbpm2_pvnames["MATRIX"])
         xbpm2_pos = calculate_positions(
-            xbpm2_data, 
-            [caget(pv) for pv in xbpm2_pvnames["ADJUST"]], 
-            caget(xbpm2_pvnames["MATRIX"]),
+            xbpm2_data,
+            xbpm2_adj,
+            xbpm2_matrix,
             2
         )
+        print_position_parameters(xbpm2_adj, xbpm2_matrix, 2)
 
         plot_comparison_data(
             xbpm1_pos,
@@ -514,10 +708,12 @@ def main() -> None:
     else:
         pvnames = set_pv_names(prefix, args.xbpm_number)
 
-        adj_data = [caget(pv) for pv in pvnames["ADJUST"]]
-        matrix = caget(pvnames["MATRIX"])
+        adj_data = [get_pv_value(pv) for pv in pvnames["ADJUST"]]
+        matrix = get_pv_value(pvnames["MATRIX"])
         # Fetch data from the EPICS archiver for the specified time range
-        data, _, _ = get_pvdata(pvnames["BLADES"], args.init_date, args.end_date, timeout=10)
+        data = get_pvdata(
+            pvnames["BLADES"], args.init_date, args.end_date, timeout=10
+        )
 
         positions = calculate_positions(
             data,
@@ -525,6 +721,7 @@ def main() -> None:
             matrix,
             args.xbpm_number
             )
+        print_position_parameters(adj_data, matrix, args.xbpm_number)
         plot_simple_data(
             positions,
             args.init_date,
@@ -532,6 +729,8 @@ def main() -> None:
             args.beamline,
             args.xbpm_number
             )
+
+    plt.show()
 
 
 if __name__ == "__main__":
