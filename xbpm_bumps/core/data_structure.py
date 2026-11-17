@@ -623,14 +623,7 @@ class Blades:
             avg_grp : The HDF5 group where the attributes will be stored.
         """
         # Create a table for storing blade values as a structured NumPy array.
-        col  = Config.column
-        cols = [
-            (col("x", "nom"), self.pos_nom.x),
-            (col("y", "nom"), self.pos_nom.y),
-            *[(col(b, "mean"), getattr(self, b))       for b in Config.BLADES],
-            *[(col(b, "err"),  getattr(self, f"s{b}")) for b in Config.BLADES],
-            ]
-
+        cols = self.table_columns
         dt = np.dtype([(name, 'f8') for name, _ in cols])
         table = np.full(self.to.size, np.nan, dtype=dt)
         for name, arr in cols:
@@ -640,6 +633,15 @@ class Blades:
 
         return H5Writer.dataset(avg_grp, key, table, **fmt)
 
+    @property
+    def table_columns(self) -> list[tuple[str, np.ndarray]]:
+        col = Config.column
+        return [
+            (col("x", "nom"), self.pos_nom.x),
+            (col("y", "nom"), self.pos_nom.y),
+            *[(col(b, "mean"), getattr(self, b))       for b in Config.BLADES],
+            *[(col(b, "err"),  getattr(self, f"s{b}")) for b in Config.BLADES],
+        ]
 
 #
 # Raw data structures.
@@ -2031,7 +2033,7 @@ class DataAnalysis:
     Classmethods may read analysis from HDF5 and compute analysis.
 
     bpm          : BPM calculated positions at XBPM site
-    blademap     : blade map of positions
+    bladedata    : blade map of positions
     bladecenter  : h and v blade center analyses
     xpositions   : Analyzed positions (raw and transformed)   
     centralsweep : Central sweep positions with errors
@@ -2041,7 +2043,7 @@ class DataAnalysis:
     """
     # Beamline, description and XBPM-source distance.
     bpm           : BPMAnalysis       | None = None
-    blademap      : BladeAvgData      | None = None
+    bladedata     : BladeAvgData      | None = None
     bladecenter   : BCA_HV            | None = None
     xpositions    : XBPMPositions     | None = None
     centralsweeps : CentralSweeps     | None = None
@@ -2066,7 +2068,7 @@ class DataAnalysis:
         bpm = BPMAnalysis.from_hdf5(grp("bpm_analysis"), prm_bml)
 
         # Extract blade map.
-        blademap = BladeAvgData.from_hdf5(
+        bladedata = BladeAvgData.from_hdf5(
             grp("blade_map")[Config.group_name("blades")]
             )
 
@@ -2090,7 +2092,7 @@ class DataAnalysis:
 
         return cls(
             bpm           = bpm,
-            blademap      = blademap,
+            bladedata     = bladedata,
             bladecenter   = bladecenter,
             xpositions    = xpositions,
             centralsweeps = centralsweeps,
@@ -2110,15 +2112,15 @@ class DataAnalysis:
 
         # Each section creates its own HDF5 group.
         for fld in fields(self):
-            if fld.name in ("blademap", "figures"):
+            if fld.name in ("bladedata", "figures"):
                 continue
             val = getattr(self, fld.name)
             if val is not None:
                 val.to_hdf5(dan_grp)
 
         # 'Blade map' only holds the 'Blades' table.
-        if self.blademap is not None:
-            self.blademap.to_hdf5(
+        if self.bladedata is not None:
+            self.bladedata.to_hdf5(
                 H5Writer.group(dan_grp, "blade_map"),
                 "blades"
                 )

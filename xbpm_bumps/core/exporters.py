@@ -55,22 +55,23 @@ def export_plain(
     else:
         print("WARNING: when exporting figures, no objects were provided.")
 
-    if tab_info is not None:
-        for key, info_data in tab_info.items():
-            if info_data is None or info_data.strip() == "":
-                print(f"WARNING: tab '{key}' has no information to export.")
-                continue
-
-            # Export the plain information to a text file.
-            txtname = _filename(key, dirpath, prefix="info", ext="txt")
-            header = (
-                f"# Beamline: {beamline}\n"
-                f"# Experiment End: {exp_end}\n\n"
-                )
-            _write_plain_txt(txtname, header + info_data)
-    else:
+    if not tab_info:
         print("WARNING: when exporting text table information,"
-              " no objects were provided.")
+                " no objects were provided.")
+        return
+
+    for key, info_data in tab_info.items():
+        if info_data is None or info_data.strip() == "":
+            print(f"WARNING: tab '{key}' has no information to export.")
+            continue
+
+        # Export the plain information to a text file.
+        filename = _filename(key, dirpath, prefix="info", ext="txt")
+        header   = (
+            f"# Beamline: {beamline}\n"
+            f"# Experiment End: {exp_end}\n\n"
+            )
+        _write_plain_txt(filename, header + info_data)
 
 
 def _export_separate_panels(
@@ -129,6 +130,7 @@ def _filename(
 
 
 FILE_BASENAMES = {
+    "blade_data"              : "Blade_Data",
     "bpm"                     : "BPM",
     "blade_central_sweeps"    : "Blade_Central_Sweeps",
     "blade_map"               : "Blade_Map",

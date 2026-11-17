@@ -38,7 +38,7 @@ class AnalysisService:
 
         # Blade map.
         if runtime_prm.show_blademap:
-            analysis.blademap = DStr.BladeAvgData(
+            analysis.bladedata = DStr.BladeAvgData(
                 prm     = {"beamline" : beamlinedatum.prm.beamline},
                 blades  = beamlinedatum.raw_data.blade_avg.blades,
                 pos_nom = beamlinedatum.raw_data.blade_avg.pos_nom 

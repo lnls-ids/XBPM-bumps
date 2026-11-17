@@ -71,10 +71,10 @@ def render_data_analysis(
                 ).plot_bpm_positions()
             )
 
-    if analysis.blademap is not None:
+    if analysis.bladedata is not None:
         figures["blade_map"] = (
             BladeMapVisualizer(
-                analysis.blademap,
+                analysis.bladedata,
                 ).plot_blade_map(bmap_scale)
             )
 

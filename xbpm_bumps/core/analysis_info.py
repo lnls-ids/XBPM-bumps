@@ -4,6 +4,7 @@ import numpy as np
 from xbpm_bumps.core.data_structure import (
     BCA_HV,
     BPMAnalysis,
+    BladeAvgData,
     DataAnalysis,
     Scales,
     CentralSweeps,
@@ -66,14 +67,21 @@ def format_analysis_info(
 
     # BPM and central sweeps information.
     tab_info = {
+        "blade_data" : (
+            _blade_data(analysis.bladedata)
+            if analysis.bladedata is not None else ""
+            ),
+
         "bpm" : (
             _bpm_stats(analysis.bpm)
             if analysis.bpm is not None else ""
             ),
+
         "blade_central_sweeps": (
             _blades(analysis.bladecenter)
             if analysis.bladecenter is not None else ""
             ),
+
         "position_central_sweeps" : (
             _sweeps(analysis.centralsweeps)
             if analysis.centralsweeps is not None else ""
@@ -88,25 +96,25 @@ def format_analysis_info(
     # Table for pairwise and cross position statistics.
     stat_table = {
         "xbpm_pairwise_raw" : (
-        "Pairwise Standard Deviation, not transformed",
+        "Pairwise (delta/sigma) Standard Deviation, not transformed",
         anpos.pairw.scale_std,
         anpos.pairw.stats_std,
         "std"
         ),
         "xbpm_pairwise_trn" : (
-        "Pairwise Standard Deviation, transformed",
+        "Pairwise (delta/sigma) Standard Deviation, transformed",
         anpos.pairw.scale_trn,
         anpos.pairw.stats_trn,
         "pw_tr"
         ),
         "xbpm_cross_raw" : (
-        "Cross Standard Deviation, not transformed",
+        "Cross (partial delta/sigma) Standard Deviation, not transformed",
         anpos.cross.scale_std,
         anpos.cross.stats_std,
         "cr_std"
         ),
         "xbpm_cross_trn" : (
-        "Cross Standard Deviation, transformed",
+        "Cross (partial delta/sigma) Standard Deviation, transformed",
         anpos.cross.scale_trn,
         anpos.cross.stats_trn,
         "cr_rot"
@@ -127,6 +135,36 @@ def format_analysis_info(
         )
 
     return tab_info
+
+
+def _blade_data(bladedata: "BladeAvgData") -> str:
+    """Format the blade map data.
+
+    Args:
+        bladedata : "BladeAvgData", the blade map data to format
+
+    Returns:
+        A string representing the formatted blade map data.
+    """
+    lines = []
+    # Header and parameter dictionary.
+    lines.append("###\n### Blade Averaged Data\n###\n")
+    for k, val in bladedata.prm.items():
+        lines.append(f"# {k:15} : {val}\n")
+
+    cols = bladedata.blades.table_columns
+    names = [n for n, _ in cols]
+    arrays = [
+        np.full(bladedata.blades.to.size, np.nan)
+        if a is None else np.ravel(a)
+        for _, a in cols
+    ]
+
+    lines.append("  ".join(f"{n:>14}" for n in names) + "\n")
+    for row in zip(*arrays):
+        lines.append("  ".join(f"{_f(v):>14}" for v in row) + "\n")
+
+    return ''.join(lines)
 
 
 def _bpm_stats(
