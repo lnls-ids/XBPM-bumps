@@ -192,9 +192,9 @@ def _blade_rewire(
     print(f"Current blade map:\n{_blade_map_str(current_map)}\n")
 
     choose = input(
-        "\n Do you want to rewire blades for this beamline? (Y/n): "
+        "\n Do you want to rewire blades for this beamline? (y/N): "
         )
-    if choose.lower() not in ('y', ''):
+    if choose.lower() != 'y':
         return None
 
     while True:
@@ -376,7 +376,7 @@ def parse_rawdata(
             blade info).
     """
     # Electronics PV.
-    pv_meter = rawdata[0][0][beamline].get('prefix', None)
+    pv_meter = None
     xbpmdist = Config.XBPMDISTS.get(beamline, 1.0)
     col      = Config.column
 
@@ -393,10 +393,18 @@ def parse_rawdata(
 
         # Storage ring current.
         try:
-            current = record[2].get('current', "N/A")
+            current  = record[2].get('current', "N/A")
         except Exception as e:
-            print(f"Error accessing current for record {jj}:\n\t {e}")
-            current = "N/A"
+            print(f"Error accessing 'current' for record {jj}:"
+                  f"\n\t {e}")
+            current  = "N/A"
+
+        if pv_meter is None:
+            try:
+                pv_meter = rawdata[0][0][beamline].get('prefix', None)
+            except Exception as e:
+                print(f"Warning: could not access 'pv meter' for record {jj}:"
+                    f"\t {e}")
 
         # Time.
         timestamp = record[2].get('timestamp', "N/A")
@@ -591,13 +599,14 @@ def export_rawdata_to_hdf5(
                 )
 
             # Select some metadata attributes to define the averaged data.
+            first_meta = list(metadata.keys())[0]
             avg_meta = {
-                'PV meter'        : metadata[1]['PV meter'],
+                'PV meter'        : metadata[first_meta]['PV meter'],
                 'Avg. SR current' : avg_sr_current,
                 }
             avg_meta.update({
                 k : v
-                for k, v in metadata[1].items()
+                for k, v in metadata[first_meta].items()
                 if k.startswith('Gap/Ph.')
                 })
             dset.attrs.update({
@@ -625,8 +634,14 @@ def compose_raw_metadata(
     Returns:
         Dictionary with composed raw metadata.
     """
-    ts_first = metadata[1].get('Timestamp', "N/A")
-    ts_last  = metadata[nbumps].get('Timestamp', "N/A")
+    # Get timestamps for the first and last bumps.
+    for key in metadata.keys():
+        if 'Timestamp' in metadata[key]:
+            ts_first = metadata[key]['Timestamp']
+            break
+
+    # ts_first = metadata[1].get('Timestamp', "N/A")
+    ts_last  = metadata[list(metadata.keys())[-1]].get('Timestamp', "N/A")
     if ts_first == "N/A" or ts_last == "N/A":
         duration = "N/A"
     else:
@@ -723,13 +738,16 @@ def main() -> None:
             dataset[beamline] = parse_rawdata(
                 rawdata, beamline, blademap=new_map
             )
-        
 
     # Set file name and handle overwrite/append.
-    # Set initial timestamp from the first record of the first beamline.
-    init_time = str(
-        dataset[beamlines[0]]["metadata"][1].get('Timestamp', "N/A")
-        )
+    # Set initial timestamp from the first available record
+    # of the first beamline.
+    dkeys = list(dataset[beamlines[0]]["metadata"].keys())
+    for key in dkeys:
+        ds = dataset[beamlines[0]]["metadata"][key]
+        if 'Timestamp' in ds:
+            init_time = str(ds['Timestamp'])
+            break
     blines = '_'.join(beamlines)
     outfile, append = hdf5_handler(blines, init_time)
 

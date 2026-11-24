@@ -194,10 +194,10 @@ class BPMVisualizer:
         # Plot full grid
         self._plot_position_scatter(
             self.ax_all,
-            self.meas_x,
             self.nom_x,
-            self.meas_y,
             self.nom_y,
+            self.meas_x,
+            self.meas_y,
             _Title(
                 beamline   = self.beamline,
                 graph_type = 'bpm',
@@ -213,8 +213,8 @@ class BPMVisualizer:
         self._plot_position_scatter(
             self.ax_roi,
             self.nom_roi_x,
-            self.meas_x[slice_v, slice_h],
             self.nom_roi_y,
+            self.meas_x[slice_v, slice_h],
             self.meas_y[slice_v, slice_h],
             _Title(
                 beamline   = self.beamline,
@@ -231,8 +231,8 @@ class BPMVisualizer:
     def _plot_position_scatter(self,
                                ax     : 'matplotlib.axes.Axes',
                                nom_x  : np.array,
-                               meas_x : np.array,
                                nom_y  : np.array,
+                               meas_x : np.array,
                                meas_y : np.array,
                                title  : str
                                ) -> None:
@@ -241,8 +241,8 @@ class BPMVisualizer:
         Args:
             ax     : Matplotlib axis for plotting.
             nom_x  : Nominal x positions.
-            meas_x : Measured x positions.
             nom_y  : Nominal y positions.
+            meas_x : Measured x positions.
             meas_y : Measured y positions.
             title  : Plot title.
         """
