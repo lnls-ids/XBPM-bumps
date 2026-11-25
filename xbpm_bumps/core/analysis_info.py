@@ -16,21 +16,31 @@ from xbpm_bumps.core.data_structure import (
 
 def _f(
         value  : float,
-        digits : int = 2
+        digits : int = 2,
+        width  : int = 7
         ) -> str:
     """Format a float value with a given number of significant digits.
 
     Args:
         value: The float value to format.
         digits: The number of significant digits.
+        width  : The minimum field width; also used to decide when a
+                 value's magnitude is too large for fixed-point display.
     
     Returns:
         The formatted float as a string.
     """
     try:
-        return f"{float(value):7.{digits}f}"
+        v = float(value)
     except (TypeError, ValueError):
         return str(value)
+
+    too_small = v != 0 and abs(v) < 0.5 * 10 ** (-digits)
+    too_large = abs(v) >= 10 ** max(width - digits - 1, 1)
+    if too_small or too_large:
+        return f"{v:{width}.{max(digits, 2)}e}"
+
+    return f"{v:{width}.{digits}f}"
 
 
 def _err(
@@ -233,7 +243,7 @@ def _xbpm_stats(
     for case, allroi in [("All", stat.all),
                          ("ROI", stat.roi)]:
         lines.append(
-            f" *  {case} (min / avg / max):\n"
+            f"\n *  {case} (min / avg / max):\n"
             f"   H = {_f(allroi.min_h)} / "
             f" {_f(allroi.mean_h)} / "
             f" {_f(allroi.max_h)}\n"
@@ -270,10 +280,10 @@ def _sweeps(
         sigmas_h = sweeps.h.sigmas
         if coeffs_h is not None:
             lines.append(
-                f"mx :  {_f(coeffs_h[0])}  ({_err(sigmas_h[0])})\t"
+                f"mx :  {_f(coeffs_h[0])}  {_err(sigmas_h[0])}\t"
                 )
             lines.append(
-                f"bx :  {_f(coeffs_h[1])}  ({_err(sigmas_h[1])})\n")
+                f"bx :  {_f(coeffs_h[1])}  {_err(sigmas_h[1])}\n")
 
     if sweeps.v is not None:
         lines.append("  V sweep:\n \t")
@@ -281,10 +291,10 @@ def _sweeps(
         sigmas_v = sweeps.v.sigmas
         if coeffs_v is not None:
             lines.append(
-                f"my :  {_f(coeffs_v[0])}  ({_err(sigmas_v[0])})\t"
+                f"my :  {_f(coeffs_v[0])}  {_err(sigmas_v[0])}\t"
                 )
             lines.append(
-                f"by :  {_f(coeffs_v[1])}  ({_err(sigmas_v[1])})\n"
+                f"by :  {_f(coeffs_v[1])}  {_err(sigmas_v[1])}\n"
                 )
     return ''.join(lines)
 
@@ -298,18 +308,18 @@ def _blades(
         blades : dict, the blade central analysis coefficients to format
     """
     lines = []
-    lines.append("\n### Blade Analysis ###\n")
+    lines.append("\n### Blade Analysis ###\n\n")
     for direction, bl in blades:
         lines.append(f"  {direction.capitalize()} sweep:\n")
         lines.append(
-            f"  TO : m = {_f(bl.to.m):>15}  ({_err(bl.to.sm)}), "
-            f"       b = {_f(bl.to.b):>15}  ({_err(bl.to.sb)})\n"
-            f"  TI : m = {_f(bl.ti.m):>15}  ({_err(bl.ti.sm)}), "
-            f"       b = {_f(bl.ti.b):>15}  ({_err(bl.ti.sb)})\n"
-            f"  BI : m = {_f(bl.bi.m):>15}  ({_err(bl.bi.sm)}), "
-            f"       b = {_f(bl.bi.b):>15}  ({_err(bl.bi.sb)})\n"
-            f"  BO : m = {_f(bl.bo.m):>15}  ({_err(bl.bo.sm)}), "
-            f"       b = {_f(bl.bo.b):>15}  ({_err(bl.bo.sb)})\n\n"
+            f"  TO : m = {_f(bl.to.m):>15}  {_err(bl.to.sm)}, "
+            f"       b = {_f(bl.to.b):>15}  {_err(bl.to.sb)}\n"
+            f"  TI : m = {_f(bl.ti.m):>15}  {_err(bl.ti.sm)}, "
+            f"       b = {_f(bl.ti.b):>15}  {_err(bl.ti.sb)}\n"
+            f"  BI : m = {_f(bl.bi.m):>15}  {_err(bl.bi.sm)}, "
+            f"       b = {_f(bl.bi.b):>15}  {_err(bl.bi.sb)}\n"
+            f"  BO : m = {_f(bl.bo.m):>15}  {_err(bl.bo.sm)}, "
+            f"       b = {_f(bl.bo.b):>15}  {_err(bl.bo.sb)}\n\n"
             )
     lines.append("###\n")
     return ''.join(lines)
