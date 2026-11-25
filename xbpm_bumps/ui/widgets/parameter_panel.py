@@ -110,7 +110,7 @@ class ParameterPanel(QWidget):
         self.scalepolydeg.setValue(1)
         # self.scalepolydeg.setSuffix("")
         self.scalepolydeg.setMaximumWidth(115)
-        self.scalepolydeg.valueChanged.connect( self._on_scalepolydeg_changed)
+        self.scalepolydeg.valueChanged.connect(self.parametersChanged.emit)
 
         layout.addRow("Polynomial degree:", self.scalepolydeg)
         group.setLayout(layout)
@@ -232,17 +232,6 @@ class ParameterPanel(QWidget):
         for box in boxes:
             box.setChecked(checked)
 
-    def _on_scalepolydeg_changed(self, degree: int) -> None:
-        enabled = degree == 1
-        self.forcezero_check.setEnabled(enabled)
-
-        if not enabled and self.forcezero_check.isChecked():
-            blocker = QSignalBlocker(self.forcezero_check)
-            self.forcezero_check.setChecked(False)
-            del blocker
-
-        self.parametersChanged.emit()
-
     def show_inputfile(self, inputfile: str) -> None:
         """Set the input file path programmatically.
 
@@ -338,10 +327,7 @@ class ParameterPanel(QWidget):
         self.xbpmdist_spin.setValue(beamline_prm.xbpmdist or 0.0)
         self.skip_spin.setValue(beamline_prm.skip)
         self.scalepolydeg.setValue(beamline_prm.scalepolydeg)
-        self.forcezero_check.setEnabled(beamline_prm.scalepolydeg == 1)
-        self.forcezero_check.setChecked(
-            beamline_prm.forcezero and beamline_prm.scalepolydeg == 1
-            )
+        self.forcezero_check.setChecked(beamline_prm.forcezero)
         self.bpm_ref_check.setChecked(beamline_prm.usebpmref)
 
         del blockers

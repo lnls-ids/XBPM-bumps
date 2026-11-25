@@ -693,13 +693,14 @@ class XBPMProcessor:
         )
 
         if self.prm_bml.forcezero:
-            scl_x, sig_x, scl_y, sig_y = self._rescale_to_forcezero(
+            coeffs = self._rescale_to_forcezero(
                 nom_roi_x,  nom_roi_y,
                 calc_roi_x, calc_roi_y,
                 scl_x, sig_x,
                 scl_y, sig_y,
                 pos_calc, pos_nom
             )
+            scl_x, sig_x, scl_y, sig_y = coeffs
 
         (qx, kx, deltax), (sqx, skx, sdeltax) = scl_x, sig_x
         (qy, ky, deltay), (sqy, sky, sdeltay) = scl_y, sig_y
@@ -817,11 +818,11 @@ class XBPMProcessor:
         sig_y      : np.ndarray,
         pos_calc   : DStr.Positions,
         pos_nom    : DStr.Positions,
-        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        ) -> tuple:
         """Rescale the linear fits to force zero at the origin."""
         # Estimate the residuals using the current scaling coefficients.
-        sigma_x = np.abs(nom_roi_x - np.polyval(scl_x[1:], calc_roi_x))
-        sigma_y = np.abs(nom_roi_y - np.polyval(scl_y[1:], calc_roi_y))
+        sigma_x = np.abs(nom_roi_x - np.polyval(scl_x, calc_roi_x))
+        sigma_y = np.abs(nom_roi_y - np.polyval(scl_y, calc_roi_y))
 
         # Find the origin in the nominal positions.
         origin = (
@@ -833,30 +834,46 @@ class XBPMProcessor:
         center_y = (pos_calc.y[i0, j0], pos_nom.y[i0, j0])
 
         # Perform the force-zero linear fit for both x and y directions.
-        fit_x, err_x = self._forcezero_linear_fit(
+        fit_x, err_x = self._forcezero_poly_fit(
             nom_roi_x, calc_roi_x, sigma_x, center_x
         )
-        fit_y, err_y = self._forcezero_linear_fit(
+        fit_y, err_y = self._forcezero_poly_fit(
             nom_roi_y, calc_roi_y, sigma_y, center_y
         )
 
         # Update the scaling coefficients and their uncertainties with
         # the force-zero fit results.
-        scl_x = np.array([0.0, *fit_x])
-        sig_x = np.array([0.0, *err_x])
-        scl_y = np.array([0.0, *fit_y])
-        sig_y = np.array([0.0, *err_y])
+        if self.prm_bml.scalepolydeg == 1:
+            scl_x = np.array([0.0, *fit_x])
+            sig_x = np.array([0.0, *err_x])
+            scl_y = np.array([0.0, *fit_y])
+            sig_y = np.array([0.0, *err_y])
+        else:
+            scl_x, sig_x = fit_x, err_x
+            scl_y, sig_y = fit_y, err_y
 
         return scl_x, sig_x, scl_y, sig_y
 
-    @staticmethod
-    def _forcezero_linear_fit(
-        nom    : np.ndarray,
-        calc   : np.ndarray,
-        sigma  : np.ndarray,
-        center : tuple[float, float],
-        ) -> tuple[np.ndarray, np.ndarray]:
-        """Fit a weighted linear scale through the origin grid point."""
+    def _forcezero_poly_fit(
+            self,
+            nom     : np.ndarray,
+            calc    : np.ndarray,
+            sigma   : np.ndarray,
+            center  : tuple[float, float],
+            ) -> tuple[np.ndarray, np.ndarray]:
+        """Fit a linear or quadratic scale through the origin grid point.
+
+        Args:
+            nom     : Nominal positions.
+            calc    : Calculated positions.
+            sigma   : Uncertainties of the calculated positions.
+            center  : Tuple containing the origin coordinates in the
+                      calculated and nominal grids.
+
+        Returns:
+            Tuple containing the polynomial coefficients and their
+            uncertainties.
+        """
         # Filter out invalid data points.
         valid = (
             np.isfinite(nom)
@@ -877,21 +894,78 @@ class XBPMProcessor:
         # Subtract the offset to force zero-centered fit.
         c_calc, c_nom = center
         x = calc - c_calc
-        y = nom - c_nom
+        y = nom  - c_nom
 
+        # First or second order polynomial.
+        if self.prm_bml.scalepolydeg == 1:
+            coeffs, cov = self._linear_least_squares_fit(x, y, weights)
+        else:
+            coeffs, cov = self._quad_least_squares_fit(x, y, weights)
+
+        # Anchor offset.
+        offset = c_nom - np.polyval([*coeffs, 0.0], c_calc)
+
+        # Propagate (q, k, ...) uncertainty into the offset's uncertainty,
+        # accounting for correlations between coefficients:
+        # offset = c_nom - sum_p coeffs[p] * c_calc**power(p),
+        # so d(offset)/d(coeffs) = -c_calc**power for each power,
+        # highest->lowest.
+        powers     = np.arange(len(coeffs), 0, -1)
+        grad       = -c_calc**powers
+        offset_var = grad @ cov @ grad
+        offset_err = np.sqrt(max(offset_var, 0.0))
+
+        full_coeffs = np.array([*coeffs, offset])
+        full_sigmas = np.array([*np.sqrt(np.diag(cov)), offset_err])
+
+        return full_coeffs, full_sigmas
+
+    @staticmethod
+    def _linear_least_squares_fit(
+            xdata   : np.ndarray,
+            ydata   : np.ndarray,
+            weights : np.ndarray,
+        ) -> tuple[np.ndarray, np.ndarray]:
         # Calculate the weighted linear fit through the origin.
-        denom = np.dot(weights * x, x)
-        slope = np.dot(weights * x, y) / denom
-        slope_err = np.sqrt(1.0 / denom)
+        denom = np.dot(weights * xdata, xdata)
+        slope = np.dot(weights * xdata, ydata) / denom
 
-        # Calculate the offset and its uncertainty based on the slope.
-        offset = c_nom - slope * c_calc
-        offset_err = abs(c_calc) * slope_err
+        coeffs = np.array([slope])
+        cov    = np.array([[1.0 / denom]])
+        return coeffs, cov
 
-        return (
-            np.array([slope, offset]),
-            np.array([slope_err, offset_err]),
-        )
+    @staticmethod
+    def _quad_least_squares_fit(
+            xdata   : np.ndarray,
+            ydata   : np.ndarray,
+            weights : np.ndarray,
+        ) -> tuple[np.ndarray, np.ndarray]:
+        """Fit a weighted quadratic scale through the origin grid point.
+
+        Args:
+            xdata   : Array of x coordinates relative to the center.
+            ydata   : Array of y coordinates relative to the center.
+            weights : Array of weights for each data point.
+
+        Returns:
+            Tuple of (coeffs, covariance matrix) for the quadratic fit.
+        """
+        x2weight = weights * xdata**2
+
+        x0 = np.sum(x2weight)
+        x1 = np.dot(x2weight, xdata)
+        x2 = np.dot(x2weight, xdata**2)
+        yq = np.dot(x2weight, ydata)
+        yk = np.dot(weights,  xdata * ydata)
+
+        Mcoeff = np.array([
+            [x2, x1],
+            [x1, x0]
+            ])
+
+        Minv   = np.linalg.inv(Mcoeff)
+        coeffs = Minv @ np.array([yq, yk])
+        return coeffs, Minv
 
 
 class BPMProcessor:
