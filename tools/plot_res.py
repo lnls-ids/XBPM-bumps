@@ -48,6 +48,10 @@ def plot_graph(data, stype, dist, grname, beamline, roi=2):
     """."""
     print(f"##### Type of analysis: {stype} ")
 
+    # Guarantee sorted data by x and then y.
+    order = np.lexsort((data[:, 1], data[:, 0]))
+    data  = data[order]
+
     try:
         resh = int(np.sqrt(data.shape[0]))
         xn = data[:, 0].reshape(resh, resh) * dist
@@ -61,7 +65,7 @@ def plot_graph(data, stype, dist, grname, beamline, roi=2):
         xc = data[:, 2] * dist
         yc = data[:, 3] * dist
 
-    midpoint = int(len(xn) / 2)
+    midpoint = int(resh / 2)
     fr, to = midpoint - roi, midpoint + roi + 1
     fig, (axall, axroi, axcolor) = plt.subplots(1, 3, figsize=(15, 4))
     axall.plot(xc.ravel(), yc.ravel(), 'bo', label='Calc')
